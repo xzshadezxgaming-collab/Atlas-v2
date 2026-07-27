@@ -35,8 +35,17 @@ namespace Atlas
         float Recoil = 60.0f;        // impulse against the shooter
         float BarrelLength = 14.0f;
 
-        float DigRadius = 9.0f;      // digger only
-        float DigRange = 110.0f;     // digger only
+        float DigRadius = 9.0f;      // dig tools: bite size
+        float DigRange = 110.0f;     // dig tools: reach
+
+        // Dig tools erode rather than delete: each tick can remove
+        // material totalling this much strength (dirt is cheap, stone is
+        // expensive), so hard rock digs visibly slower.
+        float DigPower = 30.0f;
+
+        // Material strength above this can't be dug at all by this tool
+        // (a shovel can't dig stone).
+        float MaxDigStrength = 100.0f;
     };
 
     // Loads weapon definitions from an INI file; returns built-in defaults

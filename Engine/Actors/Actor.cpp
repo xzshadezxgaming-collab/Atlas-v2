@@ -716,15 +716,17 @@ namespace Atlas
 
     void Actor::NotifyFired()
     {
+        const WeaponDef* def = m_Weapon.GetDef();
+
+        // Muzzle flash and recoil are gun things; dig tools don't kick
+        // or flash.
+        if (!def || def->Kind != WeaponKind::Gun)
+            return;
+
         m_MuzzleFlash = 0.05f;
 
-        if (m_Weapon.GetDef())
-        {
-            const float recoil = m_Weapon.GetDef()->Recoil;
-
-            m_KnockVelX -= m_AimDirX * recoil;
-            m_VelocityY -= m_AimDirY * recoil * 0.3f;
-        }
+        m_KnockVelX -= m_AimDirX * def->Recoil;
+        m_VelocityY -= m_AimDirY * def->Recoil * 0.3f;
     }
 
     bool Actor::IsAlive() const

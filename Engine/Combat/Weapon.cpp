@@ -63,26 +63,31 @@ namespace Atlas
         }
 
         {
+            // Continuous grinder: fast small bites, chews stone slowly.
             WeaponDef digger;
             digger.Name = "Digger";
             digger.Kind = WeaponKind::Digger;
-            digger.FireRate = 14.0f;
+            digger.FireRate = 24.0f;
             digger.ClipSize = 0;
-            digger.DigRadius = 9.0f;
+            digger.DigRadius = 5.5f;
             digger.DigRange = 110.0f;
+            digger.DigPower = 30.0f;
             digger.BarrelLength = 12.0f;
             digger.Recoil = 0.0f;
             defs.push_back(digger);
         }
 
         {
+            // Big slow scoops of soft ground; useless against stone.
             WeaponDef shovel;
             shovel.Name = "Shovel";
             shovel.Kind = WeaponKind::Shovel;
-            shovel.FireRate = 2.6f;
+            shovel.FireRate = 2.0f;
             shovel.ClipSize = 0;
-            shovel.DigRadius = 14.0f;
+            shovel.DigRadius = 12.0f;
             shovel.DigRange = 52.0f;
+            shovel.DigPower = 260.0f;
+            shovel.MaxDigStrength = 5.0f;
             shovel.BarrelLength = 17.0f;
             shovel.Recoil = 0.0f;
             defs.push_back(shovel);
@@ -168,6 +173,9 @@ namespace Atlas
                 ini.GetFloat(section, "BarrelLength", def->BarrelLength);
             def->DigRadius = ini.GetFloat(section, "DigRadius", def->DigRadius);
             def->DigRange = ini.GetFloat(section, "DigRange", def->DigRange);
+            def->DigPower = ini.GetFloat(section, "DigPower", def->DigPower);
+            def->MaxDigStrength = ini.GetFloat(
+                section, "MaxDigStrength", def->MaxDigStrength);
         }
 
         return defs;
@@ -269,30 +277,90 @@ namespace Atlas
                 return false;
             }
 
-            // Bite into the struck surface so the scoop removes a solid
-            // chunk instead of grazing the edge.
-            const float digX = hitX + dirX * m_Def->DigRadius * 0.5f;
-            const float digY = hitY + dirY * m_Def->DigRadius * 0.5f;
+            // Erode the struck face: each tick spends a strength budget,
+            // nearest pixels first, so soft dirt melts away while stone
+            // is ground down slowly. Material harder than the tool's cap
+            // doesn't budge at all.
+            const float digX = hitX + dirX * m_Def->DigRadius * 0.35f;
+            const float digY = hitY + dirY * m_Def->DigRadius * 0.35f;
 
-            // The shovel throws a proper spray of dirt.
-            const int debrisSamples =
-                m_Def->Kind == WeaponKind::Shovel ? 16 : 6;
+            float budget = m_Def->DigPower;
+            int removed = 0;
+            bool struckHard = false;
 
-            std::vector<Terrain::DestroyedPixel> debris;
-            terrain.CarveCircleCollect(
-                digX, digY, m_Def->DigRadius, debris, debrisSamples);
+            const int span = static_cast<int>(m_Def->DigRadius) + 1;
 
-            for (const Terrain::DestroyedPixel& pixel : debris)
+            // Two rings: eat the contact area first, then the fringe.
+            for (int pass = 0; pass < 2 && budget > 0.0f; pass++)
             {
-                particles.SpawnDebris(
-                    pixel.X,
-                    pixel.Y,
-                    -dirX * 60.0f + RandomUnit() * 90.0f,
-                    -110.0f + RandomUnit() * 70.0f,
-                    pixel.Mat);
+                const float passRadius = pass == 0
+                    ? m_Def->DigRadius * 0.55f
+                    : m_Def->DigRadius;
+
+                const float radiusSquared = passRadius * passRadius;
+                const float innerSquared = pass == 0
+                    ? -1.0f
+                    : m_Def->DigRadius * 0.55f * m_Def->DigRadius * 0.55f;
+
+                for (int dy = -span; dy <= span && budget > 0.0f; dy++)
+                {
+                    for (int dx = -span; dx <= span && budget > 0.0f; dx++)
+                    {
+                        const float distSquared =
+                            static_cast<float>(dx * dx + dy * dy);
+
+                        if (distSquared > radiusSquared ||
+                            distSquared <= innerSquared)
+                            continue;
+
+                        const int px = static_cast<int>(digX) + dx;
+                        const int py = static_cast<int>(digY) + dy;
+
+                        const Material material = terrain.GetMaterial(px, py);
+                        const MaterialInfo& info = GetMaterialInfo(material);
+
+                        if (!info.Solid)
+                            continue;
+
+                        if (info.Strength > m_Def->MaxDigStrength ||
+                            budget < info.Strength)
+                        {
+                            struckHard = true;
+                            continue;
+                        }
+
+                        budget -= info.Strength;
+                        terrain.DestroyPixel(px, py);
+                        removed++;
+
+                        // Spray some of the spoil back toward the digger.
+                        if ((removed & 1) == 0)
+                        {
+                            particles.SpawnDebris(
+                                static_cast<float>(px),
+                                static_cast<float>(py),
+                                -dirX * 70.0f + RandomUnit() * 80.0f,
+                                -dirY * 40.0f - 90.0f + RandomUnit() * 60.0f,
+                                material);
+                        }
+                    }
+                }
             }
 
-            return !debris.empty();
+            // Grinding against rock the tool can't eat: sparks, no dig.
+            if (struckHard && removed < 3)
+            {
+                particles.SpawnSpark(
+                    hitX, hitY,
+                    -dirX * 60.0f + RandomUnit() * 70.0f,
+                    -dirY * 60.0f - 40.0f);
+                particles.SpawnSpark(
+                    hitX, hitY,
+                    -dirX * 30.0f + RandomUnit() * 70.0f,
+                    -30.0f + RandomUnit() * 40.0f);
+            }
+
+            return removed > 0;
         }
 
         if (!infiniteAmmo)

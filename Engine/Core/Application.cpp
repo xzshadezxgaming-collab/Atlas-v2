@@ -87,7 +87,8 @@ namespace Atlas
 
         Sfx FireSfxFor(const WeaponDef& def)
         {
-            if (def.Kind == WeaponKind::Digger)
+            if (def.Kind == WeaponKind::Digger ||
+                def.Kind == WeaponKind::Shovel)
                 return Sfx::Dig;
 
             if (def.Name == "Shotgun")
@@ -213,6 +214,7 @@ namespace Atlas
         float grenadeCooldown = 0.0f;
         float respawnTimer = 0.0f;
         float jetSoundTimer = 0.0f;
+        float toolSfxTimer = 0.0f;
         bool playerGibbed = false;
         bool playerWasGrounded = true;
         float playerPrevFallSpeed = 0.0f;
@@ -345,6 +347,7 @@ namespace Atlas
             {
                 grenadeCooldown -= FixedTimeStep;
                 jetSoundTimer -= FixedTimeStep;
+                toolSfxTimer -= FixedTimeStep;
 
                 // --- Player ---
                 if (player.IsAlive())
@@ -407,9 +410,20 @@ namespace Atlas
                         {
                             player.NotifyFired();
 
-                            Audio::Play(
-                                FireSfxFor(*player.GetWeapon().GetDef()),
-                                0.8f);
+                            const WeaponDef& def =
+                                *player.GetWeapon().GetDef();
+
+                            // Dig tools tick fast; don't machine-gun the
+                            // crumble sound.
+                            if (def.Kind == WeaponKind::Gun)
+                            {
+                                Audio::Play(FireSfxFor(def), 0.8f);
+                            }
+                            else if (toolSfxTimer <= 0.0f)
+                            {
+                                Audio::Play(FireSfxFor(def), 0.7f);
+                                toolSfxTimer = 0.1f;
+                            }
                         }
                     }
 
