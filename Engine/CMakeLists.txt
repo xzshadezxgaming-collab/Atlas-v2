@@ -1,0 +1,40 @@
+add_library(AtlasEngine STATIC
+    Core/Application.cpp
+    Core/Window.cpp
+
+    Input/Input.cpp
+
+    Entity/Entity.cpp
+
+    Graphics/Texture2D.cpp
+    Graphics/Sprite.cpp
+    Graphics/Camera.cpp
+
+    World/Terrain.cpp
+
+    Physics/RigidBody.cpp
+
+    ECS/Transform.cpp
+    ECS/Entity.cpp
+)
+
+target_compile_features(AtlasEngine PUBLIC cxx_std_23)
+
+target_include_directories(AtlasEngine
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/ThirdParty/sdl3/include
+)
+
+target_link_libraries(AtlasEngine
+    PUBLIC
+        "${CMAKE_SOURCE_DIR}/ThirdParty/sdl3/lib/x64/SDL3.lib"
+)
+
+set(SDL3_DLL "${CMAKE_SOURCE_DIR}/ThirdParty/sdl3/lib/x64/SDL3.dll")
+
+add_custom_command(TARGET AtlasEngine POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${SDL3_DLL}
+        $<TARGET_FILE_DIR:AtlasEngine>
+)
