@@ -63,8 +63,8 @@ namespace Atlas
 
         constexpr float SampleSpacing = 2.0f;
 
-        // Arm/weapon
-        constexpr float ShoulderOffsetY = 14.0f;
+        // Arm/weapon (the sprite's shoulders sit at y=23 of the 40px art).
+        constexpr float ShoulderOffsetY = 23.0f;
         constexpr float HandDistance = 13.0f;
         constexpr float ArmThickness = 4.0f;
 
@@ -79,10 +79,11 @@ namespace Atlas
 
         constexpr float KnockbackDamping = 5.0f;
 
-        void DrawArmSegment(
+        void DrawArmSegmentPass(
             Window& window,
             float x0, float y0,
             float x1, float y1,
+            float thickness,
             Uint8 r, Uint8 g, Uint8 b)
         {
             const float dx = x1 - x0;
@@ -91,7 +92,7 @@ namespace Atlas
 
             const int steps = std::max(
                 1,
-                static_cast<int>(std::ceil(length / (ArmThickness * 0.5f))));
+                static_cast<int>(std::ceil(length / (thickness * 0.5f))));
 
             for (int i = 0; i <= steps; i++)
             {
@@ -99,12 +100,42 @@ namespace Atlas
                     static_cast<float>(i) / static_cast<float>(steps);
 
                 window.DrawFilledRect(
-                    x0 + dx * t - ArmThickness * 0.5f,
-                    y0 + dy * t - ArmThickness * 0.5f,
-                    ArmThickness,
-                    ArmThickness,
+                    x0 + dx * t - thickness * 0.5f,
+                    y0 + dy * t - thickness * 0.5f,
+                    thickness,
+                    thickness,
                     r, g, b, 255);
             }
+        }
+
+        void DrawArmSegment(
+            Window& window,
+            float x0, float y0,
+            float x1, float y1,
+            Uint8 r, Uint8 g, Uint8 b)
+        {
+            // Outline, fill, highlight.
+            DrawArmSegmentPass(
+                window, x0, y0, x1, y1, ArmThickness + 2.0f, 24, 22, 27);
+            DrawArmSegmentPass(
+                window, x0, y0, x1, y1, ArmThickness, r, g, b);
+            DrawArmSegmentPass(
+                window, x0 - 1.0f, y0 - 1.0f, x1 - 1.0f, y1 - 1.0f,
+                std::max(1.0f, ArmThickness - 3.0f),
+                static_cast<Uint8>(std::min(255, r + 24)),
+                static_cast<Uint8>(std::min(255, g + 24)),
+                static_cast<Uint8>(std::min(255, b + 24)));
+        }
+
+        // Axis-aligned outlined box, for weapon parts.
+        void DrawPart(
+            Window& window,
+            float x, float y, float w, float h,
+            Uint8 r, Uint8 g, Uint8 b)
+        {
+            window.DrawFilledRect(x - 1.0f, y - 1.0f, w + 2.0f, h + 2.0f,
+                24, 22, 27, 255);
+            window.DrawFilledRect(x, y, w, h, r, g, b, 255);
         }
     }
 
@@ -425,18 +456,17 @@ namespace Atlas
                 255, 150, 60, 200);
         }
 
-        // Hit flash: quick white blink over the whole figure.
+        // Hit flash: a hot red pulse around the figure.
         if (m_HurtFlash > 0.0f)
         {
-            const Uint8 alpha = static_cast<Uint8>(
-                std::min(1.0f, m_HurtFlash / 0.12f) * 130.0f);
+            const float strength = std::min(1.0f, m_HurtFlash / 0.12f);
 
-            window.DrawFilledRect(
-                m_X - 4.0f,
-                m_Y - 2.0f,
-                BodyWidth + 8.0f,
-                BodyHeight + StandHeight + 4.0f,
-                255, 255, 255, alpha);
+            window.DrawGlow(
+                GetCenterX(),
+                GetCenterY(),
+                30.0f,
+                255, 90, 60,
+                static_cast<Uint8>(70.0f * strength));
         }
     }
 
@@ -477,57 +507,101 @@ namespace Atlas
         const float elbowX = sx + ux * along - uy * height * m_FacingDir;
         const float elbowY = sy + uy * along + ux * height * m_FacingDir;
 
-        const Uint8 armR = static_cast<Uint8>(84 * m_TintR / 255);
-        const Uint8 armG = static_cast<Uint8>(96 * m_TintG / 255);
-        const Uint8 armB = static_cast<Uint8>(64 * m_TintB / 255);
+        const Uint8 armR = static_cast<Uint8>(92 * m_TintR / 255);
+        const Uint8 armG = static_cast<Uint8>(104 * m_TintG / 255);
+        const Uint8 armB = static_cast<Uint8>(72 * m_TintB / 255);
 
         DrawArmSegment(window, sx, sy, elbowX, elbowY, armR, armG, armB);
         DrawArmSegment(window, elbowX, elbowY, handX, handY, armR, armG, armB);
 
-        // The weapon: a chunky body at the hand and a barrel toward the aim.
-        Uint8 gunR = 58, gunG = 58, gunB = 66;
+        // Shoulder pad over the joint.
+        DrawPart(window, sx - 3.0f, sy - 3.0f, 6.0f, 6.0f,
+            static_cast<Uint8>(108 * m_TintR / 255),
+            static_cast<Uint8>(120 * m_TintG / 255),
+            static_cast<Uint8>(84 * m_TintB / 255));
+        window.DrawFilledRect(sx - 3.0f, sy - 3.0f, 6.0f, 2.0f,
+            static_cast<Uint8>(130 * m_TintR / 255),
+            static_cast<Uint8>(142 * m_TintG / 255),
+            static_cast<Uint8>(102 * m_TintB / 255),
+            255);
 
-        if (def.Kind == WeaponKind::Digger)
-        {
-            gunR = 122;
-            gunG = 92;
-            gunB = 52;
-        }
-
-        window.DrawFilledRect(
-            handX - 3.0f,
-            handY - 3.0f,
-            7.0f,
-            6.0f,
-            gunR, gunG, gunB, 255);
-
+        // --- The weapon ---
         const float muzzleX = handX + m_AimDirX * def.BarrelLength;
         const float muzzleY = handY + m_AimDirY * def.BarrelLength;
 
-        const float steps = std::ceil(def.BarrelLength / 2.0f);
-
-        for (float i = 0.0f; i <= steps; i += 1.0f)
+        if (def.Kind == WeaponKind::Digger)
         {
-            const float t = i / steps;
+            // Digger tool: brown housing, warning stripe, spinning bit.
+            DrawPart(window, handX - 4.0f, handY - 4.0f, 9.0f, 8.0f,
+                118, 90, 52);
+            window.DrawFilledRect(handX - 4.0f, handY - 4.0f, 9.0f, 2.0f,
+                146, 116, 70, 255);
+            window.DrawFilledRect(handX - 4.0f, handY + 1.0f, 9.0f, 2.0f,
+                190, 150, 40, 255);
 
+            // Bit: tapering segments toward the muzzle.
+            for (int i = 0; i < 3; i++)
+            {
+                const float t = static_cast<float>(i + 1) / 3.0f;
+                const float size = 5.0f - static_cast<float>(i);
+
+                window.DrawFilledRect(
+                    handX + (muzzleX - handX) * t - size * 0.5f,
+                    handY + (muzzleY - handY) * t - size * 0.5f,
+                    size,
+                    size,
+                    130 - i * 20, 130 - i * 20, 140 - i * 20, 255);
+            }
+        }
+        else
+        {
+            // Rifle-style gun built from parts along the aim.
+            const float backX = -m_AimDirX;
+            const float backY = -m_AimDirY;
+
+            // Stock (behind the hand).
+            DrawPart(window,
+                handX + backX * 6.0f - 3.0f,
+                handY + backY * 6.0f - 2.0f,
+                6.0f, 5.0f,
+                74, 58, 44);
+
+            // Barrel with a lighter top edge.
+            DrawArmSegmentPass(window,
+                handX + m_AimDirX * 3.0f, handY + m_AimDirY * 3.0f,
+                muzzleX, muzzleY, 5.0f, 24, 22, 27);
+            DrawArmSegmentPass(window,
+                handX + m_AimDirX * 3.0f, handY + m_AimDirY * 3.0f,
+                muzzleX, muzzleY, 3.0f, 74, 76, 88);
+            DrawArmSegmentPass(window,
+                handX + m_AimDirX * 3.0f - 1.0f,
+                handY + m_AimDirY * 3.0f - 1.0f,
+                muzzleX - 1.0f, muzzleY - 1.0f, 1.0f, 108, 110, 124);
+
+            // Receiver over the hand.
+            DrawPart(window, handX - 4.0f, handY - 3.0f, 10.0f, 6.0f,
+                58, 58, 66);
+            window.DrawFilledRect(handX - 4.0f, handY - 3.0f, 10.0f, 2.0f,
+                86, 86, 98, 255);
+
+            // Magazine, hanging ahead of the grip.
+            DrawPart(window,
+                handX + m_AimDirX * 5.0f - 1.5f,
+                handY + 3.0f,
+                3.0f, 6.0f,
+                48, 48, 56);
+
+            // Muzzle tip.
             window.DrawFilledRect(
-                handX + (muzzleX - handX) * t - 1.5f,
-                handY + (muzzleY - handY) * t - 1.5f,
-                3.0f,
-                3.0f,
-                gunR, gunG, gunB, 255);
+                muzzleX - 1.5f, muzzleY - 1.5f, 3.0f, 3.0f,
+                36, 36, 42, 255);
         }
 
         // Glove over the grip.
-        window.DrawFilledRect(
-            handX - 2.0f,
-            handY - 2.0f,
-            4.0f,
-            4.0f,
-            static_cast<Uint8>(70 * m_TintR / 255),
-            static_cast<Uint8>(62 * m_TintG / 255),
-            static_cast<Uint8>(52 * m_TintB / 255),
-            255);
+        DrawPart(window, handX - 2.0f, handY - 2.0f, 5.0f, 5.0f,
+            static_cast<Uint8>(78 * m_TintR / 255),
+            static_cast<Uint8>(68 * m_TintG / 255),
+            static_cast<Uint8>(56 * m_TintB / 255));
 
         if (m_MuzzleFlash > 0.0f)
         {

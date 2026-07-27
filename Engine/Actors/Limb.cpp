@@ -14,14 +14,13 @@ namespace Atlas
         constexpr float FootHalfWidth = 4.0f;
         constexpr float FootDepth = 3.0f;
 
-        constexpr float LimbThickness = 5.0f;
-
         void DrawSegment(
             Window& window,
             float x0,
             float y0,
             float x1,
             float y1,
+            float thickness,
             Uint8 r,
             Uint8 g,
             Uint8 b)
@@ -32,22 +31,48 @@ namespace Atlas
 
             const int steps = std::max(
                 1,
-                static_cast<int>(std::ceil(length / (LimbThickness * 0.5f))));
+                static_cast<int>(std::ceil(length / (thickness * 0.5f))));
 
             for (int i = 0; i <= steps; i++)
             {
                 const float t = static_cast<float>(i) / static_cast<float>(steps);
 
                 window.DrawFilledRect(
-                    x0 + dx * t - LimbThickness * 0.5f,
-                    y0 + dy * t - LimbThickness * 0.5f,
-                    LimbThickness,
-                    LimbThickness,
+                    x0 + dx * t - thickness * 0.5f,
+                    y0 + dy * t - thickness * 0.5f,
+                    thickness,
+                    thickness,
                     r,
                     g,
                     b,
                     255);
             }
+        }
+
+        // A limb segment with a dark outline and a subtle top highlight.
+        void DrawShadedSegment(
+            Window& window,
+            float x0,
+            float y0,
+            float x1,
+            float y1,
+            float thickness,
+            Uint8 r,
+            Uint8 g,
+            Uint8 b)
+        {
+            DrawSegment(window, x0, y0, x1, y1, thickness + 2.0f, 24, 22, 27);
+            DrawSegment(window, x0, y0, x1, y1, thickness, r, g, b);
+
+            // Light catches the upper-left edge.
+            DrawSegment(
+                window,
+                x0 - 1.0f, y0 - 1.0f,
+                x1 - 1.0f, y1 - 1.0f,
+                std::max(1.0f, thickness - 3.0f),
+                static_cast<Uint8>(std::min(255, r + 26)),
+                static_cast<Uint8>(std::min(255, g + 26)),
+                static_cast<Uint8>(std::min(255, b + 28)));
         }
     }
 
@@ -238,13 +263,13 @@ namespace Atlas
         const float kneeX = hipX + ux * along + uy * height * facingDir;
         const float kneeY = hipY + uy * along - ux * height * facingDir;
 
-        Uint8 pantsR = 86, pantsG = 90, pantsB = 104;
-        Uint8 bootR = 56, bootG = 46, bootB = 38;
+        Uint8 pantsR = 88, pantsG = 92, pantsB = 106;
+        Uint8 bootR = 62, bootG = 50, bootB = 40;
 
         if (!nearSide)
         {
-            pantsR = 60; pantsG = 63; pantsB = 74;
-            bootR = 42; bootG = 35; bootB = 29;
+            pantsR = 58; pantsG = 61, pantsB = 72;
+            bootR = 44, bootG = 36, bootB = 30;
         }
 
         pantsR = static_cast<Uint8>(pantsR * tintR / 255);
@@ -254,25 +279,77 @@ namespace Atlas
         bootG = static_cast<Uint8>(bootG * tintG / 255);
         bootB = static_cast<Uint8>(bootB * tintB / 255);
 
-        DrawSegment(window, hipX, hipY, kneeX, kneeY, pantsR, pantsG, pantsB);
-        DrawSegment(window, kneeX, kneeY, footX, footY, pantsR, pantsG, pantsB);
+        // Thigh is beefier than the shin.
+        DrawShadedSegment(
+            window, hipX, hipY, kneeX, kneeY, 6.0f,
+            pantsR, pantsG, pantsB);
+        DrawShadedSegment(
+            window, kneeX, kneeY, footX, footY - 2.0f, 4.0f,
+            pantsR, pantsG, pantsB);
 
-        // Boot, toe pointing the way the actor faces.
-        const float bootWidth = 10.0f;
-        const float bootHeight = 4.0f;
+        // Knee pad.
+        {
+            const Uint8 padR = static_cast<Uint8>(70 * tintR / 255);
+            const Uint8 padG = static_cast<Uint8>(78 * tintG / 255);
+            const Uint8 padB = static_cast<Uint8>(58 * tintB / 255);
 
-        const float bootX = facingDir > 0.0f
-            ? footX - 4.0f
-            : footX - bootWidth + 4.0f;
+            window.DrawFilledRect(kneeX - 3.0f, kneeY - 3.0f, 6.0f, 6.0f,
+                24, 22, 27, 255);
+            window.DrawFilledRect(kneeX - 2.0f, kneeY - 2.0f, 4.0f, 4.0f,
+                padR, padG, padB, 255);
+            window.DrawFilledRect(kneeX - 2.0f, kneeY - 2.0f, 4.0f, 1.0f,
+                static_cast<Uint8>(std::min(255, padR + 30)),
+                static_cast<Uint8>(std::min(255, padG + 30)),
+                static_cast<Uint8>(std::min(255, padB + 30)),
+                255);
+        }
 
-        window.DrawFilledRect(
-            bootX,
-            footY - 2.0f,
-            bootWidth,
-            bootHeight,
-            bootR,
-            bootG,
-            bootB,
-            255);
+        // Boot: upper, forward toe cap, dark sole.
+        {
+            const float dir = facingDir;
+
+            // Outline block.
+            window.DrawFilledRect(
+                footX - 6.0f + (dir > 0.0f ? 0.0f : -2.0f),
+                footY - 5.0f,
+                14.0f,
+                7.0f,
+                24, 22, 27, 255);
+
+            // Upper.
+            window.DrawFilledRect(
+                footX - 5.0f + (dir > 0.0f ? 0.0f : -1.0f),
+                footY - 4.0f,
+                10.0f,
+                4.0f,
+                bootR, bootG, bootB, 255);
+
+            // Toe cap.
+            window.DrawFilledRect(
+                dir > 0.0f ? footX + 4.0f : footX - 8.0f,
+                footY - 2.0f,
+                4.0f,
+                2.0f,
+                bootR, bootG, bootB, 255);
+
+            // Top highlight.
+            window.DrawFilledRect(
+                footX - 5.0f + (dir > 0.0f ? 0.0f : -1.0f),
+                footY - 4.0f,
+                10.0f,
+                1.0f,
+                static_cast<Uint8>(std::min(255, bootR + 28)),
+                static_cast<Uint8>(std::min(255, bootG + 28)),
+                static_cast<Uint8>(std::min(255, bootB + 28)),
+                255);
+
+            // Sole.
+            window.DrawFilledRect(
+                footX - 5.0f + (dir > 0.0f ? 0.0f : -3.0f),
+                footY,
+                12.0f,
+                2.0f,
+                30, 27, 26, 255);
+        }
     }
 }
