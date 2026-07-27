@@ -248,19 +248,31 @@ namespace Atlas
         if (m_Def->Kind == WeaponKind::Digger ||
             m_Def->Kind == WeaponKind::Shovel)
         {
-            // Carve at the aim point, clamped to the tool's range.
-            float digX = targetX;
-            float digY = targetY;
+            // Dig tools work like a raycast: whatever surface is first in
+            // front of the tool gets broken. No carving through walls at
+            // the cursor. The ray starts back at the hand so a muzzle
+            // pressed into a wall still digs the near face.
+            const float reachBehind = m_Def->BarrelLength + 4.0f;
 
-            const float dx = targetX - muzzleX;
-            const float dy = targetY - muzzleY;
-            const float distance = std::sqrt(dx * dx + dy * dy);
+            float hitX = 0.0f;
+            float hitY = 0.0f;
 
-            if (distance > m_Def->DigRange)
+            if (!terrain.RaycastSolid(
+                muzzleX - dirX * reachBehind,
+                muzzleY - dirY * reachBehind,
+                dirX,
+                dirY,
+                m_Def->DigRange + reachBehind,
+                hitX,
+                hitY))
             {
-                digX = muzzleX + dx / distance * m_Def->DigRange;
-                digY = muzzleY + dy / distance * m_Def->DigRange;
+                return false;
             }
+
+            // Bite into the struck surface so the scoop removes a solid
+            // chunk instead of grazing the edge.
+            const float digX = hitX + dirX * m_Def->DigRadius * 0.5f;
+            const float digY = hitY + dirY * m_Def->DigRadius * 0.5f;
 
             // The shovel throws a proper spray of dirt.
             const int debrisSamples =
@@ -275,8 +287,7 @@ namespace Atlas
                 particles.SpawnDebris(
                     pixel.X,
                     pixel.Y,
-                    -dx / (distance + 0.001f) * 60.0f +
-                        RandomUnit() * 90.0f,
+                    -dirX * 60.0f + RandomUnit() * 90.0f,
                     -110.0f + RandomUnit() * 70.0f,
                     pixel.Mat);
             }

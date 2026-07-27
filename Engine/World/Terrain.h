@@ -42,6 +42,18 @@ namespace Atlas
         // bottom are treated as solid walls, the sky above is open.
         bool IsSolid(float worldX, float worldY) const;
 
+        // Marches from (startX, startY) along the (normalized) direction
+        // one pixel at a time and reports the first solid pixel within
+        // maxDistance. Returns false if the ray stays in open air.
+        bool RaycastSolid(
+            float startX,
+            float startY,
+            float dirX,
+            float dirY,
+            float maxDistance,
+            float& hitX,
+            float& hitY) const;
+
         // Removes solid pixels inside the circle. Returns how many pixels
         // were removed.
         int CarveCircle(float centerX, float centerY, float radius);

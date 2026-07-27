@@ -167,6 +167,36 @@ namespace Atlas
         return GetMaterialInfo(GetMaterial(x, y)).Solid;
     }
 
+    bool Terrain::RaycastSolid(
+        float startX,
+        float startY,
+        float dirX,
+        float dirY,
+        float maxDistance,
+        float& hitX,
+        float& hitY) const
+    {
+        float x = startX;
+        float y = startY;
+
+        const int steps = std::max(1, static_cast<int>(maxDistance));
+
+        for (int i = 0; i <= steps; i++)
+        {
+            if (IsSolid(x, y))
+            {
+                hitX = x;
+                hitY = y;
+                return true;
+            }
+
+            x += dirX;
+            y += dirY;
+        }
+
+        return false;
+    }
+
     int Terrain::CarveCircle(float centerX, float centerY, float radius)
     {
         const int minX = static_cast<int>(std::floor(centerX - radius));
