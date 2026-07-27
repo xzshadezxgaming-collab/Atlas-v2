@@ -1,24 +1,81 @@
 #include "Application.h"
 
+#include "../ECS/Entity.h"
 #include "../Graphics/Camera.h"
-#include "../Graphics/Sprite.h"
 #include "../Input/Input.h"
-#include "../Physics/RigidBody.h"
 #include "../World/Terrain.h"
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <iostream>
 #include <sstream>
+#include <string>
 
 namespace Atlas
 {
     namespace
     {
-        constexpr float PlayerWidth = 64.0f;
-        constexpr float PlayerHeight = 64.0f;
-        constexpr float MoveSpeed = 300.0f;
-        constexpr float JumpVelocity = -550.0f;
+        constexpr int ViewWidth = 1280;
+        constexpr int ViewHeight = 720;
+
+        constexpr int WorldWidth = 2048;
+        constexpr int WorldHeight = 1024;
+
+        constexpr float PlayerWidth = 48.0f;
+        constexpr float PlayerHeight = 48.0f;
+        constexpr float MoveSpeed = 220.0f;
+        constexpr float JumpVelocity = -480.0f;
+
+        constexpr float DigRadius = 22.0f;
+        constexpr float PlaceRadius = 14.0f;
+
+        // Physics runs at a fixed rate; rendering runs as fast as it can.
+        constexpr float FixedTimeStep = 1.0f / 120.0f;
+        constexpr float MaxFrameTime = 0.25f;
+
+        bool LoadPlayerSprite(Sprite& sprite, SDL_Renderer* renderer)
+        {
+            // The working directory differs between running from the build
+            // tree, an IDE, or a packaged install, so try a few locations,
+            // ending with the executable's own directory.
+            const char* basePath = SDL_GetBasePath();
+
+            const std::string candidates[] =
+            {
+                "Assets/Player.bmp",
+                "../Assets/Player.bmp",
+                "../../Assets/Player.bmp",
+                "../../../../Assets/Player.bmp",
+                basePath
+                    ? std::string(basePath) + "Assets/Player.bmp"
+                    : std::string(),
+            };
+
+            for (const std::string& path : candidates)
+            {
+                if (path.empty())
+                    continue;
+
+                if (sprite.Load(renderer, path))
+                    return true;
+            }
+
+            return false;
+        }
+
+        float FindSpawnY(const Terrain& terrain, float x)
+        {
+            for (int y = 0; y < terrain.GetHeight(); y++)
+            {
+                if (terrain.IsSolid(x, static_cast<float>(y)))
+                {
+                    return static_cast<float>(y) - PlayerHeight - 2.0f;
+                }
+            }
+
+            return 0.0f;
+        }
     }
 
     Application::Application()
@@ -29,10 +86,10 @@ namespace Atlas
     {
         std::cout << "=================================\n";
         std::cout << "        ATLAS ENGINE\n";
-        std::cout << "           v0.1.8\n";
+        std::cout << "           v0.2.0\n";
         std::cout << "=================================\n\n";
 
-        if (!m_Window.Create("Atlas", 1280, 720))
+        if (!m_Window.Create("Atlas", ViewWidth, ViewHeight))
         {
             return;
         }
@@ -42,48 +99,62 @@ namespace Atlas
 
         Terrain terrain;
 
-        Sprite player;
-
-        if (!player.Load(
+        if (!terrain.Create(
             m_Window.GetRenderer(),
-            "../../../../Assets/Player.bmp"))
+            WorldWidth,
+            WorldHeight))
+        {
+            return;
+        }
+
+        Entity player;
+
+        if (!LoadPlayerSprite(player.GetSprite(), m_Window.GetRenderer()))
         {
             std::cout << "Failed to load Player.bmp\n";
         }
 
-        player.SetSize(PlayerWidth, PlayerHeight);
+        player.GetSprite().SetSize(PlayerWidth, PlayerHeight);
+        player.GetRigidBody().SetSize(PlayerWidth, PlayerHeight);
 
-        RigidBody body;
-        body.SetPosition(0.0f, 0.0f);
+        const float spawnX = WorldWidth * 0.5f;
+
+        player.GetTransform().SetPosition(
+            spawnX - PlayerWidth * 0.5f,
+            FindSpawnY(terrain, spawnX));
 
         bool running = true;
 
         Uint64 lastCounter = SDL_GetPerformanceCounter();
-        Uint64 frequency = SDL_GetPerformanceFrequency();
+        const Uint64 frequency = SDL_GetPerformanceFrequency();
 
-        double timer = 0.0;
+        float accumulator = 0.0f;
+
+        double fpsTimer = 0.0;
         int frames = 0;
 
         while (running)
         {
-            Uint64 currentCounter = SDL_GetPerformanceCounter();
+            const Uint64 currentCounter = SDL_GetPerformanceCounter();
 
-            float deltaTime = static_cast<float>(
+            float frameTime = static_cast<float>(
                 static_cast<double>(currentCounter - lastCounter) /
                 static_cast<double>(frequency));
 
             lastCounter = currentCounter;
 
-            timer += deltaTime;
+            frameTime = std::min(frameTime, MaxFrameTime);
+
+            fpsTimer += frameTime;
             frames++;
 
-            if (timer >= 1.0)
+            if (fpsTimer >= 1.0)
             {
                 std::stringstream title;
                 title << "Atlas - " << frames << " FPS";
                 m_Window.SetTitle(title.str());
 
-                timer = 0.0;
+                fpsTimer = 0.0;
                 frames = 0;
             }
 
@@ -91,61 +162,90 @@ namespace Atlas
 
             Input::Update();
 
-            float velocityX = 0.0f;
+            // Fixed-timestep simulation.
+            accumulator += frameTime;
 
-            if (Input::IsKeyDown(SDL_SCANCODE_A))
-                velocityX -= MoveSpeed;
-
-            if (Input::IsKeyDown(SDL_SCANCODE_D))
-                velocityX += MoveSpeed;
-
-            float velocityY = body.GetVelocityY();
-
-            if (Input::IsKeyDown(SDL_SCANCODE_SPACE) && body.IsGrounded())
+            while (accumulator >= FixedTimeStep)
             {
-                velocityY = JumpVelocity;
-                body.SetGrounded(false);
-            }
+                RigidBody& body = player.GetRigidBody();
 
-            body.SetVelocity(
-                velocityX,
-                velocityY);
+                float velocityX = 0.0f;
 
-            body.Update(deltaTime);
+                if (Input::IsKeyDown(SDL_SCANCODE_A))
+                    velocityX -= MoveSpeed;
 
-            if (terrain.IsSolid(
-                body.GetX() + PlayerWidth * 0.5f,
-                body.GetY() + PlayerHeight))
-            {
-                while (terrain.IsSolid(
-                    body.GetX() + PlayerWidth * 0.5f,
-                    body.GetY() + PlayerHeight))
+                if (Input::IsKeyDown(SDL_SCANCODE_D))
+                    velocityX += MoveSpeed;
+
+                float velocityY = body.GetVelocityY();
+
+                if (Input::IsKeyDown(SDL_SCANCODE_SPACE) && body.IsGrounded())
                 {
-                    body.SetPosition(
-                        body.GetX(),
-                        body.GetY() - 1.0f);
+                    velocityY = JumpVelocity;
                 }
 
-                body.SetVelocity(
-                    body.GetVelocityX(),
-                    0.0f);
+                body.SetVelocity(velocityX, velocityY);
+                body.Update(terrain, FixedTimeStep);
 
-                body.SetGrounded(true);
+                accumulator -= FixedTimeStep;
             }
 
-            player.SetPosition(
-                body.GetX(),
-                body.GetY());
+            // Terrain editing: dig with the left mouse button, place dirt
+            // with the right.
+            const float mouseWorldX = Input::GetMouseX() + camera.GetX();
+            const float mouseWorldY = Input::GetMouseY() + camera.GetY();
+
+            if (Input::IsMouseButtonDown(SDL_BUTTON_LEFT))
+            {
+                terrain.CarveCircle(mouseWorldX, mouseWorldY, DigRadius);
+            }
+            else if (Input::IsMouseButtonDown(SDL_BUTTON_RIGHT))
+            {
+                terrain.PlaceCircle(
+                    mouseWorldX,
+                    mouseWorldY,
+                    PlaceRadius,
+                    Material::Dirt);
+            }
+
+            terrain.Update();
+
+            // Camera follows the player, clamped to the world.
+            const float playerCenterX =
+                player.GetTransform().GetX() + PlayerWidth * 0.5f;
+            const float playerCenterY =
+                player.GetTransform().GetY() + PlayerHeight * 0.5f;
 
             camera.SetPosition(
-                body.GetX() - 640.0f + PlayerWidth * 0.5f,
-                body.GetY() - 360.0f + PlayerHeight * 0.5f);
+                std::clamp(
+                    playerCenterX - ViewWidth * 0.5f,
+                    0.0f,
+                    static_cast<float>(WorldWidth - ViewWidth)),
+                std::clamp(
+                    playerCenterY - ViewHeight * 0.5f,
+                    0.0f,
+                    static_cast<float>(WorldHeight - ViewHeight)));
 
             m_Window.BeginFrame();
 
             terrain.Draw(m_Window);
 
-            player.Draw(m_Window);
+            player.GetSprite().Draw(m_Window);
+
+            // Simple crosshair at the mouse cursor.
+            m_Window.DrawFilledRect(
+                mouseWorldX - 3.0f,
+                mouseWorldY - 1.0f,
+                6.0f,
+                2.0f,
+                255, 255, 255, 200);
+
+            m_Window.DrawFilledRect(
+                mouseWorldX - 1.0f,
+                mouseWorldY - 3.0f,
+                2.0f,
+                6.0f,
+                255, 255, 255, 200);
 
             m_Window.EndFrame();
         }

@@ -4,6 +4,8 @@ namespace Atlas
 {
     Entity::Entity()
     {
+        m_Sprite.SetTransform(&m_Transform);
+        m_RigidBody.SetTransform(&m_Transform);
     }
 
     Transform& Entity::GetTransform()
