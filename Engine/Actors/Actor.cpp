@@ -597,6 +597,14 @@ namespace Atlas
         }
     }
 
+    void Actor::Heal(int amount)
+    {
+        if (!IsAlive())
+            return;
+
+        m_Health = std::min(100, m_Health + amount);
+    }
+
     void Actor::Gib(ParticleSystem& particles)
     {
         const float cx = GetCenterX();

@@ -35,6 +35,10 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
   respawns. HUD bars for health, fuel and ammo.
 - **Procedural retro SFX** — gunshots, explosions, digging, jumps and
   gibs synthesized at startup (SDL3 audio), no sound files needed.
+- **Data-driven scenes** — world size and seed come from
+  `Assets/scene.ini` (seed 0 = new world every launch).
+- **Feel** — screen shake on explosions, sky gradient, and medkit drops
+  from fallen enemies.
 - **Fixed-timestep simulation** decoupled from rendering.
 
 ### Controls

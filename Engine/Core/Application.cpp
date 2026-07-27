@@ -3,6 +3,7 @@
 #include "../Actors/Actor.h"
 #include "../Actors/AIController.h"
 #include "../Audio/Audio.h"
+#include "IniFile.h"
 #include "../Combat/Grenade.h"
 #include "../Combat/Weapon.h"
 #include "../Graphics/Camera.h"
@@ -27,8 +28,8 @@ namespace Atlas
         constexpr int ViewWidth = 1280;
         constexpr int ViewHeight = 720;
 
-        constexpr int WorldWidth = 2048;
-        constexpr int WorldHeight = 1024;
+        constexpr int DefaultWorldWidth = 2048;
+        constexpr int DefaultWorldHeight = 1024;
 
         // Physics runs at a fixed rate; rendering runs as fast as it can.
         constexpr float FixedTimeStep = 1.0f / 120.0f;
@@ -100,6 +101,13 @@ namespace Atlas
             std::unique_ptr<Actor> Body;
             AIController Brain;
         };
+
+        struct HealthPickup
+        {
+            float X;
+            float Y;
+            float VelY;
+        };
     }
 
     Application::Application()
@@ -126,12 +134,30 @@ namespace Atlas
         Camera camera;
         m_Window.SetCamera(&camera);
 
+        // Scene setup is data-driven; Seed 0 means a fresh world each run.
+        IniFile sceneIni;
+        sceneIni.Load(ResolveAssetPath("Assets/scene.ini"));
+
+        const int worldWidth = std::max(
+            ViewWidth,
+            sceneIni.GetInt("World", "Width", DefaultWorldWidth));
+        const int worldHeight = std::max(
+            ViewHeight,
+            sceneIni.GetInt("World", "Height", DefaultWorldHeight));
+
+        unsigned int seed = static_cast<unsigned int>(
+            sceneIni.GetInt("World", "Seed", 0));
+
+        if (seed == 0)
+            seed = static_cast<unsigned int>(SDL_GetPerformanceCounter());
+
         Terrain terrain;
 
         if (!terrain.Create(
             m_Window.GetRenderer(),
-            WorldWidth,
-            WorldHeight))
+            worldWidth,
+            worldHeight,
+            seed))
         {
             return;
         }
@@ -161,7 +187,7 @@ namespace Atlas
 
         player.SetTeam(0);
         player.SetWeaponDef(loadout[0]);
-        player.Spawn(terrain, WorldWidth * 0.5f);
+        player.Spawn(terrain, static_cast<float>(worldWidth) * 0.5f);
 
         int currentWeapon = 0;
 
@@ -182,6 +208,10 @@ namespace Atlas
         bool playerWasGrounded = true;
         float playerPrevFallSpeed = 0.0f;
 
+        float cameraShake = 0.0f;
+        std::vector<HealthPickup> pickups;
+        std::uniform_real_distribution<float> unit(-1.0f, 1.0f);
+
         auto spawnEnemy = [&](float x)
         {
             Enemy enemy;
@@ -197,7 +227,7 @@ namespace Atlas
         auto spawnWave = [&](int count)
         {
             std::uniform_real_distribution<float> position(
-                150.0f, static_cast<float>(WorldWidth - 150));
+                150.0f, static_cast<float>(worldWidth - 150));
 
             for (int i = 0; i < count && static_cast<int>(enemies.size()) < MaxEnemies; i++)
             {
@@ -379,7 +409,7 @@ namespace Atlas
                     if (respawnTimer <= 0.0f)
                     {
                         player.ResetVitals();
-                        player.Spawn(terrain, WorldWidth * 0.5f);
+                        player.Spawn(terrain, static_cast<float>(worldWidth) * 0.5f);
                         playerGibbed = false;
                     }
                 }
@@ -415,7 +445,12 @@ namespace Atlas
                     FixedTimeStep);
 
                 if (grenades.ExplodedThisFrame())
+                {
                     Audio::Play(Sfx::Explosion);
+                    cameraShake = std::min(cameraShake + 11.0f, 18.0f);
+                }
+
+                cameraShake -= cameraShake * 3.5f * FixedTimeStep;
 
                 particles.Update(
                     terrain,
@@ -439,8 +474,49 @@ namespace Atlas
                         enemies[i].Body->Gib(particles);
                         Audio::Play(Sfx::Gib, 0.8f);
 
+                        // Sometimes drop a medkit.
+                        if (unit(rng) > 0.2f)
+                        {
+                            pickups.push_back({
+                                enemies[i].Body->GetCenterX(),
+                                enemies[i].Body->GetCenterY(),
+                                -120.0f });
+                        }
+
                         enemies.erase(enemies.begin() +
                             static_cast<std::ptrdiff_t>(i));
+                    }
+                    else
+                    {
+                        i++;
+                    }
+                }
+
+                // --- Medkit pickups ---
+                for (std::size_t i = 0; i < pickups.size(); )
+                {
+                    HealthPickup& pickup = pickups[i];
+
+                    pickup.VelY += 900.0f * FixedTimeStep;
+
+                    const float fall = pickup.VelY * FixedTimeStep;
+
+                    if (!terrain.IsSolid(pickup.X, pickup.Y + fall + 4.0f))
+                        pickup.Y += fall;
+                    else
+                        pickup.VelY = 0.0f;
+
+                    const float dx = pickup.X - player.GetCenterX();
+                    const float dy = pickup.Y - player.GetCenterY();
+
+                    if (player.IsAlive() &&
+                        dx * dx + dy * dy < 34.0f * 34.0f)
+                    {
+                        player.Heal(30);
+                        Audio::Play(Sfx::Reload, 0.9f);
+
+                        pickups[i] = pickups.back();
+                        pickups.pop_back();
                     }
                     else
                     {
@@ -466,20 +542,53 @@ namespace Atlas
 
             terrain.Update();
 
-            // Camera follows the player, clamped to the world.
+            // Camera follows the player, clamped to the world, with
+            // explosion shake on top.
             camera.SetPosition(
                 std::clamp(
                     player.GetCenterX() - ViewWidth * 0.5f,
                     0.0f,
-                    static_cast<float>(WorldWidth - ViewWidth)),
+                    static_cast<float>(worldWidth - ViewWidth)) +
+                    unit(rng) * cameraShake,
                 std::clamp(
                     player.GetCenterY() - ViewHeight * 0.5f,
                     0.0f,
-                    static_cast<float>(WorldHeight - ViewHeight)));
+                    static_cast<float>(worldHeight - ViewHeight)) +
+                    unit(rng) * cameraShake);
 
             m_Window.BeginFrame();
 
+            // Sky: vertical gradient bands behind the world.
+            for (int band = 0; band < 12; band++)
+            {
+                const float t = static_cast<float>(band) / 11.0f;
+
+                m_Window.DrawScreenRect(
+                    0.0f,
+                    static_cast<float>(band * ViewHeight) / 12.0f,
+                    static_cast<float>(ViewWidth),
+                    static_cast<float>(ViewHeight) / 12.0f + 1.0f,
+                    static_cast<Uint8>(38 + 20.0f * (1.0f - t)),
+                    static_cast<Uint8>(44 + 26.0f * (1.0f - t)),
+                    static_cast<Uint8>(58 + 40.0f * (1.0f - t)),
+                    255);
+            }
+
             terrain.Draw(m_Window);
+
+            // Medkits.
+            for (const HealthPickup& pickup : pickups)
+            {
+                m_Window.DrawFilledRect(
+                    pickup.X - 5.0f, pickup.Y - 4.0f, 10.0f, 8.0f,
+                    235, 235, 235, 255);
+                m_Window.DrawFilledRect(
+                    pickup.X - 1.0f, pickup.Y - 3.0f, 2.0f, 6.0f,
+                    205, 60, 50, 255);
+                m_Window.DrawFilledRect(
+                    pickup.X - 3.0f, pickup.Y - 1.0f, 6.0f, 2.0f,
+                    205, 60, 50, 255);
+            }
 
             grenades.Draw(m_Window);
 

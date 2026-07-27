@@ -70,6 +70,7 @@ namespace Atlas
         bool IsAlive() const;
         int GetHealth() const;
         void TakeDamage(int damage, float impulseX, float impulseY);
+        void Heal(int amount);
 
         // Spews gibs and blood at the body's position (call on death).
         void Gib(ParticleSystem& particles);
