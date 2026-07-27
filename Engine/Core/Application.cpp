@@ -22,8 +22,9 @@ namespace Atlas
         constexpr int WorldWidth = 2048;
         constexpr int WorldHeight = 1024;
 
-        constexpr float PlayerWidth = 48.0f;
-        constexpr float PlayerHeight = 48.0f;
+        // The player art is 16x32, drawn at 2x.
+        constexpr float PlayerWidth = 32.0f;
+        constexpr float PlayerHeight = 64.0f;
         constexpr float MoveSpeed = 220.0f;
         constexpr float JumpVelocity = -480.0f;
 
@@ -176,6 +177,12 @@ namespace Atlas
 
                 if (Input::IsKeyDown(SDL_SCANCODE_D))
                     velocityX += MoveSpeed;
+
+                // Face the direction of movement (art faces right).
+                if (velocityX < 0.0f)
+                    player.GetSprite().SetFlipX(true);
+                else if (velocityX > 0.0f)
+                    player.GetSprite().SetFlipX(false);
 
                 float velocityY = body.GetVelocityY();
 

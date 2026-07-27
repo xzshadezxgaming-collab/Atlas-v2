@@ -22,6 +22,10 @@ namespace Atlas
 
         void SetSize(float width, float height);
 
+        // Mirrors the sprite horizontally; art is authored facing right.
+        void SetFlipX(bool flip);
+        bool GetFlipX() const;
+
         float GetWidth() const;
         float GetHeight() const;
 
@@ -36,5 +40,7 @@ namespace Atlas
 
         float m_Width;
         float m_Height;
+
+        bool m_FlipX;
     };
 }

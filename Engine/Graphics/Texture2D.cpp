@@ -33,6 +33,16 @@ namespace Atlas
         m_Width = surface->w;
         m_Height = surface->h;
 
+        // Opaque images use magenta (255, 0, 255) as the transparent
+        // color, the classic sprite color key.
+        if (!SDL_ISPIXELFORMAT_ALPHA(surface->format))
+        {
+            SDL_SetSurfaceColorKey(
+                surface,
+                true,
+                SDL_MapSurfaceRGB(surface, 255, 0, 255));
+        }
+
         m_Texture = SDL_CreateTextureFromSurface(renderer, surface);
 
         SDL_DestroySurface(surface);
@@ -42,6 +52,9 @@ namespace Atlas
             std::cout << SDL_GetError() << std::endl;
             return false;
         }
+
+        // Pixel art stays crisp when scaled up.
+        SDL_SetTextureScaleMode(m_Texture, SDL_SCALEMODE_NEAREST);
 
         return true;
     }

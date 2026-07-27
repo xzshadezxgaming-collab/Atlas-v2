@@ -131,7 +131,8 @@ namespace Atlas
         float x,
         float y,
         float width,
-        float height)
+        float height,
+        bool flipHorizontal)
     {
         if (!texture)
             return;
@@ -148,11 +149,14 @@ namespace Atlas
         destination.w = width;
         destination.h = height;
 
-        SDL_RenderTexture(
+        SDL_RenderTextureRotated(
             m_Renderer,
             texture,
             nullptr,
-            &destination);
+            &destination,
+            0.0,
+            nullptr,
+            flipHorizontal ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
     }
 
     SDL_Renderer* Window::GetRenderer() const

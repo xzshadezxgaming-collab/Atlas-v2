@@ -40,7 +40,8 @@ namespace Atlas
             float x,
             float y,
             float width,
-            float height);
+            float height,
+            bool flipHorizontal = false);
 
         SDL_Renderer* GetRenderer() const;
 

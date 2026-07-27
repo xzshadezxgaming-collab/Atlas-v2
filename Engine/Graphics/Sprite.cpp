@@ -7,7 +7,8 @@ namespace Atlas
     Sprite::Sprite()
         : m_Transform(nullptr),
         m_Width(64.0f),
-        m_Height(64.0f)
+        m_Height(64.0f),
+        m_FlipX(false)
     {
     }
 
@@ -25,6 +26,16 @@ namespace Atlas
     {
         m_Width = width;
         m_Height = height;
+    }
+
+    void Sprite::SetFlipX(bool flip)
+    {
+        m_FlipX = flip;
+    }
+
+    bool Sprite::GetFlipX() const
+    {
+        return m_FlipX;
     }
 
     float Sprite::GetWidth() const
@@ -55,6 +66,7 @@ namespace Atlas
             m_Transform->GetX(),
             m_Transform->GetY(),
             m_Width,
-            m_Height);
+            m_Height,
+            m_FlipX);
     }
 }
