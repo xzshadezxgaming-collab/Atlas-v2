@@ -43,6 +43,31 @@ namespace Atlas
                 pixel.Mat);
         }
 
+        // Fireball puffs.
+        for (int i = 0; i < 16; i++)
+        {
+            const float angle = static_cast<float>(i) * 0.3927f;
+            const float speed = 30.0f + (i % 4) * 26.0f;
+
+            particles.SpawnFire(
+                x + std::cos(angle) * 6.0f,
+                y + std::sin(angle) * 6.0f,
+                std::cos(angle) * speed,
+                std::sin(angle) * speed - 30.0f);
+        }
+
+        // Scorch the crater rim.
+        for (int i = 0; i < 64; i++)
+        {
+            const float angle = static_cast<float>(i) * 0.0982f;
+            const float ringRadius = radius + 1.0f + (i % 3);
+
+            terrain.StainPixel(
+                static_cast<int>(x + std::cos(angle) * ringRadius),
+                static_cast<int>(y + std::sin(angle) * ringRadius),
+                34, 28, 24);
+        }
+
         // Flash sparks and a smoke plume.
         for (int i = 0; i < 14; i++)
         {

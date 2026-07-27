@@ -1,6 +1,8 @@
 #include "Window.h"
 #include "../Graphics/Camera.h"
 
+#include <algorithm>
+#include <cmath>
 #include <iostream>
 
 namespace Atlas
@@ -146,6 +148,113 @@ namespace Atlas
         SDL_SetRenderDrawBlendMode(m_Renderer, SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(m_Renderer, r, g, b, a);
         SDL_RenderFillRect(m_Renderer, &rect);
+    }
+
+    namespace
+    {
+        void FillGlowCircle(
+            SDL_Renderer* renderer,
+            float x,
+            float y,
+            float radius,
+            Uint8 r,
+            Uint8 g,
+            Uint8 b,
+            Uint8 a)
+        {
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_ADD);
+
+            // Two nested discs: soft outer, brighter core.
+            for (int pass = 0; pass < 2; pass++)
+            {
+                const float passRadius = pass == 0 ? radius : radius * 0.5f;
+                const Uint8 passAlpha = pass == 0
+                    ? a
+                    : static_cast<Uint8>(std::min(255, a * 2));
+
+                SDL_SetRenderDrawColor(renderer, r, g, b, passAlpha);
+
+                for (float dy = -passRadius; dy <= passRadius; dy += 2.0f)
+                {
+                    const float half = std::sqrt(
+                        std::max(0.0f, passRadius * passRadius - dy * dy));
+
+                    SDL_FRect rect;
+                    rect.x = x - half;
+                    rect.y = y + dy;
+                    rect.w = half * 2.0f;
+                    rect.h = 2.0f;
+
+                    SDL_RenderFillRect(renderer, &rect);
+                }
+            }
+
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        }
+    }
+
+    void Window::DrawGlow(
+        float x,
+        float y,
+        float radius,
+        Uint8 r,
+        Uint8 g,
+        Uint8 b,
+        Uint8 a)
+    {
+        if (m_Camera)
+        {
+            x -= m_Camera->GetX();
+            y -= m_Camera->GetY();
+        }
+
+        FillGlowCircle(m_Renderer, x, y, radius, r, g, b, a);
+    }
+
+    void Window::DrawGlowScreen(
+        float x,
+        float y,
+        float radius,
+        Uint8 r,
+        Uint8 g,
+        Uint8 b,
+        Uint8 a)
+    {
+        FillGlowCircle(m_Renderer, x, y, radius, r, g, b, a);
+    }
+
+    void Window::DrawTextureRotated(
+        SDL_Texture* texture,
+        float x,
+        float y,
+        float width,
+        float height,
+        float angleDegrees,
+        bool flipHorizontal)
+    {
+        if (!texture)
+            return;
+
+        if (m_Camera)
+        {
+            x -= m_Camera->GetX();
+            y -= m_Camera->GetY();
+        }
+
+        SDL_FRect destination;
+        destination.x = x;
+        destination.y = y;
+        destination.w = width;
+        destination.h = height;
+
+        SDL_RenderTextureRotated(
+            m_Renderer,
+            texture,
+            nullptr,
+            &destination,
+            static_cast<double>(angleDegrees),
+            nullptr,
+            flipHorizontal ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
     }
 
     void Window::DrawTexture(

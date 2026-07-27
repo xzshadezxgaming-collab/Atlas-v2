@@ -17,6 +17,7 @@ add_library(AtlasEngine STATIC
 
     Input/Input.cpp
 
+    Graphics/Background.cpp
     Graphics/Texture2D.cpp
     Graphics/Sprite.cpp
     Graphics/Camera.cpp

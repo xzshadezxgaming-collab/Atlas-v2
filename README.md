@@ -4,7 +4,7 @@ A 2D game engine inspired by the technology behind **Cortex Command**:
 fully destructible per-pixel terrain, pixel-level physics, and
 material-driven gameplay — rebuilt on modern C++ and SDL3.
 
-## Current features (v0.4.0)
+## Current features (v0.5.0)
 
 - **Per-pixel destructible terrain** — the world is a material grid
   (grass, dirt, stone, gold veins) paired with a streamed GPU texture.
@@ -37,8 +37,14 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
   gibs synthesized at startup (SDL3 audio), no sound files needed.
 - **Data-driven scenes** — world size and seed come from
   `Assets/scene.ini` (seed 0 = new world every launch).
-- **Feel** — screen shake on explosions, sky gradient, and medkit drops
-  from fallen enemies.
+- **Atmosphere** — dusk sky with stars, moon and drifting clouds over
+  three parallax mountain layers; screen-edge vignette; screen shake;
+  medkit drops from fallen enemies.
+- **Lighting and rendering** — sunlit terrain edges and dark overhangs,
+  depth-darkened underground, per-material texture (mottled stone,
+  dirt specks, glittering gold), glowing tracer rounds, additive
+  fireballs and muzzle light, ejected shell casings, scorched crater
+  rims, walk bob and lean, and hit flashes on actors.
 - **Fixed-timestep simulation** decoupled from rendering.
 
 ### Controls

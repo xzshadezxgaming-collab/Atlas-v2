@@ -162,5 +162,9 @@ namespace Atlas
         Uint8 m_TintR;
         Uint8 m_TintG;
         Uint8 m_TintB;
+
+        // Visual-only state.
+        float m_BobPhase;
+        float m_HurtFlash;
     };
 }

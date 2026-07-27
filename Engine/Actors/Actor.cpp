@@ -128,7 +128,9 @@ namespace Atlas
         m_Jetting(false),
         m_TintR(255),
         m_TintG(255),
-        m_TintB(255)
+        m_TintB(255),
+        m_BobPhase(0.0f),
+        m_HurtFlash(0.0f)
     {
         m_Legs[0].Configure(HipXBack, HipY, ThighLength, ShinLength);
         m_Legs[1].Configure(HipXFront, HipY, ThighLength, ShinLength);
@@ -215,6 +217,13 @@ namespace Atlas
 
         if (m_MuzzleFlash > 0.0f)
             m_MuzzleFlash -= deltaTime;
+
+        if (m_HurtFlash > 0.0f)
+            m_HurtFlash -= deltaTime;
+
+        // Walk-cycle bob for the body sprite.
+        if (m_Grounded)
+            m_BobPhase += std::fabs(m_VelocityX) * deltaTime * 0.09f;
 
         m_VelocityY += Gravity * deltaTime;
 
@@ -370,12 +379,23 @@ namespace Atlas
 
         if (m_BodyTexture.GetTexture())
         {
-            window.DrawTexture(
+            // Bob while walking, lean into the direction of travel.
+            const float bob = m_Grounded
+                ? std::sin(m_BobPhase) * 1.4f
+                : 0.0f;
+
+            const float lean = std::clamp(
+                m_VelocityX * 0.02f,
+                -6.0f,
+                6.0f);
+
+            window.DrawTextureRotated(
                 m_BodyTexture.GetTexture(),
                 m_X - (SpriteWidth - BodyWidth) * 0.5f,
-                m_Y,
+                m_Y + bob,
                 SpriteWidth,
                 SpriteHeight,
+                lean,
                 m_FacingDir < 0.0f);
         }
 
@@ -388,6 +408,36 @@ namespace Atlas
             m_TintR, m_TintG, m_TintB);
 
         DrawArmAndWeapon(window);
+
+        // Jetpack flame under the body while thrusting.
+        if (m_Jetting)
+        {
+            const float flameX = GetCenterX();
+            const float flameY = m_Y + BodyHeight + 3.0f;
+
+            window.DrawGlow(flameX, flameY, 13.0f, 255, 170, 70, 70);
+
+            window.DrawFilledRect(
+                flameX - 3.0f, flameY - 2.0f, 6.0f, 7.0f,
+                255, 214, 130, 230);
+            window.DrawFilledRect(
+                flameX - 2.0f, flameY + 4.0f, 4.0f, 5.0f,
+                255, 150, 60, 200);
+        }
+
+        // Hit flash: quick white blink over the whole figure.
+        if (m_HurtFlash > 0.0f)
+        {
+            const Uint8 alpha = static_cast<Uint8>(
+                std::min(1.0f, m_HurtFlash / 0.12f) * 130.0f);
+
+            window.DrawFilledRect(
+                m_X - 4.0f,
+                m_Y - 2.0f,
+                BodyWidth + 8.0f,
+                BodyHeight + StandHeight + 4.0f,
+                255, 255, 255, alpha);
+        }
     }
 
     void Actor::DrawArmAndWeapon(Window& window) const
@@ -481,6 +531,9 @@ namespace Atlas
 
         if (m_MuzzleFlash > 0.0f)
         {
+            // Light spill around the muzzle plus the flash itself.
+            window.DrawGlow(muzzleX, muzzleY, 28.0f, 255, 200, 100, 60);
+
             window.DrawFilledRect(
                 muzzleX - 3.0f,
                 muzzleY - 3.0f,
@@ -584,6 +637,7 @@ namespace Atlas
             return;
 
         m_Health -= damage;
+        m_HurtFlash = 0.12f;
 
         m_KnockVelX += impulseX;
         m_VelocityY += impulseY;

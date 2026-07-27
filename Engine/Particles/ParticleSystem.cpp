@@ -67,6 +67,7 @@ namespace Atlas
         p.VelX = velX;
         p.VelY = velY;
         p.Life = 2.5f;
+        p.MaxLife = p.Life;
         p.Gravity = BulletGravity;
         p.Power = power;
         p.Damage = static_cast<std::int16_t>(damage);
@@ -96,6 +97,7 @@ namespace Atlas
         p.VelX = velX;
         p.VelY = velY;
         p.Life = 6.0f;
+        p.MaxLife = p.Life;
         p.Gravity = DebrisGravity;
         p.R = info.R;
         p.G = info.G;
@@ -116,6 +118,7 @@ namespace Atlas
         p.VelX = velX;
         p.VelY = velY;
         p.Life = 3.0f;
+        p.MaxLife = p.Life;
         p.Gravity = DebrisGravity;
         p.R = 158;
         p.G = 24;
@@ -136,6 +139,7 @@ namespace Atlas
         p.VelX = velX;
         p.VelY = velY;
         p.Life = 0.25f + RandomUnit() * 0.1f;
+        p.MaxLife = p.Life;
         p.Gravity = 400.0f;
         p.R = 255;
         p.G = 210;
@@ -156,12 +160,56 @@ namespace Atlas
         p.VelX = velX;
         p.VelY = velY;
         p.Life = 0.7f + RandomUnit() * 0.3f;
+        p.MaxLife = p.Life;
         p.Gravity = -160.0f; // drifts upward
         p.R = 130;
         p.G = 128;
         p.B = 124;
         p.Size = 2;
         p.Type = ParticleType::Smoke;
+        p.SettleMaterial = Material::Air;
+        p.Owner = nullptr;
+
+        Push(p);
+    }
+
+    void ParticleSystem::SpawnFire(float x, float y, float velX, float velY)
+    {
+        Particle p{};
+        p.X = x;
+        p.Y = y;
+        p.VelX = velX;
+        p.VelY = velY;
+        p.Life = 0.4f + RandomUnit() * 0.15f;
+        p.MaxLife = p.Life;
+        p.Gravity = -120.0f; // fire rises
+        p.R = 255;
+        p.G = 150;
+        p.B = 60;
+        p.Size = 3;
+        p.Type = ParticleType::Fire;
+        p.SettleMaterial = Material::Air;
+        p.Owner = nullptr;
+
+        Push(p);
+    }
+
+    void ParticleSystem::SpawnCasing(float x, float y, float velX, float velY)
+    {
+        Particle p{};
+        p.X = x;
+        p.Y = y;
+        p.VelX = velX;
+        p.VelY = velY;
+        p.Life = 1.4f;
+        p.MaxLife = p.Life;
+        p.Gravity = DebrisGravity;
+        p.Bounces = 2;
+        p.R = 214;
+        p.G = 178;
+        p.B = 86;
+        p.Size = 1;
+        p.Type = ParticleType::Casing;
         p.SettleMaterial = Material::Air;
         p.Owner = nullptr;
 
@@ -184,6 +232,7 @@ namespace Atlas
         p.VelX = velX;
         p.VelY = velY;
         p.Life = 8.0f;
+        p.MaxLife = p.Life;
         p.Gravity = DebrisGravity;
         p.R = r;
         p.G = g;
@@ -301,7 +350,8 @@ namespace Atlas
                             break;
                     }
 
-                    if (p.Type == ParticleType::Smoke)
+                    if (p.Type == ParticleType::Smoke ||
+                        p.Type == ParticleType::Fire)
                         continue;
 
                     if (!terrain.IsSolid(p.X, p.Y))
@@ -404,6 +454,23 @@ namespace Atlas
                         break;
                     }
 
+                    case ParticleType::Casing:
+                    {
+                        if (p.Bounces > 0)
+                        {
+                            p.Bounces--;
+                            p.X = prevX;
+                            p.Y = prevY;
+                            p.VelY = -std::fabs(p.VelY) * 0.4f;
+                            p.VelX *= 0.6f;
+                        }
+                        else
+                        {
+                            alive = false;
+                        }
+                        break;
+                    }
+
                     case ParticleType::Spark:
                     default:
                         alive = false;
@@ -426,19 +493,139 @@ namespace Atlas
 
     void ParticleSystem::Draw(Window& window) const
     {
+        // Pass 1: matte particles (smoke behind everything, then solids).
         for (const Particle& p : m_Particles)
         {
-            const float size = static_cast<float>(p.Size);
+            const float age = 1.0f - p.Life / p.MaxLife;
 
-            window.DrawFilledRect(
-                p.X - size * 0.5f,
-                p.Y - size * 0.5f,
-                size,
-                size,
-                p.R,
-                p.G,
-                p.B,
-                p.Type == ParticleType::Smoke ? 150 : 255);
+            switch (p.Type)
+            {
+            case ParticleType::Smoke:
+            {
+                // Grows and thins out as it rises.
+                const float size = 2.0f + age * 9.0f;
+                const Uint8 alpha = static_cast<Uint8>(120.0f * (1.0f - age));
+                const Uint8 tone = static_cast<Uint8>(120.0f + age * 40.0f);
+
+                window.DrawFilledRect(
+                    p.X - size * 0.5f, p.Y - size * 0.5f, size, size,
+                    tone, tone, static_cast<Uint8>(tone - 4), alpha);
+                break;
+            }
+
+            case ParticleType::Debris:
+            case ParticleType::Blood:
+            case ParticleType::Gib:
+            {
+                const float size = static_cast<float>(p.Size);
+
+                window.DrawFilledRect(
+                    p.X - size * 0.5f, p.Y - size * 0.5f, size, size,
+                    p.R, p.G, p.B, 255);
+                break;
+            }
+
+            case ParticleType::Casing:
+            {
+                window.DrawFilledRect(
+                    p.X - 1.0f, p.Y - 0.5f, 2.0f, 1.5f,
+                    p.R, p.G, p.B, 255);
+                break;
+            }
+
+            default:
+                break;
+            }
+        }
+
+        // Pass 2: glowing particles on top (fire, sparks, tracers).
+        for (const Particle& p : m_Particles)
+        {
+            const float age = 1.0f - p.Life / p.MaxLife;
+
+            switch (p.Type)
+            {
+            case ParticleType::Fire:
+            {
+                // Expanding additive fireball fading orange -> red.
+                const float radius = 4.0f + age * 14.0f;
+                const Uint8 alpha = static_cast<Uint8>(70.0f * (1.0f - age));
+
+                window.DrawGlow(
+                    p.X, p.Y, radius,
+                    255,
+                    static_cast<Uint8>(150.0f * (1.0f - age * 0.6f)),
+                    40,
+                    alpha);
+
+                if (age < 0.5f)
+                {
+                    const float core = 3.0f * (1.0f - age);
+
+                    window.DrawFilledRect(
+                        p.X - core * 0.5f, p.Y - core * 0.5f, core, core,
+                        255, 232, 160, 255);
+                }
+                break;
+            }
+
+            case ParticleType::Spark:
+            {
+                // White-hot -> amber -> ember red.
+                Uint8 r = 255, g = 220, b = 150;
+
+                if (age > 0.35f)
+                {
+                    r = 255; g = 140; b = 40;
+                }
+
+                if (age > 0.7f)
+                {
+                    r = 150; g = 45; b = 20;
+                }
+
+                window.DrawFilledRect(
+                    p.X - 1.0f, p.Y - 1.0f, 2.0f, 2.0f, r, g, b, 255);
+
+                if (age < 0.4f)
+                    window.DrawGlow(p.X, p.Y, 5.0f, 255, 190, 90, 40);
+
+                break;
+            }
+
+            case ParticleType::Bullet:
+            {
+                // Tracer streak along the velocity, glowing head.
+                const float speed = std::sqrt(
+                    p.VelX * p.VelX + p.VelY * p.VelY) + 0.001f;
+
+                const float streak = std::min(14.0f, speed * 0.014f);
+
+                const float tailX = p.X - p.VelX / speed * streak;
+                const float tailY = p.Y - p.VelY / speed * streak;
+
+                for (int seg = 0; seg < 3; seg++)
+                {
+                    const float t = static_cast<float>(seg) / 3.0f;
+
+                    window.DrawFilledRect(
+                        p.X + (tailX - p.X) * t - 1.0f,
+                        p.Y + (tailY - p.Y) * t - 1.0f,
+                        2.0f,
+                        2.0f,
+                        255,
+                        static_cast<Uint8>(240 - seg * 50),
+                        static_cast<Uint8>(170 - seg * 50),
+                        static_cast<Uint8>(255 - seg * 70));
+                }
+
+                window.DrawGlow(p.X, p.Y, 6.0f, 255, 210, 110, 55);
+                break;
+            }
+
+            default:
+                break;
+            }
         }
     }
 

@@ -95,6 +95,10 @@ namespace Atlas
         std::vector<std::uint8_t> m_Materials;
         std::vector<std::uint8_t> m_Pixels;
 
+        // Per-pixel brightness factor (255 = full) baked at generation:
+        // terrain gets darker with depth below the original surface.
+        std::vector<std::uint8_t> m_DepthShade;
+
         SDL_Texture* m_Texture;
 
         bool m_DirtyAll;

@@ -284,12 +284,18 @@ namespace Atlas
                 owner);
         }
 
-        // Muzzle smoke.
+        // Muzzle smoke and an ejected casing.
         particles.SpawnSmoke(
             muzzleX,
             muzzleY,
             dirX * 40.0f + RandomUnit() * 20.0f,
             dirY * 40.0f - 20.0f);
+
+        particles.SpawnCasing(
+            muzzleX - dirX * m_Def->BarrelLength,
+            muzzleY - dirY * m_Def->BarrelLength - 2.0f,
+            -dirX * 40.0f + RandomUnit() * 30.0f,
+            -110.0f + RandomUnit() * 40.0f);
 
         return true;
     }

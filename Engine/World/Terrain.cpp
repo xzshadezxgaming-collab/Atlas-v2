@@ -63,6 +63,10 @@ namespace Atlas
             static_cast<std::size_t>(width) * height * 4,
             0);
 
+        m_DepthShade.assign(
+            static_cast<std::size_t>(width) * height,
+            255);
+
         m_Texture = SDL_CreateTexture(
             renderer,
             SDL_PIXELFORMAT_RGBA32,
@@ -136,8 +140,15 @@ namespace Atlas
 
         slot = static_cast<std::uint8_t>(material);
 
-        WritePixelColor(x, y, material);
-        MarkDirty(x, y);
+        // A change here also changes the edge lighting of the pixels
+        // directly above and below.
+        for (int dy = -1; dy <= 1; dy++)
+        {
+            WritePixelColor(x, y + dy, GetMaterial(x, y + dy));
+            MarkDirty(
+                std::clamp(x, 0, m_Width - 1),
+                std::clamp(y + dy, 0, m_Height - 1));
+        }
     }
 
     bool Terrain::IsSolid(float worldX, float worldY) const
@@ -417,6 +428,22 @@ namespace Atlas
             }
         }
 
+        // Bake depth shading: the deeper below the surface, the darker,
+        // so craters and tunnels reveal dark underground.
+        for (int x = 0; x < m_Width; x++)
+        {
+            for (int y = surface[x]; y < m_Height; y++)
+            {
+                const float depth = static_cast<float>(y - surface[x]);
+
+                const float factor =
+                    1.0f - std::min(0.42f, depth / 260.0f * 0.42f);
+
+                m_DepthShade[static_cast<std::size_t>(y) * m_Width + x] =
+                    static_cast<std::uint8_t>(factor * 255.0f);
+            }
+        }
+
         // Gold veins: blobs of gold scattered through the stone layer.
         std::uniform_int_distribution<int> veinX(0, m_Width - 1);
         std::uniform_int_distribution<int> veinRadius(3, 9);
@@ -477,6 +504,9 @@ namespace Atlas
 
     void Terrain::WritePixelColor(int x, int y, Material material)
     {
+        if (x < 0 || x >= m_Width || y < 0 || y >= m_Height)
+            return;
+
         const std::size_t index =
             (static_cast<std::size_t>(y) * m_Width + x) * 4;
 
@@ -495,7 +525,50 @@ namespace Atlas
             static_cast<std::uint32_t>(x),
             static_cast<std::uint32_t>(y));
 
-        const float factor = 0.85f + static_cast<float>(hash % 1000u) * 0.0003f;
+        // Per-pixel grain plus baked depth darkening.
+        float factor = 0.85f + static_cast<float>(hash % 1000u) * 0.0003f;
+
+        factor *= static_cast<float>(
+            m_DepthShade[static_cast<std::size_t>(y) * m_Width + x]) / 255.0f;
+
+        // Material texture patterns.
+        switch (material)
+        {
+        case Material::Stone:
+        {
+            // Large soft blotches give stone a mottled look.
+            const std::uint32_t blotch = HashPixel(
+                static_cast<std::uint32_t>(x / 9),
+                static_cast<std::uint32_t>(y / 7));
+
+            factor *= 0.92f + static_cast<float>(blotch % 100u) * 0.0016f;
+            break;
+        }
+
+        case Material::Dirt:
+            // Occasional dark speck (pebbles, roots).
+            if (hash % 19u == 0u)
+                factor *= 0.72f;
+            break;
+
+        case Material::Gold:
+            // Sparkle.
+            if (hash % 11u == 0u)
+                factor *= 1.75f;
+            break;
+
+        default:
+            break;
+        }
+
+        // Directional light: sunlit top edges, dark undersides.
+        const bool airAbove = !GetMaterialInfo(GetMaterial(x, y - 1)).Solid;
+        const bool airBelow = !GetMaterialInfo(GetMaterial(x, y + 1)).Solid;
+
+        if (airAbove && y > 0)
+            factor *= material == Material::Grass ? 1.5f : 1.33f;
+        else if (airBelow)
+            factor *= 0.6f;
 
         m_Pixels[index + 0] = Shade(info.R, factor);
         m_Pixels[index + 1] = Shade(info.G, factor);

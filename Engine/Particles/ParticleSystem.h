@@ -16,9 +16,11 @@ namespace Atlas
         Bullet,   // damages terrain (energy vs material strength) and actors
         Debris,   // knocked-loose terrain; settles back into the world
         Blood,    // stains the terrain where it lands
-        Spark,    // pure visual, dies on contact
-        Smoke,    // pure visual, drifts up, ignores terrain
+        Spark,    // glowing ember, dies on contact
+        Smoke,    // drifts up, grows and fades, ignores terrain
         Gib,      // chunk of a dead actor; settles as a stain + debris
+        Fire,     // additive fireball puff (explosions), ignores terrain
+        Casing,   // ejected brass, bounces off terrain then fades
     };
 
     struct Particle
@@ -29,7 +31,9 @@ namespace Atlas
         float VelY;
 
         float Life;        // seconds remaining
+        float MaxLife;     // starting life, for fade curves
         float Gravity;     // pixels/s^2
+        std::uint8_t Bounces; // casings: bounces remaining
 
         float Power;       // bullets: terrain-destruction budget
         std::int16_t Damage;
@@ -66,6 +70,8 @@ namespace Atlas
         void SpawnBlood(float x, float y, float velX, float velY);
         void SpawnSpark(float x, float y, float velX, float velY);
         void SpawnSmoke(float x, float y, float velX, float velY);
+        void SpawnFire(float x, float y, float velX, float velY);
+        void SpawnCasing(float x, float y, float velX, float velY);
         void SpawnGib(float x, float y, float velX, float velY,
             std::uint8_t r, std::uint8_t g, std::uint8_t b, int size);
 

@@ -6,6 +6,7 @@
 #include "IniFile.h"
 #include "../Combat/Grenade.h"
 #include "../Combat/Weapon.h"
+#include "../Graphics/Background.h"
 #include "../Graphics/Camera.h"
 #include "../Input/Input.h"
 #include "../Particles/ParticleSystem.h"
@@ -118,7 +119,7 @@ namespace Atlas
     {
         std::cout << "=================================\n";
         std::cout << "        ATLAS ENGINE\n";
-        std::cout << "           v0.4.0\n";
+        std::cout << "           v0.5.0\n";
         std::cout << "=================================\n\n";
 
         if (!m_Window.Create("Atlas", ViewWidth, ViewHeight))
@@ -161,6 +162,9 @@ namespace Atlas
         {
             return;
         }
+
+        Background background;
+        background.Create(seed);
 
         // Weapons: data-driven with built-in fallbacks.
         const std::vector<WeaponDef> weaponDefs =
@@ -211,6 +215,10 @@ namespace Atlas
         float cameraShake = 0.0f;
         std::vector<HealthPickup> pickups;
         std::uniform_real_distribution<float> unit(-1.0f, 1.0f);
+
+        float timeSeconds = 0.0f;
+        float hurtVignette = 0.0f;
+        int lastPlayerHealth = player.GetHealth();
 
         auto spawnEnemy = [&](float x)
         {
@@ -267,6 +275,7 @@ namespace Atlas
 
             frameTime = std::min(frameTime, MaxFrameTime);
 
+            timeSeconds += frameTime;
             fpsTimer += frameTime;
             frames++;
 
@@ -556,23 +565,22 @@ namespace Atlas
                     static_cast<float>(worldHeight - ViewHeight)) +
                     unit(rng) * cameraShake);
 
+            // Damage feedback for the vignette.
+            if (player.GetHealth() < lastPlayerHealth)
+                hurtVignette = 0.6f;
+
+            lastPlayerHealth = player.GetHealth();
+            hurtVignette = std::max(0.0f, hurtVignette - frameTime);
+
             m_Window.BeginFrame();
 
-            // Sky: vertical gradient bands behind the world.
-            for (int band = 0; band < 12; band++)
-            {
-                const float t = static_cast<float>(band) / 11.0f;
-
-                m_Window.DrawScreenRect(
-                    0.0f,
-                    static_cast<float>(band * ViewHeight) / 12.0f,
-                    static_cast<float>(ViewWidth),
-                    static_cast<float>(ViewHeight) / 12.0f + 1.0f,
-                    static_cast<Uint8>(38 + 20.0f * (1.0f - t)),
-                    static_cast<Uint8>(44 + 26.0f * (1.0f - t)),
-                    static_cast<Uint8>(58 + 40.0f * (1.0f - t)),
-                    255);
-            }
+            background.Draw(
+                m_Window,
+                camera.GetX(),
+                camera.GetY(),
+                ViewWidth,
+                ViewHeight,
+                timeSeconds);
 
             terrain.Draw(m_Window);
 
@@ -608,48 +616,94 @@ namespace Atlas
                 mouseWorldX - 1.0f, mouseWorldY - 4.0f, 2.0f, 8.0f,
                 255, 255, 255, 190);
 
+            // --- Screen-edge vignette (always) + damage feedback ---
+            {
+                const float edge = 90.0f;
+
+                m_Window.DrawScreenRect(0.0f, 0.0f,
+                    static_cast<float>(ViewWidth), edge * 0.5f, 0, 0, 8, 46);
+                m_Window.DrawScreenRect(0.0f,
+                    static_cast<float>(ViewHeight) - edge * 0.5f,
+                    static_cast<float>(ViewWidth), edge * 0.5f, 0, 0, 8, 46);
+                m_Window.DrawScreenRect(0.0f, 0.0f,
+                    edge * 0.5f, static_cast<float>(ViewHeight), 0, 0, 8, 46);
+                m_Window.DrawScreenRect(
+                    static_cast<float>(ViewWidth) - edge * 0.5f, 0.0f,
+                    edge * 0.5f, static_cast<float>(ViewHeight), 0, 0, 8, 46);
+
+                float redPulse = hurtVignette / 0.6f;
+
+                // Low health: constant heartbeat pulse.
+                if (player.IsAlive() && player.GetHealth() < 30)
+                {
+                    redPulse = std::max(
+                        redPulse,
+                        0.25f + 0.2f * std::sin(timeSeconds * 6.0f));
+                }
+
+                if (redPulse > 0.0f)
+                {
+                    const Uint8 alpha = static_cast<Uint8>(90.0f * redPulse);
+                    const float band = 70.0f;
+
+                    m_Window.DrawScreenRect(0.0f, 0.0f,
+                        static_cast<float>(ViewWidth), band, 160, 20, 20, alpha);
+                    m_Window.DrawScreenRect(0.0f,
+                        static_cast<float>(ViewHeight) - band,
+                        static_cast<float>(ViewWidth), band, 160, 20, 20, alpha);
+                    m_Window.DrawScreenRect(0.0f, 0.0f,
+                        band, static_cast<float>(ViewHeight), 160, 20, 20, alpha);
+                    m_Window.DrawScreenRect(
+                        static_cast<float>(ViewWidth) - band, 0.0f,
+                        band, static_cast<float>(ViewHeight), 160, 20, 20, alpha);
+                }
+            }
+
             // --- HUD ---
             const float barWidth = 190.0f;
 
-            // Health.
-            m_Window.DrawScreenRect(14.0f, 14.0f, barWidth + 4.0f, 12.0f,
-                20, 20, 24, 200);
-            m_Window.DrawScreenRect(16.0f, 16.0f,
-                barWidth * std::max(0, player.GetHealth()) / 100.0f, 8.0f,
-                205, 60, 50, 255);
+            // Backing panel with a subtle border.
+            m_Window.DrawScreenRect(8.0f, 8.0f, barWidth + 18.0f, 66.0f,
+                120, 126, 148, 60);
+            m_Window.DrawScreenRect(9.0f, 9.0f, barWidth + 16.0f, 64.0f,
+                12, 12, 18, 190);
 
-            // Jetpack fuel.
-            m_Window.DrawScreenRect(14.0f, 30.0f, barWidth + 4.0f, 10.0f,
-                20, 20, 24, 200);
-            m_Window.DrawScreenRect(16.0f, 32.0f,
-                barWidth * player.GetFuel(), 6.0f,
-                90, 150, 230, 255);
+            auto drawBar = [&](
+                float y,
+                float fill,
+                Uint8 r, Uint8 g, Uint8 b)
+            {
+                // Trough.
+                m_Window.DrawScreenRect(16.0f, y, barWidth, 9.0f,
+                    28, 28, 36, 255);
 
-            // Ammo / reload.
-            m_Window.DrawScreenRect(14.0f, 44.0f, barWidth + 4.0f, 10.0f,
-                20, 20, 24, 200);
+                if (fill > 0.0f)
+                {
+                    // Bar with a light sheen on the top half.
+                    m_Window.DrawScreenRect(16.0f, y, barWidth * fill, 9.0f,
+                        r, g, b, 255);
+                    m_Window.DrawScreenRect(16.0f, y, barWidth * fill, 4.0f,
+                        255, 255, 255, 46);
+                }
+            };
+
+            drawBar(14.0f,
+                std::max(0, player.GetHealth()) / 100.0f,
+                205, 60, 50);
+
+            drawBar(27.0f, player.GetFuel(), 90, 150, 230);
 
             const Weapon& weapon = player.GetWeapon();
 
             if (weapon.IsReloading())
-            {
-                m_Window.DrawScreenRect(16.0f, 46.0f,
-                    barWidth * weapon.GetReloadProgress(), 6.0f,
-                    230, 150, 60, 255);
-            }
+                drawBar(40.0f, weapon.GetReloadProgress(), 230, 150, 60);
             else if (weapon.GetClipSize() > 0)
-            {
-                m_Window.DrawScreenRect(16.0f, 46.0f,
-                    barWidth * weapon.GetAmmo() /
+                drawBar(40.0f,
+                    weapon.GetAmmo() /
                         static_cast<float>(weapon.GetClipSize()),
-                    6.0f,
-                    230, 210, 90, 255);
-            }
+                    230, 210, 90);
             else
-            {
-                m_Window.DrawScreenRect(16.0f, 46.0f, barWidth, 6.0f,
-                    150, 150, 150, 255);
-            }
+                drawBar(40.0f, 1.0f, 140, 145, 155);
 
             // Weapon slots.
             for (int i = 0; i < 4; i++)
@@ -657,14 +711,21 @@ namespace Atlas
                 const bool selected = i == currentWeapon;
 
                 m_Window.DrawScreenRect(
-                    14.0f + static_cast<float>(i) * 18.0f,
-                    58.0f,
+                    16.0f + static_cast<float>(i) * 20.0f,
+                    56.0f,
+                    16.0f,
+                    10.0f,
+                    28, 28, 36, 255);
+
+                m_Window.DrawScreenRect(
+                    17.0f + static_cast<float>(i) * 20.0f,
+                    57.0f,
                     14.0f,
                     8.0f,
-                    selected ? 240 : 70,
-                    selected ? 240 : 70,
-                    selected ? 240 : 80,
-                    220);
+                    selected ? 235 : 62,
+                    selected ? 225 : 64,
+                    selected ? 170 : 74,
+                    255);
             }
 
             // Wave pips (top right): filled per enemy still alive.
