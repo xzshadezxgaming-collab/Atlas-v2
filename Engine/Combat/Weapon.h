@@ -13,7 +13,8 @@ namespace Atlas
     enum class WeaponKind
     {
         Gun,
-        Digger, // carves terrain at the aim point instead of firing bullets
+        Digger, // energy tool: carves terrain at the aim point
+        Shovel, // digs bigger scoops at close range
     };
 
     struct WeaponDef

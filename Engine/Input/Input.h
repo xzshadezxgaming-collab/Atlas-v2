@@ -24,7 +24,14 @@ namespace Atlas
         // True only on the frame the button went down.
         static bool WasMouseButtonPressed(int button);
 
+        // Scroll wheel: accumulated by the event loop, consumed by the
+        // game once per frame (positive = scrolled up).
+        static void AccumulateWheel(float amount);
+        static int ConsumeWheelSteps();
+
     private:
+        static float s_WheelAccumulator;
+
         static const bool* s_KeyboardState;
         static bool s_PreviousKeys[SDL_SCANCODE_COUNT];
 

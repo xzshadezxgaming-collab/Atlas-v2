@@ -1,5 +1,6 @@
 #include "Window.h"
 #include "../Graphics/Camera.h"
+#include "../Input/Input.h"
 
 #include <algorithm>
 #include <cmath>
@@ -76,6 +77,9 @@ namespace Atlas
         {
             if (event.type == SDL_EVENT_QUIT)
                 return false;
+
+            if (event.type == SDL_EVENT_MOUSE_WHEEL)
+                Input::AccumulateWheel(event.wheel.y);
         }
 
         return true;

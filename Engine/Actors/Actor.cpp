@@ -397,8 +397,10 @@ namespace Atlas
 
     void Actor::Draw(Window& window)
     {
-        const int nearLeg = m_FacingDir > 0.0f ? 1 : 0;
-        const int farLeg = 1 - nearLeg;
+        // Leg 1 is always the near (brighter) leg so shading doesn't
+        // flicker when the actor turns around.
+        const int nearLeg = 1;
+        const int farLeg = 0;
 
         m_Legs[farLeg].Draw(
             window,
@@ -529,7 +531,37 @@ namespace Atlas
         const float muzzleX = handX + m_AimDirX * def.BarrelLength;
         const float muzzleY = handY + m_AimDirY * def.BarrelLength;
 
-        if (def.Kind == WeaponKind::Digger)
+        if (def.Kind == WeaponKind::Shovel)
+        {
+            // Shovel: wooden shaft, small grip, steel blade at the end.
+            DrawArmSegmentPass(window,
+                handX - m_AimDirX * 4.0f, handY - m_AimDirY * 4.0f,
+                muzzleX, muzzleY, 4.0f, 24, 22, 27);
+            DrawArmSegmentPass(window,
+                handX - m_AimDirX * 4.0f, handY - m_AimDirY * 4.0f,
+                muzzleX, muzzleY, 2.0f, 128, 96, 58);
+
+            // Grip knob at the back of the shaft.
+            DrawPart(window,
+                handX - m_AimDirX * 6.0f - 2.0f,
+                handY - m_AimDirY * 6.0f - 2.0f,
+                4.0f, 4.0f,
+                104, 76, 46);
+
+            // Blade.
+            DrawPart(window,
+                muzzleX - 3.0f, muzzleY - 4.0f, 7.0f, 8.0f,
+                134, 138, 150);
+            window.DrawFilledRect(
+                muzzleX - 3.0f, muzzleY - 4.0f, 7.0f, 2.0f,
+                170, 174, 186, 255);
+            window.DrawFilledRect(
+                muzzleX + m_AimDirX * 3.0f - 1.0f,
+                muzzleY + m_AimDirY * 3.0f - 1.0f,
+                3.0f, 3.0f,
+                108, 112, 124, 255);
+        }
+        else if (def.Kind == WeaponKind::Digger)
         {
             // Digger tool: brown housing, warning stripe, spinning bit.
             DrawPart(window, handX - 4.0f, handY - 4.0f, 9.0f, 8.0f,
@@ -1191,13 +1223,10 @@ namespace Atlas
 
     float Actor::HipWorldX(int leg) const
     {
-        // Mirror the hips when facing left so the front hip leads.
-        const float offset = m_Legs[leg].GetHipOffsetX();
-
-        if (m_FacingDir < 0.0f)
-            return m_X + BodyWidth - offset;
-
-        return m_X + offset;
+        // Hips stay fixed to the body regardless of facing: mirroring
+        // them on a turn used to teleport the joints away from planted
+        // feet and made the legs pop when reversing direction.
+        return m_X + m_Legs[leg].GetHipOffsetX();
     }
 
     float Actor::HipWorldY(int leg) const

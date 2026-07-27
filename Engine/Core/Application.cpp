@@ -8,6 +8,7 @@
 #include "../Combat/Weapon.h"
 #include "../Graphics/Background.h"
 #include "../Graphics/Camera.h"
+#include "../Graphics/PixelFont.h"
 #include "../Input/Input.h"
 #include "../Particles/ParticleSystem.h"
 #include "../World/Terrain.h"
@@ -15,6 +16,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cctype>
 #include <iostream>
 #include <memory>
 #include <random>
@@ -176,7 +178,10 @@ namespace Atlas
             FindWeaponDef(weaponDefs, "Shotgun"),
             FindWeaponDef(weaponDefs, "Rifle"),
             FindWeaponDef(weaponDefs, "Digger"),
+            FindWeaponDef(weaponDefs, "Shovel"),
         };
+
+        constexpr int LoadoutSize = 5;
 
         const WeaponDef* enemyWeapon = FindWeaponDef(weaponDefs, "EnemyGun");
 
@@ -294,13 +299,24 @@ namespace Atlas
 
             Input::Update();
 
-            // Weapon switching and reload are edge-triggered per frame.
+            // Weapon switching (1-5 or scroll wheel) and reload are
+            // edge-triggered per frame.
             if (player.IsAlive())
             {
                 if (Input::WasKeyPressed(SDL_SCANCODE_1)) currentWeapon = 0;
                 if (Input::WasKeyPressed(SDL_SCANCODE_2)) currentWeapon = 1;
                 if (Input::WasKeyPressed(SDL_SCANCODE_3)) currentWeapon = 2;
                 if (Input::WasKeyPressed(SDL_SCANCODE_4)) currentWeapon = 3;
+                if (Input::WasKeyPressed(SDL_SCANCODE_5)) currentWeapon = 4;
+
+                const int wheel = Input::ConsumeWheelSteps();
+
+                if (wheel != 0)
+                {
+                    currentWeapon =
+                        (currentWeapon - wheel % LoadoutSize +
+                            LoadoutSize) % LoadoutSize;
+                }
 
                 if (player.GetWeapon().GetDef() != loadout[currentWeapon])
                 {
@@ -663,9 +679,9 @@ namespace Atlas
             const float barWidth = 190.0f;
 
             // Backing panel with a subtle border.
-            m_Window.DrawScreenRect(8.0f, 8.0f, barWidth + 18.0f, 66.0f,
+            m_Window.DrawScreenRect(8.0f, 8.0f, barWidth + 18.0f, 92.0f,
                 120, 126, 148, 60);
-            m_Window.DrawScreenRect(9.0f, 9.0f, barWidth + 16.0f, 64.0f,
+            m_Window.DrawScreenRect(9.0f, 9.0f, barWidth + 16.0f, 90.0f,
                 12, 12, 18, 190);
 
             auto drawBar = [&](
@@ -705,39 +721,93 @@ namespace Atlas
             else
                 drawBar(40.0f, 1.0f, 140, 145, 155);
 
-            // Weapon slots.
-            for (int i = 0; i < 4; i++)
+            // Weapon/tool readout: name and ammo state.
+            if (weapon.GetDef())
             {
-                const bool selected = i == currentWeapon;
+                std::string info = weapon.GetDef()->Name;
 
-                m_Window.DrawScreenRect(
-                    16.0f + static_cast<float>(i) * 20.0f,
-                    56.0f,
-                    16.0f,
-                    10.0f,
-                    28, 28, 36, 255);
+                for (char& c : info)
+                    c = static_cast<char>(std::toupper(
+                        static_cast<unsigned char>(c)));
 
-                m_Window.DrawScreenRect(
-                    17.0f + static_cast<float>(i) * 20.0f,
-                    57.0f,
-                    14.0f,
-                    8.0f,
-                    selected ? 235 : 62,
-                    selected ? 225 : 64,
-                    selected ? 170 : 74,
-                    255);
+                PixelFont::Draw(m_Window, 16.0f, 55.0f, 2.0f, info,
+                    235, 235, 240);
+
+                std::string ammoText;
+
+                if (weapon.IsReloading())
+                    ammoText = "RELOADING";
+                else if (weapon.GetClipSize() > 0)
+                    ammoText = std::to_string(weapon.GetAmmo()) + "/" +
+                        std::to_string(weapon.GetClipSize());
+                else if (weapon.GetDef()->Kind == WeaponKind::Gun)
+                    ammoText = "INF";
+                else
+                    ammoText = "TOOL";
+
+                PixelFont::Draw(
+                    m_Window,
+                    16.0f + barWidth -
+                        PixelFont::Measure(ammoText, 2.0f),
+                    55.0f,
+                    2.0f,
+                    ammoText,
+                    weapon.IsReloading() ? 230 : 200,
+                    weapon.IsReloading() ? 150 : 205,
+                    weapon.IsReloading() ? 60 : 215);
             }
 
-            // Wave pips (top right): filled per enemy still alive.
-            for (std::size_t i = 0; i < enemies.size(); i++)
+            // Weapon slots with numbers.
+            for (int i = 0; i < LoadoutSize; i++)
             {
-                m_Window.DrawScreenRect(
-                    static_cast<float>(ViewWidth) - 22.0f -
-                        static_cast<float>(i) * 14.0f,
+                const bool selected = i == currentWeapon;
+                const float slotX = 16.0f + static_cast<float>(i) * 22.0f;
+
+                m_Window.DrawScreenRect(slotX, 70.0f, 18.0f, 16.0f,
+                    28, 28, 36, 255);
+
+                if (selected)
+                {
+                    m_Window.DrawScreenRect(slotX, 70.0f, 18.0f, 16.0f,
+                        235, 225, 170, 255);
+                    m_Window.DrawScreenRect(slotX + 1.0f, 71.0f,
+                        16.0f, 14.0f, 62, 58, 40, 255);
+                }
+
+                PixelFont::Draw(
+                    m_Window,
+                    slotX + 6.0f,
+                    73.0f,
+                    2.0f,
+                    std::to_string(i + 1),
+                    selected ? 235 : 130,
+                    selected ? 225 : 132,
+                    selected ? 170 : 140);
+            }
+
+            // Wave status (top right): wave number and enemies left.
+            {
+                const std::string waveText = "WAVE " + std::to_string(wave);
+
+                PixelFont::Draw(
+                    m_Window,
+                    static_cast<float>(ViewWidth) - 20.0f -
+                        PixelFont::Measure(waveText, 3.0f),
                     16.0f,
-                    10.0f,
-                    10.0f,
-                    255, 118, 106, 255);
+                    3.0f,
+                    waveText,
+                    235, 235, 240);
+
+                for (std::size_t i = 0; i < enemies.size(); i++)
+                {
+                    m_Window.DrawScreenRect(
+                        static_cast<float>(ViewWidth) - 22.0f -
+                            static_cast<float>(i) * 14.0f,
+                        36.0f,
+                        10.0f,
+                        10.0f,
+                        255, 118, 106, 255);
+                }
             }
 
             // Death overlay.

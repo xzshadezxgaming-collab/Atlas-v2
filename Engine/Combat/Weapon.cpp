@@ -76,6 +76,19 @@ namespace Atlas
         }
 
         {
+            WeaponDef shovel;
+            shovel.Name = "Shovel";
+            shovel.Kind = WeaponKind::Shovel;
+            shovel.FireRate = 2.6f;
+            shovel.ClipSize = 0;
+            shovel.DigRadius = 14.0f;
+            shovel.DigRange = 52.0f;
+            shovel.BarrelLength = 17.0f;
+            shovel.Recoil = 0.0f;
+            defs.push_back(shovel);
+        }
+
+        {
             WeaponDef enemyGun;
             enemyGun.Name = "EnemyGun";
             enemyGun.FireRate = 5.0f;
@@ -123,12 +136,22 @@ namespace Atlas
                 def->Name = section;
             }
 
-            const std::string kind =
-                ini.GetString(section, "Kind", def->Kind == WeaponKind::Digger
-                    ? "Digger"
-                    : "Gun");
+            std::string currentKind = "Gun";
 
-            def->Kind = (kind == "Digger") ? WeaponKind::Digger : WeaponKind::Gun;
+            if (def->Kind == WeaponKind::Digger)
+                currentKind = "Digger";
+            else if (def->Kind == WeaponKind::Shovel)
+                currentKind = "Shovel";
+
+            const std::string kind =
+                ini.GetString(section, "Kind", currentKind);
+
+            if (kind == "Digger")
+                def->Kind = WeaponKind::Digger;
+            else if (kind == "Shovel")
+                def->Kind = WeaponKind::Shovel;
+            else
+                def->Kind = WeaponKind::Gun;
 
             def->FireRate = ini.GetFloat(section, "FireRate", def->FireRate);
             def->ClipSize = ini.GetInt(section, "ClipSize", def->ClipSize);
@@ -222,9 +245,10 @@ namespace Atlas
 
         m_Cooldown = 1.0f / m_Def->FireRate;
 
-        if (m_Def->Kind == WeaponKind::Digger)
+        if (m_Def->Kind == WeaponKind::Digger ||
+            m_Def->Kind == WeaponKind::Shovel)
         {
-            // Carve at the aim point, clamped to the digger's range.
+            // Carve at the aim point, clamped to the tool's range.
             float digX = targetX;
             float digY = targetY;
 
@@ -238,17 +262,22 @@ namespace Atlas
                 digY = muzzleY + dy / distance * m_Def->DigRange;
             }
 
+            // The shovel throws a proper spray of dirt.
+            const int debrisSamples =
+                m_Def->Kind == WeaponKind::Shovel ? 16 : 6;
+
             std::vector<Terrain::DestroyedPixel> debris;
             terrain.CarveCircleCollect(
-                digX, digY, m_Def->DigRadius, debris, 6);
+                digX, digY, m_Def->DigRadius, debris, debrisSamples);
 
             for (const Terrain::DestroyedPixel& pixel : debris)
             {
                 particles.SpawnDebris(
                     pixel.X,
                     pixel.Y,
-                    RandomUnit() * 80.0f,
-                    -90.0f + RandomUnit() * 60.0f,
+                    -dx / (distance + 0.001f) * 60.0f +
+                        RandomUnit() * 90.0f,
+                    -110.0f + RandomUnit() * 70.0f,
                     pixel.Mat);
             }
 

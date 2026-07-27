@@ -21,8 +21,9 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
   against material strength: dirt penetrates, stone stops. Knocked-loose
   pixels fall as debris and settle back into the world as new terrain;
   blood stains it.
-- **Weapons on an IK aim arm** — SMG, shotgun, rifle, and a terrain
-  digger, aimed with the mouse, with recoil, spread, clips and reloads.
+- **Weapons on an IK aim arm** — SMG, shotgun, rifle, a terrain
+  digger, and a shovel, aimed with the mouse, with recoil, spread,
+  clips and reloads; switch with 1-5 or the scroll wheel.
   All stats data-driven from `Assets/weapons.ini` — tune or add weapons
   without recompiling.
 - **Grenades and explosions** — bouncing grenades with fuses; blasts
@@ -57,7 +58,7 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
 | Mouse | Aim |
 | Left mouse | Fire |
 | Right mouse | Throw grenade |
-| 1 / 2 / 3 / 4 | SMG / Shotgun / Rifle / Digger |
+| 1-5 / scroll wheel | SMG / Shotgun / Rifle / Digger / Shovel |
 | R | Reload |
 
 ## Building

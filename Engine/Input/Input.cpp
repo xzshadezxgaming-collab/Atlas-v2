@@ -66,4 +66,34 @@ namespace Atlas
         return (s_MouseButtons & SDL_BUTTON_MASK(button)) != 0 &&
             (s_PreviousMouseButtons & SDL_BUTTON_MASK(button)) == 0;
     }
+
+    float Input::s_WheelAccumulator = 0.0f;
+
+    void Input::AccumulateWheel(float amount)
+    {
+        s_WheelAccumulator += amount;
+    }
+
+    int Input::ConsumeWheelSteps()
+    {
+        const int steps = static_cast<int>(s_WheelAccumulator);
+
+        s_WheelAccumulator -= static_cast<float>(steps);
+
+        // Treat any sub-step remainder as a full step so light scrolls
+        // still switch.
+        if (steps == 0 && s_WheelAccumulator > 0.5f)
+        {
+            s_WheelAccumulator = 0.0f;
+            return 1;
+        }
+
+        if (steps == 0 && s_WheelAccumulator < -0.5f)
+        {
+            s_WheelAccumulator = 0.0f;
+            return -1;
+        }
+
+        return steps;
+    }
 }
