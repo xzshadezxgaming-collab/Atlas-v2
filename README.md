@@ -33,11 +33,9 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
 
 ### Windows (Visual Studio)
 
-Uses the CMake presets in `CMakePresets.json` (Ninja + MSVC). The SDL3
-headers are vendored in `ThirdParty/sdl3`; the binaries are not in the
-repository — drop `SDL3.lib` and `SDL3.dll` into
-`ThirdParty/sdl3/lib/x64/` (see `ThirdParty/sdl3/INSTALL.md`), then open
-the folder in Visual Studio or run:
+Uses the CMake presets in `CMakePresets.json` (Ninja + MSVC). SDL3
+headers and binaries (3.4.10) are vendored in `ThirdParty/sdl3` — no
+setup needed. Open the folder in Visual Studio or run:
 
 ```
 cmake --preset x64-debug

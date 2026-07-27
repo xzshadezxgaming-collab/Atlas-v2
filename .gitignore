@@ -23,5 +23,9 @@ CMakeCache.txt
 *.pdb
 *.ilk
 
+# ...except the vendored SDL3 binaries, which the Windows build needs
+!ThirdParty/sdl3/lib/x64/SDL3.dll
+!ThirdParty/sdl3/lib/x64/SDL3.lib
+
 # Temporary
 *.tmp
