@@ -1,6 +1,6 @@
 #include "Application.h"
 
-#include "../ECS/Entity.h"
+#include "../Actors/Actor.h"
 #include "../Graphics/Camera.h"
 #include "../Input/Input.h"
 #include "../World/Terrain.h"
@@ -22,12 +22,6 @@ namespace Atlas
         constexpr int WorldWidth = 2048;
         constexpr int WorldHeight = 1024;
 
-        // The player art is 16x32, drawn at 2x.
-        constexpr float PlayerWidth = 32.0f;
-        constexpr float PlayerHeight = 64.0f;
-        constexpr float MoveSpeed = 220.0f;
-        constexpr float JumpVelocity = -480.0f;
-
         constexpr float DigRadius = 22.0f;
         constexpr float PlaceRadius = 14.0f;
 
@@ -35,7 +29,7 @@ namespace Atlas
         constexpr float FixedTimeStep = 1.0f / 120.0f;
         constexpr float MaxFrameTime = 0.25f;
 
-        bool LoadPlayerSprite(Sprite& sprite, SDL_Renderer* renderer)
+        bool LoadPlayerSprite(Actor& actor, SDL_Renderer* renderer)
         {
             // The working directory differs between running from the build
             // tree, an IDE, or a packaged install, so try a few locations,
@@ -58,24 +52,11 @@ namespace Atlas
                 if (path.empty())
                     continue;
 
-                if (sprite.Load(renderer, path))
+                if (actor.LoadBodySprite(renderer, path))
                     return true;
             }
 
             return false;
-        }
-
-        float FindSpawnY(const Terrain& terrain, float x)
-        {
-            for (int y = 0; y < terrain.GetHeight(); y++)
-            {
-                if (terrain.IsSolid(x, static_cast<float>(y)))
-                {
-                    return static_cast<float>(y) - PlayerHeight - 2.0f;
-                }
-            }
-
-            return 0.0f;
         }
     }
 
@@ -108,21 +89,14 @@ namespace Atlas
             return;
         }
 
-        Entity player;
+        Actor player;
 
-        if (!LoadPlayerSprite(player.GetSprite(), m_Window.GetRenderer()))
+        if (!LoadPlayerSprite(player, m_Window.GetRenderer()))
         {
             std::cout << "Failed to load Player.bmp\n";
         }
 
-        player.GetSprite().SetSize(PlayerWidth, PlayerHeight);
-        player.GetRigidBody().SetSize(PlayerWidth, PlayerHeight);
-
-        const float spawnX = WorldWidth * 0.5f;
-
-        player.GetTransform().SetPosition(
-            spawnX - PlayerWidth * 0.5f,
-            FindSpawnY(terrain, spawnX));
+        player.Spawn(terrain, WorldWidth * 0.5f);
 
         bool running = true;
 
@@ -168,31 +142,19 @@ namespace Atlas
 
             while (accumulator >= FixedTimeStep)
             {
-                RigidBody& body = player.GetRigidBody();
-
-                float velocityX = 0.0f;
+                float moveInput = 0.0f;
 
                 if (Input::IsKeyDown(SDL_SCANCODE_A))
-                    velocityX -= MoveSpeed;
+                    moveInput -= 1.0f;
 
                 if (Input::IsKeyDown(SDL_SCANCODE_D))
-                    velocityX += MoveSpeed;
+                    moveInput += 1.0f;
 
-                // Face the direction of movement (art faces right).
-                if (velocityX < 0.0f)
-                    player.GetSprite().SetFlipX(true);
-                else if (velocityX > 0.0f)
-                    player.GetSprite().SetFlipX(false);
-
-                float velocityY = body.GetVelocityY();
-
-                if (Input::IsKeyDown(SDL_SCANCODE_SPACE) && body.IsGrounded())
-                {
-                    velocityY = JumpVelocity;
-                }
-
-                body.SetVelocity(velocityX, velocityY);
-                body.Update(terrain, FixedTimeStep);
+                player.Update(
+                    terrain,
+                    FixedTimeStep,
+                    moveInput,
+                    Input::IsKeyDown(SDL_SCANCODE_SPACE));
 
                 accumulator -= FixedTimeStep;
             }
@@ -218,18 +180,13 @@ namespace Atlas
             terrain.Update();
 
             // Camera follows the player, clamped to the world.
-            const float playerCenterX =
-                player.GetTransform().GetX() + PlayerWidth * 0.5f;
-            const float playerCenterY =
-                player.GetTransform().GetY() + PlayerHeight * 0.5f;
-
             camera.SetPosition(
                 std::clamp(
-                    playerCenterX - ViewWidth * 0.5f,
+                    player.GetCenterX() - ViewWidth * 0.5f,
                     0.0f,
                     static_cast<float>(WorldWidth - ViewWidth)),
                 std::clamp(
-                    playerCenterY - ViewHeight * 0.5f,
+                    player.GetCenterY() - ViewHeight * 0.5f,
                     0.0f,
                     static_cast<float>(WorldHeight - ViewHeight)));
 
@@ -237,7 +194,7 @@ namespace Atlas
 
             terrain.Draw(m_Window);
 
-            player.GetSprite().Draw(m_Window);
+            player.Draw(m_Window);
 
             // Simple crosshair at the mouse cursor.
             m_Window.DrawFilledRect(

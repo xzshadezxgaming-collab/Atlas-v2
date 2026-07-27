@@ -2,6 +2,9 @@ add_library(AtlasEngine STATIC
     Core/Application.cpp
     Core/Window.cpp
 
+    Actors/Actor.cpp
+    Actors/Limb.cpp
+
     Input/Input.cpp
 
     Graphics/Texture2D.cpp

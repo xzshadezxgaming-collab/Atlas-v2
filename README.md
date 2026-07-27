@@ -11,9 +11,11 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
   Every collision query, dig, and edit works on individual pixels.
 - **Procedural world generation** — rolling, seeded landscapes with
   layered materials and scattered gold veins.
-- **Pixel-perfect character physics** — sub-pixel movement integration
-  (no tunneling), automatic step-up over small ledges, and downhill
-  ground snapping so bodies walk naturally over craters and slopes.
+- **Limb-based actor physics** — Cortex Command-style walkers: the torso
+  is one hitbox and each leg is a limb with its own foot hitbox. Feet
+  find and hold real footholds in the pixel terrain, plant at different
+  heights on slopes, step over rubble, and lose grip when the ground
+  under them is dug away. Legs render with IK-bent knees.
 - **Terrain editing** — dig with the left mouse button, place dirt with
   the right.
 - **Fixed-timestep simulation** decoupled from rendering.
@@ -60,7 +62,9 @@ cmake --build build -j
 - [ ] **Milestone 2 — pixel particles**: bullets, debris, and gibs as
   single-pixel physics objects with DDA terrain collision; knocked-loose
   terrain pixels that fall and settle back into the world
-- [ ] **Milestone 3 — actors**: silhouette-sampled collision, weapons,
-  gibbing, a simple AI target
+- [x] **Milestone 3a — limb walkers**: per-foot terrain collision,
+  walking gait with real footholds, IK leg rendering
+- [ ] **Milestone 3b — actors**: aiming arm, weapons, gibbing, a simple
+  AI target
 - [ ] **Milestone 4 — game layer**: scenes, actors, and weapons defined
   in data files
