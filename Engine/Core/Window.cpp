@@ -122,6 +122,28 @@ namespace Atlas
         rect.w = width;
         rect.h = height;
 
+        SDL_SetRenderDrawBlendMode(m_Renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(m_Renderer, r, g, b, a);
+        SDL_RenderFillRect(m_Renderer, &rect);
+    }
+
+    void Window::DrawScreenRect(
+        float x,
+        float y,
+        float width,
+        float height,
+        Uint8 r,
+        Uint8 g,
+        Uint8 b,
+        Uint8 a)
+    {
+        SDL_FRect rect;
+        rect.x = x;
+        rect.y = y;
+        rect.w = width;
+        rect.h = height;
+
+        SDL_SetRenderDrawBlendMode(m_Renderer, SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(m_Renderer, r, g, b, a);
         SDL_RenderFillRect(m_Renderer, &rect);
     }

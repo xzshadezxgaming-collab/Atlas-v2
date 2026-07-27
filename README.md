@@ -4,7 +4,7 @@ A 2D game engine inspired by the technology behind **Cortex Command**:
 fully destructible per-pixel terrain, pixel-level physics, and
 material-driven gameplay — rebuilt on modern C++ and SDL3.
 
-## Current features (v0.2.0)
+## Current features (v0.4.0)
 
 - **Per-pixel destructible terrain** — the world is a material grid
   (grass, dirt, stone, gold veins) paired with a streamed GPU texture.
@@ -16,8 +16,25 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
   find and hold real footholds in the pixel terrain, plant at different
   heights on slopes, step over rubble, and lose grip when the ground
   under them is dug away. Legs render with IK-bent knees.
-- **Terrain editing** — dig with the left mouse button, place dirt with
-  the right.
+- **Pixel particle combat** — bullets are single-pixel physics objects
+  that trace through the terrain (no tunneling) and test their energy
+  against material strength: dirt penetrates, stone stops. Knocked-loose
+  pixels fall as debris and settle back into the world as new terrain;
+  blood stains it.
+- **Weapons on an IK aim arm** — SMG, shotgun, rifle, and a terrain
+  digger, aimed with the mouse, with recoil, spread, clips and reloads.
+  All stats data-driven from `Assets/weapons.ini` — tune or add weapons
+  without recompiling.
+- **Grenades and explosions** — bouncing grenades with fuses; blasts
+  carve craters, fling debris, and knock actors back.
+- **Health, gore, and gibbing** — bullet/explosion/fall damage,
+  blood spray that stains terrain, and actors bursting into chunks.
+- **Jetpack** — hold-to-thrust with fuel that regenerates on the ground.
+- **Enemy AI and waves** — red enemy soldiers patrol, spot you through
+  real terrain line-of-sight, and fire in bursts; endless waves with
+  respawns. HUD bars for health, fuel and ammo.
+- **Procedural retro SFX** — gunshots, explosions, digging, jumps and
+  gibs synthesized at startup (SDL3 audio), no sound files needed.
 - **Fixed-timestep simulation** decoupled from rendering.
 
 ### Controls
@@ -26,8 +43,12 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
 |---|---|
 | A / D | Move |
 | Space | Jump |
-| Left mouse | Dig |
-| Right mouse | Place dirt |
+| W / Left Shift | Jetpack |
+| Mouse | Aim |
+| Left mouse | Fire |
+| Right mouse | Throw grenade |
+| 1 / 2 / 3 / 4 | SMG / Shotgun / Rifle / Digger |
+| R | Reload |
 
 ## Building
 
@@ -57,12 +78,14 @@ cmake --build build -j
 
 - [x] **Milestone 1 — pixel terrain**: material grid, digging, per-pixel
   character collision
-- [ ] **Milestone 2 — pixel particles**: bullets, debris, and gibs as
+- [x] **Milestone 2 — pixel particles**: bullets, debris and gibs as
   single-pixel physics objects with DDA terrain collision; knocked-loose
-  terrain pixels that fall and settle back into the world
+  terrain that settles back into the world
 - [x] **Milestone 3a — limb walkers**: per-foot terrain collision,
   walking gait with real footholds, IK leg rendering
-- [ ] **Milestone 3b — actors**: aiming arm, weapons, gibbing, a simple
-  AI target
-- [ ] **Milestone 4 — game layer**: scenes, actors, and weapons defined
-  in data files
+- [x] **Milestone 3b — combat actors**: aim arm, weapons, grenades,
+  gibbing, enemy AI, waves
+- [ ] **Milestone 4 — game layer**: scenes and props from data files,
+  inventory/pickups, drop-ship deliveries, objectives
+- [ ] **Milestone 5 — feel and polish**: body pitch and stagger,
+  screen shake, parallax background, performance pass, settings

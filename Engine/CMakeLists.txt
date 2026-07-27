@@ -1,9 +1,19 @@
 add_library(AtlasEngine STATIC
     Core/Application.cpp
+    Core/IniFile.cpp
     Core/Window.cpp
 
     Actors/Actor.cpp
+    Actors/AIController.cpp
     Actors/Limb.cpp
+
+    Audio/Audio.cpp
+
+    Combat/Explosion.cpp
+    Combat/Grenade.cpp
+    Combat/Weapon.cpp
+
+    Particles/ParticleSystem.cpp
 
     Input/Input.cpp
 

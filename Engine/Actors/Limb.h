@@ -54,13 +54,17 @@ namespace Atlas
 
         // Draws the limb as a thigh and shin with an IK-bent knee, plus the
         // boot. facingDir is +1 (right) or -1 (left); nearSide selects the
-        // brighter palette for the leg closest to the viewer.
+        // brighter palette for the leg closest to the viewer. The tint
+        // multiplies the palette (255 = unchanged).
         void Draw(
             Window& window,
             float hipX,
             float hipY,
             float facingDir,
-            bool nearSide) const;
+            bool nearSide,
+            unsigned char tintR = 255,
+            unsigned char tintG = 255,
+            unsigned char tintB = 255) const;
 
     private:
         float m_HipOffsetX;

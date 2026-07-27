@@ -46,6 +46,32 @@ namespace Atlas
         // were removed.
         int CarveCircle(float centerX, float centerY, float radius);
 
+        // A destroyed pixel that a carve reported back, so callers can
+        // spawn matching debris.
+        struct DestroyedPixel
+        {
+            float X;
+            float Y;
+            Material Mat;
+        };
+
+        // Like CarveCircle, but samples up to maxSamples of the destroyed
+        // pixels into outDebris.
+        int CarveCircleCollect(
+            float centerX,
+            float centerY,
+            float radius,
+            std::vector<DestroyedPixel>& outDebris,
+            int maxSamples);
+
+        // Removes a single solid pixel and returns its material
+        // (Material::Air if there was nothing to remove).
+        Material DestroyPixel(int x, int y);
+
+        // Darkens/tints the color of a solid pixel toward the given color
+        // without changing its material (blood stains, scorch marks).
+        void StainPixel(int x, int y, std::uint8_t r, std::uint8_t g, std::uint8_t b);
+
         // Fills the circle with the given material (only over air).
         // Returns how many pixels were placed.
         int PlaceCircle(float centerX, float centerY, float radius, Material material);

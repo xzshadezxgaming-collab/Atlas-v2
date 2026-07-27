@@ -188,6 +188,94 @@ namespace Atlas
         return removed;
     }
 
+    int Terrain::CarveCircleCollect(
+        float centerX,
+        float centerY,
+        float radius,
+        std::vector<DestroyedPixel>& outDebris,
+        int maxSamples)
+    {
+        const int minX = static_cast<int>(std::floor(centerX - radius));
+        const int maxX = static_cast<int>(std::ceil(centerX + radius));
+        const int minY = static_cast<int>(std::floor(centerY - radius));
+        const int maxY = static_cast<int>(std::ceil(centerY + radius));
+
+        const float radiusSquared = radius * radius;
+
+        int removed = 0;
+
+        for (int y = minY; y <= maxY; y++)
+        {
+            for (int x = minX; x <= maxX; x++)
+            {
+                const float dx = static_cast<float>(x) + 0.5f - centerX;
+                const float dy = static_cast<float>(y) + 0.5f - centerY;
+
+                if (dx * dx + dy * dy > radiusSquared)
+                    continue;
+
+                const Material material = GetMaterial(x, y);
+
+                if (!GetMaterialInfo(material).Solid)
+                    continue;
+
+                SetMaterial(x, y, Material::Air);
+                removed++;
+
+                // Sample roughly every fifth destroyed pixel as debris.
+                if (static_cast<int>(outDebris.size()) < maxSamples &&
+                    (removed % 5) == 0)
+                {
+                    outDebris.push_back({
+                        static_cast<float>(x),
+                        static_cast<float>(y),
+                        material });
+                }
+            }
+        }
+
+        return removed;
+    }
+
+    Material Terrain::DestroyPixel(int x, int y)
+    {
+        const Material material = GetMaterial(x, y);
+
+        if (!GetMaterialInfo(material).Solid)
+            return Material::Air;
+
+        SetMaterial(x, y, Material::Air);
+
+        return material;
+    }
+
+    void Terrain::StainPixel(
+        int x,
+        int y,
+        std::uint8_t r,
+        std::uint8_t g,
+        std::uint8_t b)
+    {
+        if (x < 0 || x >= m_Width || y < 0 || y >= m_Height)
+            return;
+
+        if (!GetMaterialInfo(GetMaterial(x, y)).Solid)
+            return;
+
+        const std::size_t index =
+            (static_cast<std::size_t>(y) * m_Width + x) * 4;
+
+        // Blend 60% toward the stain color.
+        m_Pixels[index + 0] = static_cast<std::uint8_t>(
+            (m_Pixels[index + 0] * 2 + r * 3) / 5);
+        m_Pixels[index + 1] = static_cast<std::uint8_t>(
+            (m_Pixels[index + 1] * 2 + g * 3) / 5);
+        m_Pixels[index + 2] = static_cast<std::uint8_t>(
+            (m_Pixels[index + 2] * 2 + b * 3) / 5);
+
+        MarkDirty(x, y);
+    }
+
     int Terrain::PlaceCircle(
         float centerX,
         float centerY,

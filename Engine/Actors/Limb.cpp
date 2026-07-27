@@ -194,7 +194,10 @@ namespace Atlas
         float hipX,
         float hipY,
         float facingDir,
-        bool nearSide) const
+        bool nearSide,
+        unsigned char tintR,
+        unsigned char tintG,
+        unsigned char tintB) const
     {
         // Two-bone IK: place the knee on the circle intersection of thigh
         // and shin, bent toward the facing direction.
@@ -243,6 +246,13 @@ namespace Atlas
             pantsR = 60; pantsG = 63; pantsB = 74;
             bootR = 42; bootG = 35; bootB = 29;
         }
+
+        pantsR = static_cast<Uint8>(pantsR * tintR / 255);
+        pantsG = static_cast<Uint8>(pantsG * tintG / 255);
+        pantsB = static_cast<Uint8>(pantsB * tintB / 255);
+        bootR = static_cast<Uint8>(bootR * tintR / 255);
+        bootG = static_cast<Uint8>(bootG * tintG / 255);
+        bootB = static_cast<Uint8>(bootB * tintB / 255);
 
         DrawSegment(window, hipX, hipY, kneeX, kneeY, pantsR, pantsG, pantsB);
         DrawSegment(window, kneeX, kneeY, footX, footY, pantsR, pantsG, pantsB);

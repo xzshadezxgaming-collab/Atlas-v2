@@ -35,6 +35,18 @@ namespace Atlas
             Uint8 b,
             Uint8 a);
 
+        // Like DrawFilledRect but in screen space (ignores the camera) —
+        // for HUD elements.
+        void DrawScreenRect(
+            float x,
+            float y,
+            float width,
+            float height,
+            Uint8 r,
+            Uint8 g,
+            Uint8 b,
+            Uint8 a);
+
         void DrawTexture(
             SDL_Texture* texture,
             float x,
