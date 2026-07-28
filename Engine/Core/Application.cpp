@@ -191,6 +191,10 @@ namespace Atlas
             std::cout << "(no audio device - running silent)\n";
         }
 
+        // The game draws its own crosshair glued to the mouse position;
+        // the OS cursor on top of it would just be a second pointer.
+        SDL_HideCursor();
+
         Camera camera;
         m_Window.SetCamera(&camera);
 
@@ -321,6 +325,20 @@ namespace Atlas
         // rendering continues, so the freeze reads as impact, not lag.
         float hitStop = 0.0f;
 
+        // Edge-triggered inputs are latched until a sim tick actually
+        // runs: hit-stop can starve the sim for a few render frames, and
+        // a per-render-frame edge landing in one of them would otherwise
+        // be silently dropped.
+        bool throwQueued = false;
+        bool jumpQueued = false;
+
+        // The UI (buy menu, HUD anchors) follows the smoothed camera
+        // WITHOUT the shake component, so menus don't wobble and clicks
+        // can't land on a shifted row mid-shake. Updated each frame from
+        // the camera block below.
+        float uiCamX = camSmoothX;
+        float uiCamY = camSmoothY;
+
         // Health bar keeps a decaying "ghost" of recent damage.
         float healthGhost = 1.0f;
 
@@ -441,9 +459,10 @@ namespace Atlas
             const float mouseWorldX = Input::GetMouseX() + camera.GetX();
             const float mouseWorldY = Input::GetMouseY() + camera.GetY();
 
-            const bool throwPressed =
+            throwQueued = throwQueued ||
                 Input::WasMouseButtonPressed(SDL_BUTTON_RIGHT);
-            const bool jumpPressed = Input::WasKeyPressed(SDL_SCANCODE_SPACE);
+            jumpQueued = jumpQueued ||
+                Input::WasKeyPressed(SDL_SCANCODE_SPACE);
 
             // --- UI: bots-spawn toggle button, and the Tab buy menu ---
             //
@@ -472,8 +491,8 @@ namespace Atlas
             if (!menuHeld)
                 buyPanelOpen = false;
 
-            const float uiCameraX = camera.GetX();
-            const float uiCameraY = camera.GetY();
+            const float uiCameraX = uiCamX;
+            const float uiCameraY = uiCamY;
 
             // Floating menu anchor, in world space, above the player.
             const float menuAnchorX = player.GetCenterX();
@@ -624,6 +643,8 @@ namespace Atlas
             else
                 accumulator += frameTime;
 
+            bool simTicked = false;
+
             while (accumulator >= FixedTimeStep)
             {
                 grenadeCooldown -= FixedTimeStep;
@@ -649,7 +670,7 @@ namespace Atlas
 
                     player.SetAim(mouseWorldX, mouseWorldY);
 
-                    if (jumpPressed && player.IsGrounded())
+                    if (jumpQueued && player.IsGrounded())
                         Audio::Play(Sfx::Jump, 0.5f);
 
                     playerPrevFallSpeed = player.GetVelocityY();
@@ -695,7 +716,8 @@ namespace Atlas
 
                         if (planted && !prevLegPlanted[leg] &&
                             std::fabs(player.GetVelocityX()) > 40.0f &&
-                            player.IsGrounded())
+                            player.IsGrounded() &&
+                            !player.IsCrouching())
                         {
                             particles.SpawnDust(
                                 player.GetLeg(leg).GetFootX(),
@@ -813,7 +835,7 @@ namespace Atlas
                         }
                     }
 
-                    if (throwPressed && !uiCapturingInput &&
+                    if (throwQueued && !uiCapturingInput &&
                         grenadeCooldown <= 0.0f)
                     {
                         grenades.Throw(
@@ -927,20 +949,28 @@ namespace Atlas
                 {
                     const int health = enemy.Body->GetHealth();
 
-                    if (health < enemy.LastHealth && enemy.Body->IsAlive())
+                    if (health < enemy.LastHealth)
                     {
-                        const int delta = enemy.LastHealth - health;
+                        // The killing blow counts too - clamp the shown
+                        // damage to the health that actually remained
+                        // (a 9999 both-legs-gone kill shouldn't print
+                        // "9999").
+                        const int delta =
+                            enemy.LastHealth - std::max(0, health);
 
-                        floaters.push_back({
-                            enemy.Body->GetCenterX() +
-                                unit(rng) * 5.0f,
-                            enemy.Body->GetY() - 8.0f,
-                            -34.0f,
-                            0.75f, 0.75f,
-                            2.0f,
-                            std::to_string(delta),
-                            255, 224, 130,
-                            false });
+                        if (delta > 0)
+                        {
+                            floaters.push_back({
+                                enemy.Body->GetCenterX() +
+                                    unit(rng) * 5.0f,
+                                enemy.Body->GetY() - 8.0f,
+                                -34.0f,
+                                0.75f, 0.75f,
+                                2.0f,
+                                std::to_string(delta),
+                                255, 224, 130,
+                                false });
+                        }
                     }
 
                     enemy.LastHealth = health;
@@ -996,9 +1026,24 @@ namespace Atlas
                         enemies[i].Body->Gib(particles);
                         Audio::Play(Sfx::Gib, 0.8f);
 
-                        // Kill punch: brief hit-stop plus a camera thump.
-                        hitStop = std::min(hitStop + 0.05f, 0.09f);
-                        trauma = std::min(trauma + 0.18f, 1.0f);
+                        // Kill punch: brief hit-stop plus a camera
+                        // thump - but only for kills the player can
+                        // actually see. An ally finishing someone off
+                        // across the map shouldn't freeze the world for
+                        // no visible reason.
+                        const float killDx =
+                            enemies[i].Body->GetCenterX() -
+                            player.GetCenterX();
+                        const float killDy =
+                            enemies[i].Body->GetCenterY() -
+                            player.GetCenterY();
+
+                        if (std::fabs(killDx) < 720.0f &&
+                            std::fabs(killDy) < 440.0f)
+                        {
+                            hitStop = std::min(hitStop + 0.05f, 0.09f);
+                            trauma = std::min(trauma + 0.18f, 1.0f);
+                        }
 
                         // Sometimes drop a medkit.
                         if (unit(rng) > 0.2f)
@@ -1138,6 +1183,16 @@ namespace Atlas
                 }
 
                 accumulator -= FixedTimeStep;
+                simTicked = true;
+            }
+
+            // Latched input edges are consumed once the sim has actually
+            // seen them; a frame with zero ticks (hit-stop) keeps them
+            // queued for the next real tick.
+            if (simTicked)
+            {
+                throwQueued = false;
+                jumpQueued = false;
             }
 
             terrain.Update();
@@ -1198,6 +1253,15 @@ namespace Atlas
                         camSmoothY + shakeY,
                         0.0f,
                         static_cast<float>(worldHeight - ViewHeight)));
+
+                // UI anchoring tracks the smoothed position only - no
+                // shake - so menus hold still while the world rocks.
+                uiCamX = std::clamp(
+                    camSmoothX, 0.0f,
+                    static_cast<float>(worldWidth - ViewWidth));
+                uiCamY = std::clamp(
+                    camSmoothY, 0.0f,
+                    static_cast<float>(worldHeight - ViewHeight));
             }
 
             // Damage feedback: vignette pulse plus a camera thump.
@@ -1312,9 +1376,14 @@ namespace Atlas
             }
 
             // --- Dynamic crosshair: gap opens with weapon spread and
-            // blooms on each shot; a reload arc replaces confusion about
-            // why firing stopped ---
+            // blooms on each shot; a reload bar replaces confusion about
+            // why firing stopped. Drawn in SCREEN space at the raw mouse
+            // position so it can never detach from the cursor, no matter
+            // what the camera (smoothing, shake) is doing this frame ---
             {
+                const float cursorX = Input::GetMouseX();
+                const float cursorY = Input::GetMouseY();
+
                 const WeaponDef* def = player.GetWeapon().GetDef();
 
                 const float spread =
@@ -1326,21 +1395,21 @@ namespace Atlas
                 const Uint8 alpha = 205;
 
                 // Four ticks around an open center.
-                m_Window.DrawFilledRect(
-                    mouseWorldX - gap - 5.0f, mouseWorldY - 1.0f,
+                m_Window.DrawScreenRect(
+                    cursorX - gap - 5.0f, cursorY - 1.0f,
                     5.0f, 2.0f, 255, 255, 255, alpha);
-                m_Window.DrawFilledRect(
-                    mouseWorldX + gap, mouseWorldY - 1.0f,
+                m_Window.DrawScreenRect(
+                    cursorX + gap, cursorY - 1.0f,
                     5.0f, 2.0f, 255, 255, 255, alpha);
-                m_Window.DrawFilledRect(
-                    mouseWorldX - 1.0f, mouseWorldY - gap - 5.0f,
+                m_Window.DrawScreenRect(
+                    cursorX - 1.0f, cursorY - gap - 5.0f,
                     2.0f, 5.0f, 255, 255, 255, alpha);
-                m_Window.DrawFilledRect(
-                    mouseWorldX - 1.0f, mouseWorldY + gap,
+                m_Window.DrawScreenRect(
+                    cursorX - 1.0f, cursorY + gap,
                     2.0f, 5.0f, 255, 255, 255, alpha);
 
-                m_Window.DrawFilledRect(
-                    mouseWorldX - 1.0f, mouseWorldY - 1.0f,
+                m_Window.DrawScreenRect(
+                    cursorX - 1.0f, cursorY - 1.0f,
                     2.0f, 2.0f, 255, 255, 255, alpha);
 
                 // Reload progress right under the cursor.
@@ -1349,11 +1418,11 @@ namespace Atlas
                     const float progress =
                         player.GetWeapon().GetReloadProgress();
 
-                    m_Window.DrawFilledRect(
-                        mouseWorldX - 11.0f, mouseWorldY + gap + 8.0f,
+                    m_Window.DrawScreenRect(
+                        cursorX - 11.0f, cursorY + gap + 8.0f,
                         22.0f, 3.0f, 20, 20, 26, 200);
-                    m_Window.DrawFilledRect(
-                        mouseWorldX - 11.0f, mouseWorldY + gap + 8.0f,
+                    m_Window.DrawScreenRect(
+                        cursorX - 11.0f, cursorY + gap + 8.0f,
                         22.0f * progress, 3.0f, 230, 150, 60, 235);
                 }
             }
