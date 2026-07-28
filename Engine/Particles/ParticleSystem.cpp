@@ -324,6 +324,11 @@ namespace Atlas
                             if (!actor || actor == p.Owner || !actor->IsAlive())
                                 continue;
 
+                            // No friendly fire: a bullet only hurts
+                            // actors on a different team than its owner.
+                            if (p.Owner && actor->GetTeam() == p.Owner->GetTeam())
+                                continue;
+
                             BodyPartId hitPart = BodyPartId::None;
                             float local01X = 0.0f;
                             float local01Y = 0.0f;

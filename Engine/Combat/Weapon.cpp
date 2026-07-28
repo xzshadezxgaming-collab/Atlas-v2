@@ -512,4 +512,13 @@ namespace Atlas
     {
         return m_Def ? m_Def->ClipSize : 0;
     }
+
+    void Weapon::Refill()
+    {
+        if (!m_Def)
+            return;
+
+        m_Ammo = m_Def->ClipSize;
+        m_ReloadTimer = 0.0f;
+    }
 }

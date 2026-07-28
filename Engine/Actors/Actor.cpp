@@ -434,6 +434,9 @@ namespace Atlas
                 }
             }
         }
+
+        m_Legs[0].EaseVisual(deltaTime);
+        m_Legs[1].EaseVisual(deltaTime);
     }
 
     void Actor::Draw(Window& window)

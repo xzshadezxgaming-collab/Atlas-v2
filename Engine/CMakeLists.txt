@@ -10,6 +10,7 @@ add_library(AtlasEngine STATIC
 
     Audio/Audio.cpp
 
+    Combat/Delivery.cpp
     Combat/Explosion.cpp
     Combat/Grenade.cpp
     Combat/Weapon.cpp

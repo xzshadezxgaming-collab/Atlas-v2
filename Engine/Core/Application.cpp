@@ -4,6 +4,7 @@
 #include "../Actors/AIController.h"
 #include "../Audio/Audio.h"
 #include "IniFile.h"
+#include "../Combat/Delivery.h"
 #include "../Combat/Grenade.h"
 #include "../Combat/Weapon.h"
 #include "../Graphics/Background.h"
@@ -41,6 +42,10 @@ namespace Atlas
         constexpr float GrenadeCooldownTime = 0.9f;
         constexpr float RespawnTime = 3.0f;
         constexpr int MaxEnemies = 8;
+        constexpr int MaxAllies = 4;
+
+        constexpr int SupplyCrateCost = 40;
+        constexpr int ReinforcementCost = 100;
 
         // Bots-spawn toggle button (screen space, top right).
         constexpr float BotsButtonW = 108.0f;
@@ -124,12 +129,25 @@ namespace Atlas
             AIController Brain;
         };
 
+        // A purchased reinforcement, once landed: friendly, AI-controlled,
+        // fights whatever enemy is nearest.
+        struct Ally
+        {
+            std::unique_ptr<Actor> Body;
+            AIController Brain;
+        };
+
         struct HealthPickup
         {
             float X;
             float Y;
             float VelY;
         };
+
+        // Off-screen margin the delivery ship starts beyond the camera's
+        // current edge, so it visibly flies in rather than popping into
+        // view already on screen.
+        constexpr float ShipEdgeMargin = 220.0f;
     }
 
     Application::Application()
@@ -223,6 +241,25 @@ namespace Atlas
         GrenadeSystem grenades;
 
         std::vector<Enemy> enemies;
+        std::vector<Ally> allies;
+        DeliverySystem deliveries;
+
+        const WeaponDef* allyWeapon = FindWeaponDef(weaponDefs, "SMG");
+
+        auto spawnAlly = [&](float x)
+        {
+            if (static_cast<int>(allies.size()) >= MaxAllies)
+                return;
+
+            Ally ally;
+            ally.Body = std::make_unique<Actor>();
+            ally.Body->LoadBodySprite(m_Window.GetRenderer(), playerSprite);
+            ally.Body->SetTint(120, 170, 255);
+            ally.Body->SetTeam(0);
+            ally.Body->SetWeaponDef(allyWeapon);
+            ally.Body->Spawn(terrain, x);
+            allies.push_back(std::move(ally));
+        };
 
         std::mt19937 rng(
             static_cast<unsigned int>(SDL_GetPerformanceCounter()));
@@ -431,6 +468,50 @@ namespace Atlas
                     mouseScreenY <= closeScreenY + CloseButtonSize)
                 {
                     buyPanelOpen = false;
+                }
+                else
+                {
+                    // Order rows: index 0 is REINFORCEMENT, index 1 is
+                    // SUPPLY CRATE, matching the labels drawn below.
+                    constexpr float rowW = BuyPanelW - 16.0f;
+                    constexpr float rowH = 24.0f;
+
+                    for (int i = 0; i < 2; i++)
+                    {
+                        const float rowX = panelScreenX + 8.0f;
+                        const float rowY =
+                            panelScreenY + 50.0f + static_cast<float>(i) * 32.0f;
+
+                        if (mouseScreenX < rowX || mouseScreenX > rowX + rowW ||
+                            mouseScreenY < rowY || mouseScreenY > rowY + rowH)
+                            continue;
+
+                        const int cost =
+                            i == 0 ? ReinforcementCost : SupplyCrateCost;
+
+                        if (player.GetGold() < cost)
+                            break;
+
+                        player.AddGold(-cost);
+
+                        const bool fromLeft = (rng() % 2u) == 0u;
+                        const float shipDir = fromLeft ? 1.0f : -1.0f;
+                        const float shipOrigin = fromLeft
+                            ? (camera.GetX() - ShipEdgeMargin)
+                            : (camera.GetX() + static_cast<float>(ViewWidth) +
+                                ShipEdgeMargin);
+
+                        deliveries.Order(
+                            i == 0
+                                ? DeliveryKind::Reinforcement
+                                : DeliveryKind::SupplyCrate,
+                            shipOrigin,
+                            shipDir,
+                            player.GetCenterX());
+
+                        Audio::Play(Sfx::Reload, 0.6f);
+                        break;
+                    }
                 }
             }
 
@@ -670,7 +751,7 @@ namespace Atlas
                 }
 
                 // --- Actor roster for collisions ---
-                Actor* actorPtrs[MaxEnemies + 1];
+                Actor* actorPtrs[MaxEnemies + MaxAllies + 1];
                 int actorCount = 0;
 
                 if (player.IsAlive())
@@ -679,12 +760,48 @@ namespace Atlas
                 for (Enemy& enemy : enemies)
                     actorPtrs[actorCount++] = enemy.Body.get();
 
+                for (Ally& ally : allies)
+                    actorPtrs[actorCount++] = ally.Body.get();
+
                 // --- Enemies ---
                 for (Enemy& enemy : enemies)
                 {
                     enemy.Brain.Update(
                         *enemy.Body,
                         player.IsAlive() ? &player : nullptr,
+                        terrain,
+                        particles,
+                        terrain,
+                        FixedTimeStep);
+                }
+
+                // --- Allies: each fights whichever enemy is nearest ---
+                for (Ally& ally : allies)
+                {
+                    Actor* nearestEnemy = nullptr;
+                    float nearestDistSquared = 0.0f;
+
+                    for (Enemy& enemy : enemies)
+                    {
+                        if (!enemy.Body->IsAlive())
+                            continue;
+
+                        const float dx = enemy.Body->GetCenterX() -
+                            ally.Body->GetCenterX();
+                        const float dy = enemy.Body->GetCenterY() -
+                            ally.Body->GetCenterY();
+                        const float distSquared = dx * dx + dy * dy;
+
+                        if (!nearestEnemy || distSquared < nearestDistSquared)
+                        {
+                            nearestEnemy = enemy.Body.get();
+                            nearestDistSquared = distSquared;
+                        }
+                    }
+
+                    ally.Brain.Update(
+                        *ally.Body,
+                        nearestEnemy,
                         terrain,
                         particles,
                         terrain,
@@ -747,6 +864,22 @@ namespace Atlas
                     }
                 }
 
+                for (std::size_t i = 0; i < allies.size(); )
+                {
+                    if (!allies[i].Body->IsAlive())
+                    {
+                        allies[i].Body->Gib(particles);
+                        Audio::Play(Sfx::Gib, 0.8f);
+
+                        allies.erase(allies.begin() +
+                            static_cast<std::ptrdiff_t>(i));
+                    }
+                    else
+                    {
+                        i++;
+                    }
+                }
+
                 // --- Medkit pickups ---
                 for (std::size_t i = 0; i < pickups.size(); )
                 {
@@ -789,6 +922,37 @@ namespace Atlas
                         wave++;
                         spawnWave(std::min(1 + wave, MaxEnemies));
                         waveTimer = 4.0f;
+                    }
+                }
+
+                // --- Deliveries: drop ship flies in, payload parachutes
+                // down, then delivers its contents on landing. The
+                // system only owns the flight/fall physics; the actual
+                // gameplay effect happens here, where Actor/player
+                // context is available.
+                {
+                    std::vector<const Delivery*> landed;
+                    std::vector<const Delivery*> delivered;
+
+                    deliveries.Update(terrain, FixedTimeStep, landed, delivered);
+
+                    if (!landed.empty())
+                        Audio::Play(Sfx::Land, 0.7f);
+
+                    for (const Delivery* delivery : delivered)
+                    {
+                        if (delivery->Kind == DeliveryKind::SupplyCrate)
+                        {
+                            if (player.IsAlive())
+                            {
+                                player.Heal(50);
+                                player.GetWeapon().Refill();
+                            }
+                        }
+                        else
+                        {
+                            spawnAlly(delivery->PayloadX);
+                        }
                     }
                 }
 
@@ -846,8 +1010,13 @@ namespace Atlas
 
             grenades.Draw(m_Window);
 
+            deliveries.Draw(m_Window);
+
             for (Enemy& enemy : enemies)
                 enemy.Body->Draw(m_Window);
+
+            for (Ally& ally : allies)
+                ally.Body->Draw(m_Window);
 
             if (player.IsAlive())
                 player.Draw(m_Window);
@@ -931,9 +1100,8 @@ namespace Atlas
                 }
                 else
                 {
-                    // Order panel: placeholders for a future drop-ship
-                    // delivery system, spending the gold already being
-                    // mined.
+                    // Order panel: spend gold mined from the terrain on
+                    // a drop-ship delivery.
                     m_Window.DrawScreenRect(
                         panelScreenX - 1.0f, panelScreenY - 1.0f,
                         BuyPanelW + 2.0f, BuyPanelH + 2.0f,
@@ -961,31 +1129,48 @@ namespace Atlas
                         BuyPanelW - 16.0f, 1.0f,
                         120, 126, 148, 90);
 
-                    const char* items[2] =
+                    const char* names[2] = { "REINFORCEMENT", "SUPPLY CRATE" };
+                    const char* subtitles[2] =
                     {
-                        "REINFORCEMENT - 100G",
-                        "SUPPLY CRATE  -  40G",
+                        "AI RIFLEMAN, FIGHTS FOR YOU",
+                        "AMMO REFILL + FIELD MEDKIT",
                     };
+                    const int costs[2] = { ReinforcementCost, SupplyCrateCost };
 
                     for (int i = 0; i < 2; i++)
                     {
                         const float rowY =
                             panelScreenY + 50.0f + static_cast<float>(i) * 32.0f;
 
+                        const bool affordable = player.GetGold() >= costs[i];
+
                         m_Window.DrawScreenRect(
                             panelScreenX + 8.0f, rowY,
                             BuyPanelW - 16.0f, 24.0f,
-                            26, 26, 34, 200);
+                            affordable ? 26 : 20,
+                            affordable ? 26 : 20,
+                            affordable ? 34 : 24,
+                            200);
+
+                        const std::string title =
+                            std::string(names[i]) + " - " +
+                            std::to_string(costs[i]) + "G";
 
                         PixelFont::Draw(
                             m_Window,
                             panelScreenX + 14.0f, rowY + 4.0f,
-                            2.0f, items[i], 140, 142, 150);
+                            2.0f, title,
+                            affordable ? 230 : 120,
+                            affordable ? 200 : 100,
+                            affordable ? 110 : 100);
 
                         PixelFont::Draw(
                             m_Window,
                             panelScreenX + 14.0f, rowY + 13.0f,
-                            2.0f, "COMING SOON", 110, 112, 120);
+                            2.0f, subtitles[i],
+                            affordable ? 150 : 90,
+                            affordable ? 152 : 90,
+                            affordable ? 160 : 96);
                     }
 
                     // Close button.

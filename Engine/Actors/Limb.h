@@ -52,6 +52,15 @@ namespace Atlas
         // Relaxed drift toward a rest pose while airborne.
         void DangleToward(float restX, float restY, float deltaTime);
 
+        // Eases the foot position used for rendering toward the real
+        // (logical) foot position. Call once per simulation tick. Some
+        // logical repositions are instantaneous snaps (an emergency
+        // recovery plant, catching a foothold on landing) that are
+        // correct for support/collision but look like a pop if drawn
+        // directly; this turns any such snap into a brief, smooth slide
+        // on screen without touching the logical position at all.
+        void EaseVisual(float deltaTime);
+
         // Draws the limb as a thigh and shin with an IK-bent knee, plus the
         // boot. facingDir is +1 (right) or -1 (left); nearSide selects the
         // brighter palette for the leg closest to the viewer. The tint
@@ -76,5 +85,10 @@ namespace Atlas
         float m_FootY;
 
         bool m_Planted;
+
+        // Rendered-only foot position (see EaseVisual).
+        float m_VisualFootX;
+        float m_VisualFootY;
+        bool m_VisualInitialized;
     };
 }

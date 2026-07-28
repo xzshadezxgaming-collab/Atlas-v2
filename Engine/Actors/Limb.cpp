@@ -83,7 +83,10 @@ namespace Atlas
         m_Shin(14.0f),
         m_FootX(0.0f),
         m_FootY(0.0f),
-        m_Planted(false)
+        m_Planted(false),
+        m_VisualFootX(0.0f),
+        m_VisualFootY(0.0f),
+        m_VisualInitialized(false)
     {
     }
 
@@ -214,6 +217,24 @@ namespace Atlas
         m_FootY += (restY - m_FootY) * blend;
     }
 
+    void Limb::EaseVisual(float deltaTime)
+    {
+        // The very first call has nothing to ease from yet - snap so the
+        // leg doesn't slide in from the origin at spawn.
+        if (!m_VisualInitialized)
+        {
+            m_VisualFootX = m_FootX;
+            m_VisualFootY = m_FootY;
+            m_VisualInitialized = true;
+            return;
+        }
+
+        const float blend = std::min(1.0f, 26.0f * deltaTime);
+
+        m_VisualFootX += (m_FootX - m_VisualFootX) * blend;
+        m_VisualFootY += (m_FootY - m_VisualFootY) * blend;
+    }
+
     void Limb::Draw(
         Window& window,
         float hipX,
@@ -225,15 +246,18 @@ namespace Atlas
         unsigned char tintB) const
     {
         // Two-bone IK: place the knee on the circle intersection of thigh
-        // and shin, bent toward the facing direction.
-        float dx = m_FootX - hipX;
-        float dy = m_FootY - hipY;
+        // and shin, bent toward the facing direction. Drawn from the
+        // eased visual foot position, not the raw logical one, so an
+        // instantaneous logical reposition (an emergency recovery plant,
+        // a landing catch) reads as a quick slide rather than a pop.
+        float dx = m_VisualFootX - hipX;
+        float dy = m_VisualFootY - hipY;
         float distance = std::sqrt(dx * dx + dy * dy);
 
         const float maxDistance = m_Thigh + m_Shin - 0.5f;
 
-        float footX = m_FootX;
-        float footY = m_FootY;
+        float footX = m_VisualFootX;
+        float footY = m_VisualFootY;
 
         if (distance > maxDistance)
         {

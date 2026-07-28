@@ -105,6 +105,10 @@ namespace Atlas
         int GetAmmo() const;
         int GetClipSize() const;
 
+        // Instantly tops the clip back up and clears any reload in
+        // progress (a supply-crate resupply, not a timed field reload).
+        void Refill();
+
         // Applies this weapon's cone-sweep (if any) to the given aim
         // direction, returning the tool's actual effective direction for
         // this instant. With ConeAngleDegrees == 0 this just returns

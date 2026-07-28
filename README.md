@@ -15,7 +15,11 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
   is one hitbox and each leg is a limb with its own foot hitbox. Feet
   find and hold real footholds in the pixel terrain, plant at different
   heights on slopes, step over rubble, and lose grip when the ground
-  under them is dug away. Legs render with IK-bent knees.
+  under them is dug away. Legs render with IK-bent knees; the rendered
+  foot position eases toward instantaneous logical repositions (an
+  emergency recovery plant, a landing catch) so the gait always reads
+  as a smooth step rather than a pop, without touching the underlying
+  collision/support logic at all.
 - **Crouch** — holding S folds the legs and lowers the torso so the
   actor can wriggle through tight dug tunnels and low passages.
 - **Pixel particle combat** — bullets are single-pixel physics objects
@@ -50,11 +54,18 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
 - **Gold currency** — destroying gold pixels (by digger, bullet, or
   explosion) pays out currency to whoever did it, tracked per actor
   and shown in the HUD.
-- **Buy menu** — hold Tab to open a floating wheel above the player;
-  BUY opens an order panel showing your gold total and placeholder
-  drop-ship items (not yet purchasable - groundwork for a future
-  reinforcement-delivery system). The world keeps running while the
-  menu is open, but it captures clicks so you don't fire through it.
+- **Buy menu and drop-ship deliveries** — hold Tab to open a floating
+  wheel above the player; BUY opens an order panel showing your gold
+  total and two purchasable orders. A REINFORCEMENT (100G) buys an
+  AI-controlled ally who fights whatever enemy is nearest once landed;
+  a SUPPLY CRATE (40G) refills your current weapon's clip and heals
+  50 HP. Ordering spends the gold immediately and, Cortex Command
+  style, sends a drop ship flying in from off to one side; it releases
+  its cargo above you and flies on off the other side while the
+  payload parachutes down and lands. Rows grey out and can't be
+  clicked when you can't afford them. The world keeps running while
+  the menu is open, but it captures clicks so you don't fire through
+  it.
 - **Bots toggle** — a HUD button temporarily turns off new wave
   spawns (existing enemies aren't affected) for testing or a breather.
 - **Grenades and explosions** — bouncing grenades with fuses; blasts
@@ -65,6 +76,10 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
 - **Enemy AI and waves** — red enemy soldiers patrol, spot you through
   real terrain line-of-sight, and fire in bursts; endless waves with
   respawns. HUD bars for health, fuel and ammo.
+- **Allies** — reinforcements delivered via the buy menu fight
+  alongside you: each one targets whatever enemy is nearest with the
+  same AI enemies use. Bullets never hurt a teammate (same-team fire
+  passes through), though explosions still don't discriminate.
 - **Procedural retro SFX** — gunshots, explosions, digging, jumps and
   gibs synthesized at startup (SDL3 audio), no sound files needed.
 - **Data-driven scenes** — world size and seed come from
@@ -130,8 +145,9 @@ cmake --build build -j
 - [x] **Milestone 3b — combat actors**: aim arm, weapons, grenades,
   gibbing, enemy AI, waves
 - [ ] **Milestone 4 — game layer**: scenes and props from data files,
-  inventory/pickups, objectives, and wiring the buy menu's order panel
-  up to real spending and drop-ship deliveries (currency, UI shell,
-  and placeholder items already in place)
+  inventory/pickups, objectives. The buy menu now spends real gold on
+  drop-ship deliveries (a reinforcement ally or a supply crate); still
+  to come: more order types, direct control over multiple bodies, and
+  choosing your own landing zone instead of always dropping on you.
 - [ ] **Milestone 5 — feel and polish**: body pitch and stagger,
   screen shake, parallax background, performance pass, settings
