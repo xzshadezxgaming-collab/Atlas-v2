@@ -458,6 +458,31 @@ namespace Atlas
             }
         }
 
+        // Sparse grass tufts poking 1-3px above the surface line - they
+        // are real Grass pixels, destructible (and walkable) like any
+        // other terrain, purely to break up the razor-straight top edge.
+        for (int x = 0; x < m_Width; x++)
+        {
+            const std::uint32_t h = HashPixel(
+                static_cast<std::uint32_t>(x), seed | 1u);
+
+            if (h % 3u != 0u)
+                continue;
+
+            const int tuftHeight = 1 + static_cast<int>((h >> 8) % 3u);
+
+            for (int t = 1; t <= tuftHeight; t++)
+            {
+                const int y = surface[x] - t;
+
+                if (y < 1)
+                    break;
+
+                m_Materials[static_cast<std::size_t>(y) * m_Width + x] =
+                    static_cast<std::uint8_t>(Material::Grass);
+            }
+        }
+
         // Bake depth shading: the deeper below the surface, the darker,
         // so craters and tunnels reveal dark underground.
         for (int x = 0; x < m_Width; x++)
@@ -600,9 +625,38 @@ namespace Atlas
         else if (airBelow)
             factor *= 0.6f;
 
-        m_Pixels[index + 0] = Shade(info.R, factor);
-        m_Pixels[index + 1] = Shade(info.G, factor);
-        m_Pixels[index + 2] = Shade(info.B, factor);
+        // Chroma grain: each pixel leans slightly warm or cool instead
+        // of only lighter/darker, so big fields of one material read as
+        // natural color variation rather than grayscale noise.
+        float chroma = 0.10f;
+
+        switch (material)
+        {
+        case Material::Dirt: chroma = 0.15f; break;
+        case Material::Stone: chroma = 0.09f; break;
+        case Material::Grass: chroma = 0.12f; break;
+        case Material::Gold: chroma = 0.05f; break;
+        default: break;
+        }
+
+        const float warm =
+            (static_cast<float>((hash >> 12) % 256u) / 255.0f - 0.5f) *
+            chroma * 2.0f;
+
+        float rFactor = factor * (1.0f + warm);
+        float gFactor = factor;
+        float bFactor = factor * (1.0f - warm);
+
+        // Grass tilts yellow-green rather than red-blue.
+        if (material == Material::Grass)
+        {
+            gFactor *= 1.0f + warm * 0.6f;
+            bFactor = factor * (1.0f - warm * 0.4f);
+        }
+
+        m_Pixels[index + 0] = Shade(info.R, rFactor);
+        m_Pixels[index + 1] = Shade(info.G, gFactor);
+        m_Pixels[index + 2] = Shade(info.B, bFactor);
         m_Pixels[index + 3] = 255;
     }
 

@@ -441,6 +441,32 @@ namespace Atlas
 
     void Actor::Draw(Window& window)
     {
+        // Soft contact shadow under the feet grounds the figure against
+        // the terrain instead of leaving it visually floating.
+        if (m_Grounded)
+        {
+            float shadowY = m_Y + BodyHeight + CurrentStandHeight() + 1.0f;
+            float supportSum = 0.0f;
+            int supportCount = 0;
+
+            for (int i = 0; i < 2; i++)
+            {
+                if (m_Legs[i].IsPlanted())
+                {
+                    supportSum += m_Legs[i].GetFootY();
+                    supportCount++;
+                }
+            }
+
+            if (supportCount > 0)
+                shadowY = supportSum / supportCount + 1.0f;
+
+            const float cx = GetCenterX();
+
+            window.DrawFilledRect(cx - 11.0f, shadowY, 22.0f, 2.0f, 0, 0, 6, 46);
+            window.DrawFilledRect(cx - 7.0f, shadowY + 2.0f, 14.0f, 1.0f, 0, 0, 6, 30);
+        }
+
         // Leg 1 is always the near (brighter) leg so shading doesn't
         // flicker when the actor turns around.
         const int nearLeg = 1;
@@ -469,11 +495,14 @@ namespace Atlas
 
         if (m_BodyTexture.GetTexture())
         {
-            // Bob while walking, lean into the direction of travel, and
-            // hunch forward when crouching.
-            const float bob = m_Grounded
+            // Bob while walking, breathe while standing still, lean into
+            // the direction of travel, and hunch forward when crouching.
+            float bob = m_Grounded
                 ? std::sin(m_BobPhase) * (m_Crouching ? 0.8f : 1.4f)
                 : 0.0f;
+
+            if (m_Grounded && std::fabs(m_VelocityX) < 5.0f)
+                bob += std::sin(m_BeamPhase * 2.2f) * 0.7f;
 
             float lean = std::clamp(
                 m_VelocityX * 0.02f,
@@ -483,6 +512,11 @@ namespace Atlas
             if (m_Crouching)
                 lean += m_FacingDir * 11.0f;
 
+            // Thrusting tips the body into the flight direction.
+            if (m_Jetting)
+                lean += std::clamp(m_VelocityX * 0.015f, -4.0f, 4.0f) +
+                    m_FacingDir * 2.0f;
+
             window.DrawTextureRotated(
                 m_BodyTexture.GetTexture(),
                 m_X - (SpriteWidth - BodyWidth) * 0.5f,
@@ -491,6 +525,33 @@ namespace Atlas
                 SpriteHeight,
                 lean,
                 m_FacingDir < 0.0f);
+
+            // Getting hit flashes the whole figure white for a few
+            // frames (an additive re-draw of the sprite) - reads far
+            // more clearly than a colored glow around it.
+            if (m_HurtFlash > 0.0f)
+            {
+                SDL_Texture* texture = m_BodyTexture.GetTexture();
+                const float strength = std::min(1.0f, m_HurtFlash / 0.12f);
+
+                SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_ADD);
+                SDL_SetTextureColorMod(texture, 255, 255, 255);
+                SDL_SetTextureAlphaMod(
+                    texture, static_cast<Uint8>(190.0f * strength));
+
+                window.DrawTextureRotated(
+                    texture,
+                    m_X - (SpriteWidth - BodyWidth) * 0.5f,
+                    m_Y + bob,
+                    SpriteWidth,
+                    SpriteHeight,
+                    lean,
+                    m_FacingDir < 0.0f);
+
+                SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+                SDL_SetTextureAlphaMod(texture, 255);
+                SDL_SetTextureColorMod(texture, m_TintR, m_TintG, m_TintB);
+            }
         }
 
         if (IsPartDestroyed(LegPart(nearLeg)))
@@ -533,7 +594,7 @@ namespace Atlas
                 255, 150, 60, 200);
         }
 
-        // Hit flash: a hot red pulse around the figure.
+        // A faint red spill still accompanies the white sprite flash.
         if (m_HurtFlash > 0.0f)
         {
             const float strength = std::min(1.0f, m_HurtFlash / 0.12f);
@@ -543,7 +604,7 @@ namespace Atlas
                 GetCenterY(),
                 30.0f,
                 255, 90, 60,
-                static_cast<Uint8>(70.0f * strength));
+                static_cast<Uint8>(38.0f * strength));
         }
     }
 
@@ -567,8 +628,15 @@ namespace Atlas
         const float sx = ShoulderX();
         const float sy = ShoulderY();
 
-        const float handX = GetHandX();
-        const float handY = GetHandY();
+        // Firing kicks the whole arm/weapon assembly back along the aim
+        // for a couple of frames - reads as recoil without touching the
+        // actual aim or physics.
+        const float kick = m_MuzzleFlash > 0.0f
+            ? (m_MuzzleFlash / 0.05f) * 3.0f
+            : 0.0f;
+
+        const float handX = GetHandX() - m_AimDirX * kick;
+        const float handY = GetHandY() - m_AimDirY * kick;
 
         // Two-bone arm IK, elbow bent downward.
         float dx = handX - sx;

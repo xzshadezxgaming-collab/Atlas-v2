@@ -3,6 +3,7 @@
 #include "Explosion.h"
 
 #include "../Core/Window.h"
+#include "../Particles/ParticleSystem.h"
 #include "../World/Terrain.h"
 
 #include <cmath>
@@ -24,7 +25,7 @@ namespace Atlas
         float velY,
         float fuse)
     {
-        m_Grenades.push_back({ x, y, velX, velY, fuse });
+        m_Grenades.push_back({ x, y, velX, velY, fuse, 0.0f });
     }
 
     void GrenadeSystem::Update(
@@ -62,6 +63,18 @@ namespace Atlas
             }
 
             grenade.VelY += Gravity * deltaTime;
+
+            // A thin smoke trail while airborne makes the arc readable.
+            grenade.Trail -= deltaTime;
+
+            if (grenade.Trail <= 0.0f)
+            {
+                particles.SpawnSmoke(
+                    grenade.X, grenade.Y,
+                    -grenade.VelX * 0.05f,
+                    -grenade.VelY * 0.05f - 8.0f);
+                grenade.Trail = 0.055f;
+            }
 
             // Move one pixel at a time and bounce off terrain per axis.
             const float deltaX = grenade.VelX * deltaTime;
@@ -118,8 +131,10 @@ namespace Atlas
                 40,
                 255);
 
-            // Blinking fuse light.
-            if (static_cast<int>(grenade.Fuse * 6.0f) % 2 == 0)
+            // Blinking fuse light that blinks faster as time runs out.
+            const float blinkRate = grenade.Fuse < 0.8f ? 16.0f : 6.0f;
+
+            if (static_cast<int>(grenade.Fuse * blinkRate) % 2 == 0)
             {
                 window.DrawFilledRect(
                     grenade.X - 1.0f,
@@ -130,6 +145,9 @@ namespace Atlas
                     60,
                     40,
                     255);
+
+                window.DrawGlow(
+                    grenade.X, grenade.Y - 2.0f, 5.0f, 255, 70, 40, 90);
             }
         }
     }

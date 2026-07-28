@@ -127,6 +127,26 @@ namespace Atlas
         {
             std::unique_ptr<Actor> Body;
             AIController Brain;
+
+            // Health seen last tick, for spawning floating damage numbers
+            // without plumbing callbacks through the damage paths.
+            int LastHealth = 100;
+        };
+
+        // A short-lived piece of floating text: damage numbers, gold
+        // popups, wave banners. World-space entries scroll with the
+        // camera; screen-space entries (banners) don't.
+        struct Floater
+        {
+            float X;
+            float Y;
+            float VelY;
+            float Life;
+            float MaxLife;
+            float Scale;
+            std::string Text;
+            Uint8 R, G, B;
+            bool ScreenSpace;
         };
 
         // A purchased reinforcement, once landed: friendly, AI-controlled,
@@ -274,9 +294,35 @@ namespace Atlas
         bool playerWasGrounded = true;
         float playerPrevFallSpeed = 0.0f;
 
-        float cameraShake = 0.0f;
+        // Camera: exponentially-smoothed position with aim lookahead and
+        // trauma-based shake (trauma in [0,1]; amplitude scales with its
+        // square so small hits barely tremble and big ones really rock).
+        float camSmoothX = player.GetCenterX() - ViewWidth * 0.5f;
+        float camSmoothY = player.GetCenterY() - ViewHeight * 0.5f;
+        float trauma = 0.0f;
+
         std::vector<HealthPickup> pickups;
+        std::vector<Floater> floaters;
         std::uniform_real_distribution<float> unit(-1.0f, 1.0f);
+
+        // Gold gained is batched into one popup instead of spamming a
+        // floater for every mined pixel.
+        int goldPopupAccum = 0;
+        float goldPopupTimer = 0.0f;
+        int lastPlayerGold = player.GetGold();
+
+        // Footstep dust needs plant-edge detection per leg.
+        bool prevLegPlanted[2] = { true, true };
+
+        // Crosshair blooms open briefly on each shot.
+        float crosshairBloom = 0.0f;
+
+        // A few frames of frozen simulation on each kill (hit-stop) -
+        // rendering continues, so the freeze reads as impact, not lag.
+        float hitStop = 0.0f;
+
+        // Health bar keeps a decaying "ghost" of recent damage.
+        float healthGhost = 1.0f;
 
         float timeSeconds = 0.0f;
         float hurtVignette = 0.0f;
@@ -570,8 +616,13 @@ namespace Atlas
                 }
             }
 
-            // Fixed-timestep simulation.
-            accumulator += frameTime;
+            // Fixed-timestep simulation. Hit-stop eats the frame's sim
+            // time instead of feeding the accumulator, freezing the
+            // world for a beat while rendering carries on.
+            if (hitStop > 0.0f)
+                hitStop -= frameTime;
+            else
+                accumulator += frameTime;
 
             while (accumulator >= FixedTimeStep)
             {
@@ -618,6 +669,42 @@ namespace Atlas
                         playerPrevFallSpeed > 320.0f)
                     {
                         Audio::Play(Sfx::Land, 0.6f);
+
+                        // Landing kicks up a dust ring and a camera thump
+                        // scaled by how hard the fall was.
+                        const float impact = std::min(
+                            1.0f, playerPrevFallSpeed / 900.0f);
+
+                        trauma = std::min(trauma + 0.12f + impact * 0.2f, 1.0f);
+
+                        for (int i = 0; i < 7; i++)
+                        {
+                            particles.SpawnDust(
+                                player.GetCenterX() + unit(rng) * 10.0f,
+                                player.GetY() + player.GetHeight() + 20.0f,
+                                unit(rng) * 60.0f,
+                                -20.0f - (i % 3) * 12.0f);
+                        }
+                    }
+
+                    // Footstep puffs on each fresh foot plant while
+                    // actually walking.
+                    for (int leg = 0; leg < 2; leg++)
+                    {
+                        const bool planted = player.GetLeg(leg).IsPlanted();
+
+                        if (planted && !prevLegPlanted[leg] &&
+                            std::fabs(player.GetVelocityX()) > 40.0f &&
+                            player.IsGrounded())
+                        {
+                            particles.SpawnDust(
+                                player.GetLeg(leg).GetFootX(),
+                                player.GetLeg(leg).GetFootY() - 1.0f,
+                                -player.GetVelocityX() * 0.08f,
+                                -16.0f);
+                        }
+
+                        prevLegPlanted[leg] = planted;
                     }
 
                     if (player.IsJetting() && jetSoundTimer <= 0.0f)
@@ -647,6 +734,9 @@ namespace Atlas
 
                             const WeaponDef& def =
                                 *player.GetWeapon().GetDef();
+
+                            if (def.Kind == WeaponKind::Gun)
+                                crosshairBloom = 1.0f;
 
                             // Dig tools tick fast; don't machine-gun the
                             // crumble sound.
@@ -819,16 +909,76 @@ namespace Atlas
                 if (grenades.ExplodedThisFrame())
                 {
                     Audio::Play(Sfx::Explosion);
-                    cameraShake = std::min(cameraShake + 11.0f, 18.0f);
+                    trauma = std::min(trauma + 0.5f, 1.0f);
                 }
 
-                cameraShake -= cameraShake * 3.5f * FixedTimeStep;
+                trauma = std::max(0.0f, trauma - 1.6f * FixedTimeStep);
 
                 particles.Update(
                     terrain,
                     FixedTimeStep,
                     actorPtrs,
                     actorCount);
+
+                // Floating damage numbers: compare each enemy's health to
+                // last tick's - catches every damage source (bullets,
+                // explosions, digger limb damage) without any plumbing.
+                for (Enemy& enemy : enemies)
+                {
+                    const int health = enemy.Body->GetHealth();
+
+                    if (health < enemy.LastHealth && enemy.Body->IsAlive())
+                    {
+                        const int delta = enemy.LastHealth - health;
+
+                        floaters.push_back({
+                            enemy.Body->GetCenterX() +
+                                unit(rng) * 5.0f,
+                            enemy.Body->GetY() - 8.0f,
+                            -34.0f,
+                            0.75f, 0.75f,
+                            2.0f,
+                            std::to_string(delta),
+                            255, 224, 130,
+                            false });
+                    }
+
+                    enemy.LastHealth = health;
+                }
+
+                // Gold popups, batched: while gold keeps arriving the
+                // window extends; once it goes quiet the total pops up.
+                {
+                    const int gold = player.GetGold();
+
+                    if (gold > lastPlayerGold)
+                    {
+                        goldPopupAccum += gold - lastPlayerGold;
+                        goldPopupTimer = 0.4f;
+                    }
+
+                    lastPlayerGold = gold;
+
+                    if (goldPopupTimer > 0.0f)
+                    {
+                        goldPopupTimer -= FixedTimeStep;
+
+                        if (goldPopupTimer <= 0.0f && goldPopupAccum > 0)
+                        {
+                            floaters.push_back({
+                                player.GetCenterX(),
+                                player.GetY() - 14.0f,
+                                -30.0f,
+                                1.0f, 1.0f,
+                                2.0f,
+                                "+" + std::to_string(goldPopupAccum) + "G",
+                                235, 200, 90,
+                                false });
+
+                            goldPopupAccum = 0;
+                        }
+                    }
+                }
 
                 // --- Deaths ---
                 if (!player.IsAlive() && !playerGibbed)
@@ -845,6 +995,10 @@ namespace Atlas
                     {
                         enemies[i].Body->Gib(particles);
                         Audio::Play(Sfx::Gib, 0.8f);
+
+                        // Kill punch: brief hit-stop plus a camera thump.
+                        hitStop = std::min(hitStop + 0.05f, 0.09f);
+                        trauma = std::min(trauma + 0.18f, 1.0f);
 
                         // Sometimes drop a medkit.
                         if (unit(rng) > 0.2f)
@@ -922,6 +1076,33 @@ namespace Atlas
                         wave++;
                         spawnWave(std::min(1 + wave, MaxEnemies));
                         waveTimer = 4.0f;
+
+                        // Center-screen wave banner with a sub-line.
+                        const std::string banner =
+                            "WAVE " + std::to_string(wave);
+
+                        floaters.push_back({
+                            (static_cast<float>(ViewWidth) -
+                                PixelFont::Measure(banner, 6.0f)) * 0.5f,
+                            170.0f,
+                            -9.0f,
+                            2.2f, 2.2f,
+                            6.0f,
+                            banner,
+                            240, 235, 220,
+                            true });
+
+                        floaters.push_back({
+                            (static_cast<float>(ViewWidth) -
+                                PixelFont::Measure("HOSTILES INBOUND", 2.0f)) *
+                                0.5f,
+                            212.0f,
+                            -9.0f,
+                            2.2f, 2.2f,
+                            2.0f,
+                            "HOSTILES INBOUND",
+                            255, 130, 110,
+                            true });
                     }
                 }
 
@@ -961,26 +1142,106 @@ namespace Atlas
 
             terrain.Update();
 
-            // Camera follows the player, clamped to the world, with
-            // explosion shake on top.
-            camera.SetPosition(
-                std::clamp(
-                    player.GetCenterX() - ViewWidth * 0.5f,
-                    0.0f,
-                    static_cast<float>(worldWidth - ViewWidth)) +
-                    unit(rng) * cameraShake,
-                std::clamp(
-                    player.GetCenterY() - ViewHeight * 0.5f,
-                    0.0f,
-                    static_cast<float>(worldHeight - ViewHeight)) +
-                    unit(rng) * cameraShake);
+            // --- Camera: smoothed follow with aim lookahead and
+            // trauma shake ---
+            //
+            // The target leads toward where the player is aiming so the
+            // view shows more of what matters; exponential smoothing
+            // makes every movement ease instead of hard-locking; shake
+            // is smooth multi-frequency noise scaled by trauma^2 rather
+            // than raw per-frame jitter.
+            {
+                const float lookX =
+                    player.IsAlive() ? player.GetAimDirX() * 105.0f : 0.0f;
+                const float lookY =
+                    player.IsAlive() ? player.GetAimDirY() * 55.0f : 0.0f;
 
-            // Damage feedback for the vignette.
+                const float targetX = std::clamp(
+                    player.GetCenterX() + lookX - ViewWidth * 0.5f,
+                    0.0f,
+                    static_cast<float>(worldWidth - ViewWidth));
+                const float targetY = std::clamp(
+                    player.GetCenterY() + lookY - ViewHeight * 0.5f,
+                    0.0f,
+                    static_cast<float>(worldHeight - ViewHeight));
+
+                // A respawn far away snaps instead of panning across the
+                // whole map.
+                if (std::fabs(targetX - camSmoothX) > 620.0f ||
+                    std::fabs(targetY - camSmoothY) > 480.0f)
+                {
+                    camSmoothX = targetX;
+                    camSmoothY = targetY;
+                }
+
+                const float blend =
+                    1.0f - std::exp(-frameTime * 7.0f);
+
+                camSmoothX += (targetX - camSmoothX) * blend;
+                camSmoothY += (targetY - camSmoothY) * blend;
+
+                const float amp = trauma * trauma * 26.0f;
+
+                const float shakeX = amp *
+                    (0.6f * std::sin(timeSeconds * 41.0f) +
+                     0.4f * std::sin(timeSeconds * 23.7f + 1.3f));
+                const float shakeY = amp *
+                    (0.6f * std::sin(timeSeconds * 37.3f + 2.1f) +
+                     0.4f * std::sin(timeSeconds * 19.1f));
+
+                camera.SetPosition(
+                    std::clamp(
+                        camSmoothX + shakeX,
+                        0.0f,
+                        static_cast<float>(worldWidth - ViewWidth)),
+                    std::clamp(
+                        camSmoothY + shakeY,
+                        0.0f,
+                        static_cast<float>(worldHeight - ViewHeight)));
+            }
+
+            // Damage feedback: vignette pulse plus a camera thump.
             if (player.GetHealth() < lastPlayerHealth)
+            {
                 hurtVignette = 0.6f;
+                trauma = std::min(trauma + 0.3f, 1.0f);
+            }
 
             lastPlayerHealth = player.GetHealth();
             hurtVignette = std::max(0.0f, hurtVignette - frameTime);
+
+            // Visual-decay state for the HUD and crosshair.
+            crosshairBloom = std::max(0.0f, crosshairBloom - frameTime * 6.0f);
+
+            {
+                const float healthFill =
+                    std::max(0, player.GetHealth()) / 100.0f;
+
+                if (healthFill >= healthGhost)
+                    healthGhost = healthFill;
+                else
+                    healthGhost = std::max(
+                        healthFill, healthGhost - frameTime * 0.4f);
+            }
+
+            // Floating text drifts and fades in render time.
+            for (std::size_t i = 0; i < floaters.size(); )
+            {
+                Floater& floater = floaters[i];
+
+                floater.Y += floater.VelY * frameTime;
+                floater.Life -= frameTime;
+
+                if (floater.Life <= 0.0f)
+                {
+                    floaters[i] = floaters.back();
+                    floaters.pop_back();
+                }
+                else
+                {
+                    i++;
+                }
+            }
 
             m_Window.BeginFrame();
 
@@ -1023,13 +1284,79 @@ namespace Atlas
 
             particles.Draw(m_Window);
 
-            // Crosshair.
-            m_Window.DrawFilledRect(
-                mouseWorldX - 4.0f, mouseWorldY - 1.0f, 8.0f, 2.0f,
-                255, 255, 255, 190);
-            m_Window.DrawFilledRect(
-                mouseWorldX - 1.0f, mouseWorldY - 4.0f, 2.0f, 8.0f,
-                255, 255, 255, 190);
+            // --- Floating combat text (damage numbers, gold, banners) ---
+            for (const Floater& floater : floaters)
+            {
+                // Hold full alpha, then fade over the last 40%.
+                const float lifeFrac = floater.Life / floater.MaxLife;
+                const Uint8 alpha = static_cast<Uint8>(
+                    255.0f * std::min(1.0f, lifeFrac / 0.4f));
+
+                const float x = floater.ScreenSpace
+                    ? floater.X
+                    : floater.X - camera.GetX() -
+                        PixelFont::Measure(floater.Text, floater.Scale) * 0.5f;
+                const float y = floater.ScreenSpace
+                    ? floater.Y
+                    : floater.Y - camera.GetY();
+
+                PixelFont::Draw(
+                    m_Window,
+                    x + floater.Scale * 0.5f, y + floater.Scale * 0.5f,
+                    floater.Scale, floater.Text,
+                    10, 10, 14,
+                    static_cast<Uint8>(alpha * 3 / 5));
+                PixelFont::Draw(
+                    m_Window, x, y, floater.Scale, floater.Text,
+                    floater.R, floater.G, floater.B, alpha);
+            }
+
+            // --- Dynamic crosshair: gap opens with weapon spread and
+            // blooms on each shot; a reload arc replaces confusion about
+            // why firing stopped ---
+            {
+                const WeaponDef* def = player.GetWeapon().GetDef();
+
+                const float spread =
+                    def ? def->SpreadDegrees : 3.0f;
+
+                const float gap =
+                    5.0f + spread * 1.1f + crosshairBloom * 7.0f;
+
+                const Uint8 alpha = 205;
+
+                // Four ticks around an open center.
+                m_Window.DrawFilledRect(
+                    mouseWorldX - gap - 5.0f, mouseWorldY - 1.0f,
+                    5.0f, 2.0f, 255, 255, 255, alpha);
+                m_Window.DrawFilledRect(
+                    mouseWorldX + gap, mouseWorldY - 1.0f,
+                    5.0f, 2.0f, 255, 255, 255, alpha);
+                m_Window.DrawFilledRect(
+                    mouseWorldX - 1.0f, mouseWorldY - gap - 5.0f,
+                    2.0f, 5.0f, 255, 255, 255, alpha);
+                m_Window.DrawFilledRect(
+                    mouseWorldX - 1.0f, mouseWorldY + gap,
+                    2.0f, 5.0f, 255, 255, 255, alpha);
+
+                m_Window.DrawFilledRect(
+                    mouseWorldX - 1.0f, mouseWorldY - 1.0f,
+                    2.0f, 2.0f, 255, 255, 255, alpha);
+
+                // Reload progress right under the cursor.
+                if (player.GetWeapon().IsReloading())
+                {
+                    const float progress =
+                        player.GetWeapon().GetReloadProgress();
+
+                    m_Window.DrawFilledRect(
+                        mouseWorldX - 11.0f, mouseWorldY + gap + 8.0f,
+                        22.0f, 3.0f, 20, 20, 26, 200);
+                    m_Window.DrawFilledRect(
+                        mouseWorldX - 11.0f, mouseWorldY + gap + 8.0f,
+                        22.0f * progress, 3.0f, 230, 150, 60, 235);
+                }
+            }
 
             // --- Floating buy menu (Tab held), anchored above the player ---
             //
@@ -1231,35 +1558,91 @@ namespace Atlas
 
             // --- HUD ---
             const float barWidth = 190.0f;
+            const float barX = 32.0f;
 
-            // Backing panel with a subtle border.
-            m_Window.DrawScreenRect(8.0f, 8.0f, barWidth + 18.0f, 92.0f,
+            // Screen-space text with a soft drop shadow so it stays
+            // readable over any scene.
+            auto drawText = [&](
+                float x, float y, float scale,
+                const std::string& text,
+                Uint8 r, Uint8 g, Uint8 b)
+            {
+                PixelFont::Draw(m_Window,
+                    x + scale * 0.5f, y + scale * 0.5f,
+                    scale, text, 10, 10, 14, 150);
+                PixelFont::Draw(m_Window, x, y, scale, text, r, g, b);
+            };
+
+            // Backing panel with a subtle border and a highlight line.
+            m_Window.DrawScreenRect(8.0f, 8.0f, barWidth + 34.0f, 92.0f,
                 120, 126, 148, 60);
-            m_Window.DrawScreenRect(9.0f, 9.0f, barWidth + 16.0f, 90.0f,
-                12, 12, 18, 190);
+            m_Window.DrawScreenRect(9.0f, 9.0f, barWidth + 32.0f, 90.0f,
+                12, 12, 18, 195);
+            m_Window.DrawScreenRect(9.0f, 9.0f, barWidth + 32.0f, 1.0f,
+                170, 176, 198, 70);
 
             auto drawBar = [&](
                 float y,
                 float fill,
-                Uint8 r, Uint8 g, Uint8 b)
+                Uint8 r, Uint8 g, Uint8 b,
+                float ghost = -1.0f)
             {
-                // Trough.
-                m_Window.DrawScreenRect(16.0f, y, barWidth, 9.0f,
-                    28, 28, 36, 255);
+                // Border and inset trough.
+                m_Window.DrawScreenRect(barX - 1.0f, y - 1.0f,
+                    barWidth + 2.0f, 11.0f, 52, 54, 66, 255);
+                m_Window.DrawScreenRect(barX, y, barWidth, 9.0f,
+                    24, 24, 32, 255);
+
+                // Recent damage lingers as a dimmer ghost strip that the
+                // real value visibly ate into.
+                if (ghost > 0.0f)
+                {
+                    m_Window.DrawScreenRect(
+                        barX, y, barWidth * ghost, 9.0f,
+                        static_cast<Uint8>(r / 2 + 40),
+                        static_cast<Uint8>(g / 3),
+                        static_cast<Uint8>(b / 3),
+                        220);
+                }
 
                 if (fill > 0.0f)
                 {
-                    // Bar with a light sheen on the top half.
-                    m_Window.DrawScreenRect(16.0f, y, barWidth * fill, 9.0f,
+                    // Fill with a light sheen on the top half and a
+                    // darker base line.
+                    m_Window.DrawScreenRect(barX, y, barWidth * fill, 9.0f,
                         r, g, b, 255);
-                    m_Window.DrawScreenRect(16.0f, y, barWidth * fill, 4.0f,
+                    m_Window.DrawScreenRect(barX, y, barWidth * fill, 4.0f,
                         255, 255, 255, 46);
+                    m_Window.DrawScreenRect(barX, y + 8.0f, barWidth * fill,
+                        1.0f, 0, 0, 0, 60);
                 }
             };
 
+            // Tiny icons in the gutter left of each bar.
+            {
+                // Health: red cross.
+                m_Window.DrawScreenRect(18.0f, 15.0f, 8.0f, 2.0f,
+                    225, 90, 80, 255);
+                m_Window.DrawScreenRect(21.0f, 12.0f, 2.0f, 8.0f,
+                    225, 90, 80, 255);
+
+                // Fuel: small flame.
+                m_Window.DrawScreenRect(20.0f, 26.0f, 4.0f, 6.0f,
+                    240, 160, 70, 255);
+                m_Window.DrawScreenRect(21.0f, 24.0f, 2.0f, 3.0f,
+                    255, 210, 120, 255);
+
+                // Ammo: bullet on its side.
+                m_Window.DrawScreenRect(18.0f, 41.0f, 6.0f, 4.0f,
+                    214, 178, 86, 255);
+                m_Window.DrawScreenRect(24.0f, 42.0f, 2.0f, 2.0f,
+                    150, 150, 160, 255);
+            }
+
             drawBar(14.0f,
                 std::max(0, player.GetHealth()) / 100.0f,
-                205, 60, 50);
+                205, 60, 50,
+                healthGhost);
 
             drawBar(27.0f, player.GetFuel(), 90, 150, 230);
 
@@ -1284,8 +1667,7 @@ namespace Atlas
                     c = static_cast<char>(std::toupper(
                         static_cast<unsigned char>(c)));
 
-                PixelFont::Draw(m_Window, 16.0f, 55.0f, 2.0f, info,
-                    235, 235, 240);
+                drawText(barX, 55.0f, 2.0f, info, 235, 235, 240);
 
                 std::string ammoText;
 
@@ -1299,10 +1681,8 @@ namespace Atlas
                 else
                     ammoText = "TOOL";
 
-                PixelFont::Draw(
-                    m_Window,
-                    16.0f + barWidth -
-                        PixelFont::Measure(ammoText, 2.0f),
+                drawText(
+                    barX + barWidth - PixelFont::Measure(ammoText, 2.0f),
                     55.0f,
                     2.0f,
                     ammoText,
@@ -1315,7 +1695,7 @@ namespace Atlas
             for (int i = 0; i < LoadoutSize; i++)
             {
                 const bool selected = i == currentWeapon;
-                const float slotX = 16.0f + static_cast<float>(i) * 22.0f;
+                const float slotX = barX + static_cast<float>(i) * 22.0f;
 
                 m_Window.DrawScreenRect(slotX, 70.0f, 18.0f, 16.0f,
                     28, 28, 36, 255);
@@ -1343,7 +1723,7 @@ namespace Atlas
             // to the right of the weapon slots in the same row.
             {
                 const float goldX =
-                    16.0f + static_cast<float>(LoadoutSize) * 22.0f + 6.0f;
+                    barX + static_cast<float>(LoadoutSize) * 22.0f + 6.0f;
 
                 m_Window.DrawScreenRect(goldX, 73.0f, 8.0f, 8.0f,
                     24, 22, 27, 255);
@@ -1352,8 +1732,7 @@ namespace Atlas
                 m_Window.DrawScreenRect(goldX + 1.0f, 74.0f, 6.0f, 2.0f,
                     240, 205, 110, 255);
 
-                PixelFont::Draw(
-                    m_Window,
+                drawText(
                     goldX + 13.0f,
                     75.0f,
                     2.0f,
@@ -1365,8 +1744,7 @@ namespace Atlas
             {
                 const std::string waveText = "WAVE " + std::to_string(wave);
 
-                PixelFont::Draw(
-                    m_Window,
+                drawText(
                     static_cast<float>(ViewWidth) - 20.0f -
                         PixelFont::Measure(waveText, 3.0f),
                     16.0f,
@@ -1386,25 +1764,32 @@ namespace Atlas
                 }
             }
 
-            // Bots-spawn toggle button.
+            // Bots-spawn toggle button (brightens under the cursor so it
+            // reads as clickable).
             {
+                const Uint8 borderShade = botsButtonHovered ? 150 : 28;
+
                 m_Window.DrawScreenRect(
                     BotsButtonX, BotsButtonY, BotsButtonW, BotsButtonH,
-                    28, 28, 36, 255);
+                    borderShade,
+                    static_cast<Uint8>(borderShade + 4),
+                    static_cast<Uint8>(borderShade + 14),
+                    255);
+
+                const int hoverBoost = botsButtonHovered ? 22 : 0;
 
                 m_Window.DrawScreenRect(
                     BotsButtonX + 1.0f, BotsButtonY + 1.0f,
                     BotsButtonW - 2.0f, BotsButtonH - 2.0f,
-                    botsEnabled ? 42 : 92,
-                    botsEnabled ? 120 : 46,
-                    botsEnabled ? 58 : 46,
+                    static_cast<Uint8>((botsEnabled ? 42 : 92) + hoverBoost),
+                    static_cast<Uint8>((botsEnabled ? 120 : 46) + hoverBoost),
+                    static_cast<Uint8>((botsEnabled ? 58 : 46) + hoverBoost),
                     220);
 
                 const std::string botsLabel =
                     botsEnabled ? "BOTS: ON" : "BOTS: OFF";
 
-                PixelFont::Draw(
-                    m_Window,
+                drawText(
                     BotsButtonX +
                         (BotsButtonW - PixelFont::Measure(botsLabel, 2.0f)) *
                             0.5f,

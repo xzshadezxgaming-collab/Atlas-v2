@@ -15,7 +15,8 @@ namespace Atlas
         float Y;
         float VelX;
         float VelY;
-        float Fuse; // seconds until detonation
+        float Fuse;  // seconds until detonation
+        float Trail; // seconds until the next smoke-trail puff
     };
 
     class GrenadeSystem

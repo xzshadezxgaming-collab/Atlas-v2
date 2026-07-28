@@ -154,10 +154,11 @@ namespace Atlas
 
         void BuildAllSfx()
         {
-            // Shot: sharp mid noise crack.
+            // Shot: sharp mid noise crack. The ~2ms attack ramp keeps the
+            // punch but removes the raw digital click at sample zero.
             {
                 std::vector<float> b = Synth(0.16f);
-                AddNoiseBurst(b, 0.0f, 0.14f, 1.0f, 3.0f, 2);
+                AddNoiseBurst(b, 0.0f, 0.14f, 1.0f, 3.0f, 2, 0.002f);
                 AddTone(b, 0.0f, 0.05f, 420.0f, 160.0f, 0.5f, false);
                 Normalize(b, 0.55f);
                 g_Buffers[static_cast<int>(Sfx::Shot)] = b;
@@ -166,7 +167,7 @@ namespace Atlas
             // Shotgun: deeper, longer boom.
             {
                 std::vector<float> b = Synth(0.3f);
-                AddNoiseBurst(b, 0.0f, 0.28f, 1.0f, 2.4f, 5);
+                AddNoiseBurst(b, 0.0f, 0.28f, 1.0f, 2.4f, 5, 0.003f);
                 AddTone(b, 0.0f, 0.1f, 180.0f, 70.0f, 0.8f, false);
                 Normalize(b, 0.65f);
                 g_Buffers[static_cast<int>(Sfx::Shotgun)] = b;
@@ -175,7 +176,7 @@ namespace Atlas
             // Rifle: loud crack with a tail.
             {
                 std::vector<float> b = Synth(0.4f);
-                AddNoiseBurst(b, 0.0f, 0.1f, 1.0f, 2.0f, 1);
+                AddNoiseBurst(b, 0.0f, 0.1f, 1.0f, 2.0f, 1, 0.002f);
                 AddNoiseBurst(b, 0.06f, 0.3f, 0.4f, 2.0f, 6);
                 AddTone(b, 0.0f, 0.06f, 600.0f, 200.0f, 0.5f, false);
                 Normalize(b, 0.6f);

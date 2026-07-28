@@ -88,14 +88,30 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
   the same click looping.
 - **Data-driven scenes** — world size and seed come from
   `Assets/scene.ini` (seed 0 = new world every launch).
-- **Atmosphere** — dusk sky with stars, moon and drifting clouds over
-  three parallax mountain layers; screen-edge vignette; screen shake;
-  medkit drops from fallen enemies.
-- **Lighting and rendering** — sunlit terrain edges and dark overhangs,
-  depth-darkened underground, per-material texture (mottled stone,
-  dirt specks, glittering gold), glowing tracer rounds, additive
-  fireballs and muzzle light, ejected shell casings, scorched crater
-  rims, walk bob and lean, and hit flashes on actors.
+- **Atmosphere** — dusk sky with a dense twinkling star field, moon,
+  drifting clouds and a warm horizon glow over four parallax
+  mountain/ridge layers separated by atmospheric haze bands;
+  screen-edge vignette; medkit drops from fallen enemies.
+- **Game feel** — smoothed camera that leads toward your aim,
+  trauma-based screen shake (explosions, kills, hits and hard
+  landings all thump the camera in proportion), and a few frames of
+  hit-stop on every kill so impacts land. Floating damage numbers
+  rise off enemies, mined gold pops up as a batched "+N G", and each
+  wave opens with a center-screen banner.
+- **Lighting and rendering** — sunlit terrain edges and dark
+  overhangs, depth-darkened underground, per-material chroma grain
+  (every pixel leans warm or cool, not just lighter/darker), grass
+  tufts breaking the surface line, mottled stone, glittering gold,
+  glowing tracer rounds, explosion shockwave rings and light pops,
+  additive fireballs, dust puffs on footsteps/landings/bullet
+  impacts, grenade smoke trails with accelerating fuse blinks,
+  contact shadows under actors, white hit-flashes, idle breathing,
+  jetpack lean, arm recoil kick, ejected shell casings, and
+  scorched crater rims.
+- **HUD** — layered bars with icons and a damage-lag ghost on
+  health, drop-shadowed text, a dynamic crosshair that opens with
+  weapon spread, blooms on each shot and shows reload progress at
+  the cursor, and hover states on clickable buttons.
 - **Fixed-timestep simulation** decoupled from rendering.
 
 ### Controls

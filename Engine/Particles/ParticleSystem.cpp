@@ -205,6 +205,71 @@ namespace Atlas
         Push(p);
     }
 
+    void ParticleSystem::SpawnDust(
+        float x,
+        float y,
+        float velX,
+        float velY,
+        std::uint8_t r,
+        std::uint8_t g,
+        std::uint8_t b)
+    {
+        Particle p{};
+        p.X = x;
+        p.Y = y;
+        p.VelX = velX;
+        p.VelY = velY;
+        p.Life = 0.45f + RandomUnit() * 0.15f;
+        p.MaxLife = p.Life;
+        p.Gravity = -30.0f; // hangs, drifts gently up as it disperses
+        p.R = r;
+        p.G = g;
+        p.B = b;
+        p.Size = 2;
+        p.Type = ParticleType::Dust;
+        p.SettleMaterial = Material::Air;
+        p.Owner = nullptr;
+
+        Push(p);
+    }
+
+    void ParticleSystem::SpawnShockwave(float x, float y)
+    {
+        Particle p{};
+        p.X = x;
+        p.Y = y;
+        p.Life = 0.32f;
+        p.MaxLife = p.Life;
+        p.R = 255;
+        p.G = 228;
+        p.B = 190;
+        p.Size = 2;
+        p.Type = ParticleType::Shockwave;
+        p.SettleMaterial = Material::Air;
+        p.Owner = nullptr;
+
+        Push(p);
+    }
+
+    void ParticleSystem::SpawnFlash(float x, float y, float radius)
+    {
+        Particle p{};
+        p.X = x;
+        p.Y = y;
+        p.Life = 0.11f;
+        p.MaxLife = p.Life;
+        p.Power = radius; // reused as the bloom radius
+        p.R = 255;
+        p.G = 240;
+        p.B = 200;
+        p.Size = 1;
+        p.Type = ParticleType::Flash;
+        p.SettleMaterial = Material::Air;
+        p.Owner = nullptr;
+
+        Push(p);
+    }
+
     void ParticleSystem::SpawnGib(
         float x,
         float y,
@@ -356,7 +421,10 @@ namespace Atlas
                     }
 
                     if (p.Type == ParticleType::Smoke ||
-                        p.Type == ParticleType::Fire)
+                        p.Type == ParticleType::Fire ||
+                        p.Type == ParticleType::Dust ||
+                        p.Type == ParticleType::Shockwave ||
+                        p.Type == ParticleType::Flash)
                         continue;
 
                     if (!terrain.IsSolid(p.X, p.Y))
@@ -408,13 +476,27 @@ namespace Atlas
                         }
                         else
                         {
-                            // Stopped: sparks on hard material.
+                            // Stopped: sparks on hard material, plus a
+                            // puff of dust in the material's own color.
                             SpawnSpark(prevX, prevY,
                                 -p.VelX * 0.08f + RandomUnit() * 90.0f,
                                 -std::fabs(p.VelY) * 0.08f - 70.0f);
                             SpawnSpark(prevX, prevY,
                                 -p.VelX * 0.05f + RandomUnit() * 90.0f,
                                 -60.0f + RandomUnit() * 50.0f);
+
+                            const MaterialInfo& impactInfo =
+                                GetMaterialInfo(material);
+
+                            SpawnDust(prevX, prevY,
+                                -p.VelX * 0.03f,
+                                -22.0f,
+                                static_cast<std::uint8_t>(
+                                    std::min(255, impactInfo.R + 30)),
+                                static_cast<std::uint8_t>(
+                                    std::min(255, impactInfo.G + 30)),
+                                static_cast<std::uint8_t>(
+                                    std::min(255, impactInfo.B + 30)));
 
                             alive = false;
                         }
@@ -535,6 +617,18 @@ namespace Atlas
                 break;
             }
 
+            case ParticleType::Dust:
+            {
+                // Disperses: grows while fading, like a kicked-up puff.
+                const float size = 2.0f + age * 7.0f;
+                const Uint8 alpha = static_cast<Uint8>(85.0f * (1.0f - age));
+
+                window.DrawFilledRect(
+                    p.X - size * 0.5f, p.Y - size * 0.5f, size, size,
+                    p.R, p.G, p.B, alpha);
+                break;
+            }
+
             case ParticleType::Casing:
             {
                 window.DrawFilledRect(
@@ -600,6 +694,43 @@ namespace Atlas
                 if (age < 0.4f)
                     window.DrawGlow(p.X, p.Y, 5.0f, 255, 190, 90, 40);
 
+                break;
+            }
+
+            case ParticleType::Shockwave:
+            {
+                // Expanding ring of bright points with a quadratic fade -
+                // sells the blast pressure front that the fireball alone
+                // doesn't.
+                const float radius = 6.0f + age * 175.0f;
+                const float fade = (1.0f - age) * (1.0f - age);
+                const Uint8 alpha = static_cast<Uint8>(160.0f * fade);
+
+                constexpr int Points = 30;
+
+                for (int i = 0; i < Points; i++)
+                {
+                    const float angle =
+                        static_cast<float>(i) * 6.28318f / Points;
+
+                    window.DrawFilledRect(
+                        p.X + std::cos(angle) * radius - 1.5f,
+                        p.Y + std::sin(angle) * radius * 0.82f - 1.5f,
+                        3.0f, 3.0f,
+                        p.R, p.G, p.B, alpha);
+                }
+                break;
+            }
+
+            case ParticleType::Flash:
+            {
+                // A hard, brief light bloom right at the blast point.
+                const float radius = p.Power * (1.0f - age * 0.55f);
+
+                window.DrawGlow(
+                    p.X, p.Y, radius,
+                    p.R, p.G, p.B,
+                    static_cast<Uint8>(115.0f * (1.0f - age)));
                 break;
             }
 

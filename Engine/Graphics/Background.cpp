@@ -35,23 +35,28 @@ namespace Atlas
         constexpr Color SkyMid{ 52.0f, 44.0f, 74.0f };
         constexpr Color SkyHorizon{ 158.0f, 96.0f, 68.0f };
 
-        // Mountain silhouettes, far to near (hazier when distant).
-        constexpr Color LayerColors[3] =
+        // Mountain/ridge silhouettes, far to near (hazier when distant).
+        // The nearest layer is a darker, jagged ridge line close to the
+        // playfield for depth right behind the action.
+        constexpr int LayerCount = 4;
+
+        constexpr Color LayerColors[LayerCount] =
         {
             { 76.0f, 62.0f, 82.0f },
             { 52.0f, 44.0f, 64.0f },
             { 33.0f, 30.0f, 46.0f },
+            { 21.0f, 19.0f, 32.0f },
         };
 
-        constexpr float LayerParallax[3] = { 0.12f, 0.26f, 0.45f };
-        constexpr float LayerBase[3] = { 300.0f, 380.0f, 470.0f };
-        constexpr float LayerAmp[3] = { 90.0f, 120.0f, 150.0f };
+        constexpr float LayerParallax[LayerCount] = { 0.12f, 0.26f, 0.45f, 0.62f };
+        constexpr float LayerBase[LayerCount] = { 300.0f, 380.0f, 470.0f, 560.0f };
+        constexpr float LayerAmp[LayerCount] = { 90.0f, 120.0f, 150.0f, 60.0f };
     }
 
     Background::Background()
         : m_Seed(1u)
     {
-        for (int layer = 0; layer < 3; layer++)
+        for (int layer = 0; layer < LayerCount; layer++)
             for (int octave = 0; octave < 3; octave++)
                 m_Phase[layer][octave] = 0.0f;
     }
@@ -60,7 +65,7 @@ namespace Atlas
     {
         m_Seed = seed | 1u;
 
-        for (int layer = 0; layer < 3; layer++)
+        for (int layer = 0; layer < LayerCount; layer++)
         {
             for (int octave = 0; octave < 3; octave++)
             {
@@ -79,7 +84,17 @@ namespace Atlas
         height += std::sin(x * 0.0043f + m_Phase[layer][1]) * 0.45f;
         height += std::sin(x * 0.0110f + m_Phase[layer][2]) * 0.18f;
 
-        return height * LayerAmp[layer];
+        height *= LayerAmp[layer];
+
+        // The nearest layer gets sharper, rockier detail on top of the
+        // rolling base so it reads as a craggy ridge, not another hill.
+        if (layer == 3)
+        {
+            height += std::fabs(std::sin(x * 0.021f + m_Phase[layer][1])) * 26.0f;
+            height += std::fabs(std::sin(x * 0.048f + m_Phase[layer][2])) * 11.0f;
+        }
+
+        return height;
     }
 
     void Background::Draw(
@@ -116,8 +131,16 @@ namespace Atlas
                 255);
         }
 
+        // --- Dusk glow low on the horizon, opposite the moon ---
+        window.DrawGlowScreen(
+            width * 0.22f - cameraX * 0.03f,
+            height * 0.62f,
+            300.0f,
+            255, 130, 60,
+            22);
+
         // --- Stars in the dark upper sky (tiny parallax, some twinkle) ---
-        for (int i = 0; i < 90; i++)
+        for (int i = 0; i < 140; i++)
         {
             const std::uint32_t h = Hash(m_Seed, static_cast<std::uint32_t>(i));
 
@@ -195,10 +218,11 @@ namespace Atlas
                 cloudWidth * 0.55f, 6.0f, 150, 132, 144, 20);
         }
 
-        // --- Mountain layers, far to near ---
+        // --- Mountain layers, far to near, with haze slotted between
+        // the distant hills and the near ridge so depth reads clearly ---
         constexpr float ColumnWidth = 4.0f;
 
-        for (int layer = 0; layer < 3; layer++)
+        auto drawLayer = [&](int layer)
         {
             const Color& color = LayerColors[layer];
 
@@ -225,10 +249,18 @@ namespace Atlas
                     static_cast<Uint8>(color.B),
                     255);
             }
-        }
+        };
 
-        // --- Horizon haze where mountains meet the playfield ---
+        for (int layer = 0; layer < 3; layer++)
+            drawLayer(layer);
+
+        // Atmospheric haze sits behind the near ridge: two soft bands so
+        // the distant mountains fade toward the horizon.
+        window.DrawScreenRect(0.0f, height * 0.58f, width, height * 0.14f,
+            44, 38, 58, 40);
         window.DrawScreenRect(0.0f, height * 0.72f, width, height * 0.28f,
             30, 28, 44, 60);
+
+        drawLayer(3);
     }
 }

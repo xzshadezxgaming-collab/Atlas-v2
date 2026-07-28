@@ -13,14 +13,17 @@ namespace Atlas
 
     enum class ParticleType : std::uint8_t
     {
-        Bullet,   // damages terrain (energy vs material strength) and actors
-        Debris,   // knocked-loose terrain; settles back into the world
-        Blood,    // stains the terrain where it lands
-        Spark,    // glowing ember, dies on contact
-        Smoke,    // drifts up, grows and fades, ignores terrain
-        Gib,      // chunk of a dead actor; settles as a stain + debris
-        Fire,     // additive fireball puff (explosions), ignores terrain
-        Casing,   // ejected brass, bounces off terrain then fades
+        Bullet,    // damages terrain (energy vs material strength) and actors
+        Debris,    // knocked-loose terrain; settles back into the world
+        Blood,     // stains the terrain where it lands
+        Spark,     // glowing ember, dies on contact
+        Smoke,     // drifts up, grows and fades, ignores terrain
+        Gib,       // chunk of a dead actor; settles as a stain + debris
+        Fire,      // additive fireball puff (explosions), ignores terrain
+        Casing,    // ejected brass, bounces off terrain then fades
+        Dust,      // soft tan puff (footsteps, landings), ignores terrain
+        Shockwave, // expanding blast ring (explosions), ignores terrain
+        Flash,     // brief bright light bloom at a point, ignores terrain
     };
 
     struct Particle
@@ -72,6 +75,16 @@ namespace Atlas
         void SpawnSmoke(float x, float y, float velX, float velY);
         void SpawnFire(float x, float y, float velX, float velY);
         void SpawnCasing(float x, float y, float velX, float velY);
+        void SpawnDust(
+            float x,
+            float y,
+            float velX,
+            float velY,
+            std::uint8_t r = 172,
+            std::uint8_t g = 150,
+            std::uint8_t b = 118);
+        void SpawnShockwave(float x, float y);
+        void SpawnFlash(float x, float y, float radius);
         void SpawnGib(float x, float y, float velX, float velY,
             std::uint8_t r, std::uint8_t g, std::uint8_t b, int size);
 

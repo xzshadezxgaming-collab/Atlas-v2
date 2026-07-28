@@ -43,6 +43,10 @@ namespace Atlas
                 pixel.Mat);
         }
 
+        // Pressure front and a hard light pop at the blast point.
+        particles.SpawnShockwave(x, y);
+        particles.SpawnFlash(x, y, radius * 1.7f);
+
         // Fireball puffs.
         for (int i = 0; i < 16; i++)
         {
