@@ -365,16 +365,10 @@ namespace Atlas
                         if (info.Value > 0 && owner)
                             owner->AddGold(info.Value);
 
-                        // Spray some of the spoil back toward the digger.
-                        if ((removed & 1) == 0)
-                        {
-                            particles.SpawnDebris(
-                                static_cast<float>(px),
-                                static_cast<float>(py),
-                                -dirX * 70.0f + RandomUnit() * 80.0f,
-                                -dirY * 40.0f - 90.0f + RandomUnit() * 60.0f,
-                                material);
-                        }
+                        // Dug-out material is simply eroded away with no
+                        // flying debris - that scatter is reserved for
+                        // explosions, so digging reads as controlled
+                        // excavation rather than a small blast.
                     }
                 }
             }

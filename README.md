@@ -33,7 +33,8 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
   is an earthmover: huge cheap scoops of dirt/grass, but its blade
   physically can't bite into stone or gold at all. Both erode
   material gradually (a strength budget per swing) rather than
-  deleting a circle of terrain outright.
+  deleting a circle of terrain outright, and dig silently with no
+  flying debris - that scatter is reserved for explosions.
 - **Gold currency** — destroying gold pixels (by digger, bullet, or
   explosion) pays out currency to whoever did it, tracked per actor
   and shown in the HUD, ready for a future shop/delivery system.
