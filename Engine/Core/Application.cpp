@@ -364,6 +364,8 @@ namespace Atlas
                         Input::IsKeyDown(SDL_SCANCODE_W) ||
                         Input::IsKeyDown(SDL_SCANCODE_LSHIFT);
 
+                    const bool crouch = Input::IsKeyDown(SDL_SCANCODE_S);
+
                     player.SetAim(mouseWorldX, mouseWorldY);
 
                     if (jumpPressed && player.IsGrounded())
@@ -378,7 +380,8 @@ namespace Atlas
                         FixedTimeStep,
                         moveInput,
                         Input::IsKeyDown(SDL_SCANCODE_SPACE),
-                        jet);
+                        jet,
+                        crouch);
 
                     if (!playerWasGrounded &&
                         player.IsGrounded() &&

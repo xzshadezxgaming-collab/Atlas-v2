@@ -161,7 +161,8 @@ namespace Atlas
         m_TintG(255),
         m_TintB(255),
         m_BobPhase(0.0f),
-        m_HurtFlash(0.0f)
+        m_HurtFlash(0.0f),
+        m_Crouching(false)
     {
         m_Legs[0].Configure(HipXBack, HipY, ThighLength, ShinLength);
         m_Legs[1].Configure(HipXFront, HipY, ThighLength, ShinLength);
@@ -225,15 +226,20 @@ namespace Atlas
         float deltaTime,
         float moveInput,
         bool jump,
-        bool jetpack)
+        bool jetpack,
+        bool crouch)
     {
         if (!IsAlive())
             return;
 
+        m_Crouching = crouch && !jetpack;
+
         // Knockback decays; walking is layered on top of it.
         m_KnockVelX -= m_KnockVelX * std::min(1.0f, KnockbackDamping * deltaTime);
 
-        m_VelocityX = moveInput * WalkSpeed + m_KnockVelX;
+        const float speedScale = m_Crouching ? 0.5f : 1.0f;
+
+        m_VelocityX = moveInput * WalkSpeed * speedScale + m_KnockVelX;
 
         if (moveInput < 0.0f)
             m_MoveDir = -1.0f;
@@ -349,10 +355,22 @@ namespace Atlas
             {
                 const float supportY = supportSum / supportCount;
 
-                MoveVerticalToward(
-                    terrain,
-                    supportY - StandHeight - BodyHeight,
-                    deltaTime);
+                float targetY =
+                    supportY - CurrentStandHeight() - BodyHeight;
+
+                // If the ceiling is too low for the preferred ride
+                // height, compress the legs further (down to almost
+                // sitting on the feet) so the actor can wriggle through
+                // tight passages instead of jamming its head.
+                const float lowestY = supportY - 2.0f - BodyHeight;
+
+                while (targetY < lowestY &&
+                    !IsBodyBoxFree(terrain, m_X, targetY))
+                {
+                    targetY += 1.0f;
+                }
+
+                MoveVerticalToward(terrain, targetY, deltaTime);
             }
 
             m_Grounded = m_Legs[0].IsPlanted() || m_Legs[1].IsPlanted();
@@ -412,15 +430,19 @@ namespace Atlas
 
         if (m_BodyTexture.GetTexture())
         {
-            // Bob while walking, lean into the direction of travel.
+            // Bob while walking, lean into the direction of travel, and
+            // hunch forward when crouching.
             const float bob = m_Grounded
-                ? std::sin(m_BobPhase) * 1.4f
+                ? std::sin(m_BobPhase) * (m_Crouching ? 0.8f : 1.4f)
                 : 0.0f;
 
-            const float lean = std::clamp(
+            float lean = std::clamp(
                 m_VelocityX * 0.02f,
                 -6.0f,
                 6.0f);
+
+            if (m_Crouching)
+                lean += m_FacingDir * 11.0f;
 
             window.DrawTextureRotated(
                 m_BodyTexture.GetTexture(),
@@ -848,7 +870,7 @@ namespace Atlas
     float Actor::GetCenterY() const
     {
         // Center of the whole figure, legs included.
-        return m_Y + (BodyHeight + StandHeight) * 0.5f;
+        return m_Y + (BodyHeight + CurrentStandHeight()) * 0.5f;
     }
 
     float Actor::GetVelocityX() const { return m_VelocityX; }
@@ -928,7 +950,7 @@ namespace Atlas
 
             // Ride up over rising ground within a small clearance; real
             // steps are the legs' job.
-            bool lifted = false;
+            bool moved = false;
 
             for (int lift = 1; lift <= BodyClearance; lift++)
             {
@@ -939,12 +961,38 @@ namespace Atlas
                 {
                     m_X += step;
                     m_Y -= static_cast<float>(lift);
-                    lifted = true;
+                    moved = true;
                     break;
                 }
             }
 
-            if (!lifted)
+            // Crouched, a descending ceiling is ducked under instead. The
+            // search covers the full stand-to-crouch height difference:
+            // stepping down gradually (via MoveVerticalToward) can get
+            // stuck if the body is still wedged against the ceiling at
+            // every intermediate height, so this checks candidate drops
+            // directly and can jump straight past the overlap in one go.
+            if (!moved && m_Crouching)
+            {
+                const int maxDrop = static_cast<int>(
+                    StandHeight - CurrentStandHeight()) + 8;
+
+                for (int drop = 1; drop <= maxDrop; drop++)
+                {
+                    if (IsBodyBoxFree(
+                        terrain,
+                        m_X + step,
+                        m_Y + static_cast<float>(drop)))
+                    {
+                        m_X += step;
+                        m_Y += static_cast<float>(drop);
+                        moved = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!moved)
             {
                 m_VelocityX = 0.0f;
                 m_KnockVelX = 0.0f;
@@ -1029,6 +1077,18 @@ namespace Atlas
         }
     }
 
+    float Actor::CurrentStandHeight() const
+    {
+        // Crouching folds the legs almost flat, dropping the whole
+        // figure from ~64px to ~48px so it fits into tight tunnels.
+        return m_Crouching ? 8.0f : StandHeight;
+    }
+
+    bool Actor::IsCrouching() const
+    {
+        return m_Crouching;
+    }
+
     bool Actor::FindFoothold(
         const Terrain& terrain,
         float probeX,
@@ -1037,7 +1097,8 @@ namespace Atlas
         const float bodyBottom = m_Y + BodyHeight;
 
         const int top = static_cast<int>(bodyBottom - MaxStepUp);
-        const int bottom = static_cast<int>(bodyBottom + StandHeight + MaxStepDown);
+        const int bottom = static_cast<int>(
+            bodyBottom + CurrentStandHeight() + MaxStepDown);
 
         for (int y = top; y <= bottom; y++)
         {

@@ -36,13 +36,17 @@ namespace Atlas
         void Spawn(const Terrain& terrain, float centerX);
 
         // moveInput: -1..1 walk input. particles may be null (no effects).
+        // crouch folds the legs so the actor fits through low spaces.
         void Update(
             const Terrain& terrain,
             ParticleSystem* particles,
             float deltaTime,
             float moveInput,
             bool jump,
-            bool jetpack);
+            bool jetpack,
+            bool crouch = false);
+
+        bool IsCrouching() const;
 
         void Draw(Window& window);
 
@@ -166,5 +170,9 @@ namespace Atlas
         // Visual-only state.
         float m_BobPhase;
         float m_HurtFlash;
+
+        bool m_Crouching;
+
+        float CurrentStandHeight() const;
     };
 }

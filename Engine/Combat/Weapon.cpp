@@ -69,9 +69,9 @@ namespace Atlas
             digger.Kind = WeaponKind::Digger;
             digger.FireRate = 24.0f;
             digger.ClipSize = 0;
-            digger.DigRadius = 5.5f;
-            digger.DigRange = 110.0f;
-            digger.DigPower = 30.0f;
+            digger.DigRadius = 7.5f;
+            digger.DigRange = 115.0f;
+            digger.DigPower = 52.0f;
             digger.BarrelLength = 12.0f;
             digger.Recoil = 0.0f;
             defs.push_back(digger);
@@ -84,9 +84,9 @@ namespace Atlas
             shovel.Kind = WeaponKind::Shovel;
             shovel.FireRate = 2.0f;
             shovel.ClipSize = 0;
-            shovel.DigRadius = 12.0f;
-            shovel.DigRange = 52.0f;
-            shovel.DigPower = 260.0f;
+            shovel.DigRadius = 15.0f;
+            shovel.DigRange = 58.0f;
+            shovel.DigPower = 420.0f;
             shovel.MaxDigStrength = 5.0f;
             shovel.BarrelLength = 17.0f;
             shovel.Recoil = 0.0f;

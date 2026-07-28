@@ -16,6 +16,8 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
   find and hold real footholds in the pixel terrain, plant at different
   heights on slopes, step over rubble, and lose grip when the ground
   under them is dug away. Legs render with IK-bent knees.
+- **Crouch** — holding S folds the legs and lowers the torso so the
+  actor can wriggle through tight dug tunnels and low passages.
 - **Pixel particle combat** — bullets are single-pixel physics objects
   that trace through the terrain (no tunneling) and test their energy
   against material strength: dirt penetrates, stone stops. Knocked-loose
@@ -54,6 +56,7 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
 |---|---|
 | A / D | Move |
 | Space | Jump |
+| S | Crouch (fits through tight passages) |
 | W / Left Shift | Jetpack |
 | Mouse | Aim |
 | Left mouse | Fire |
