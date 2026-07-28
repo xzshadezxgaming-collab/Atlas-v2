@@ -81,7 +81,11 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
   same AI enemies use. Bullets never hurt a teammate (same-team fire
   passes through), though explosions still don't discriminate.
 - **Procedural retro SFX** — gunshots, explosions, digging, jumps and
-  gibs synthesized at startup (SDL3 audio), no sound files needed.
+  gibs synthesized at startup (SDL3 audio), no sound files needed. The
+  dig/tool sound is a soft, heavily-lowpassed crumble with a gentle
+  attack rather than a harsh static crackle, and rotates between a
+  few takes so retriggering rapidly while digging doesn't sound like
+  the same click looping.
 - **Data-driven scenes** — world size and seed come from
   `Assets/scene.ini` (seed 0 = new world every launch).
 - **Atmosphere** — dusk sky with stars, moon and drifting clouds over

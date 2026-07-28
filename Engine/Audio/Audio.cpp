@@ -19,6 +19,14 @@ namespace Atlas
 
         std::uint32_t g_Noise = 0x1234567u;
 
+        // The digger/shovel retrigger their sound roughly 10 times a
+        // second while held, so a few slightly different takes are kept
+        // and rotated between - otherwise the exact same buffer repeating
+        // reads as a mechanical, grating tick rather than a tool at work.
+        constexpr int DigVariantCount = 3;
+        std::vector<float> g_DigVariants[DigVariantCount];
+        int g_DigVariantIndex = 0;
+
         float NoiseSample()
         {
             g_Noise ^= g_Noise << 13;
@@ -43,7 +51,8 @@ namespace Atlas
             float lengthSeconds,
             float amplitude,
             float decayPower,
-            int lowpassPasses)
+            int lowpassPasses,
+            float attackSeconds = 0.0f)
         {
             const std::size_t start =
                 static_cast<std::size_t>(startSeconds * SampleRate);
@@ -61,7 +70,24 @@ namespace Atlas
                     amplitude * std::pow(1.0f - t, decayPower);
             }
 
-            // Cheap lowpass: repeated neighbor averaging.
+            // A hard instant onset reads as a harsh tick/click; a short
+            // ramp-in softens the attack into more of a "poof".
+            if (attackSeconds > 0.0f)
+            {
+                const std::size_t attackSamples = std::min(
+                    length,
+                    static_cast<std::size_t>(attackSeconds * SampleRate));
+
+                for (std::size_t i = 0; i < attackSamples; i++)
+                {
+                    noise[i] *= static_cast<float>(i) /
+                        static_cast<float>(attackSamples);
+                }
+            }
+
+            // Cheap lowpass: repeated neighbor averaging. Each pass
+            // attenuates high frequencies further, so more passes trade
+            // harsh hiss for a duller, rounder thump.
             for (int pass = 0; pass < lowpassPasses; pass++)
             {
                 float previous = 0.0f;
@@ -156,13 +182,23 @@ namespace Atlas
                 g_Buffers[static_cast<int>(Sfx::Rifle)] = b;
             }
 
-            // Dig: soft crumble.
+            // Dig: soft, dull crumble rather than a harsh static crackle -
+            // a gentle attack (no hard click), heavy lowpassing (rounds
+            // off the hiss into more of a thump), and a faint low thud
+            // underneath for a tactile "biting into material" feel.
+            // Built as a few slightly different takes (see
+            // g_DigVariants) so rapid retriggering doesn't sound like
+            // the exact same click looping.
+            for (int variant = 0; variant < DigVariantCount; variant++)
             {
-                std::vector<float> b = Synth(0.09f);
-                AddNoiseBurst(b, 0.0f, 0.09f, 0.7f, 1.6f, 6);
-                Normalize(b, 0.28f);
-                g_Buffers[static_cast<int>(Sfx::Dig)] = b;
+                std::vector<float> b = Synth(0.14f);
+                AddNoiseBurst(b, 0.0f, 0.13f, 0.5f, 2.6f, 18, 0.008f);
+                AddTone(b, 0.0f, 0.05f, 95.0f, 65.0f, 0.16f, false);
+                Normalize(b, 0.22f);
+                g_DigVariants[variant] = b;
             }
+
+            g_Buffers[static_cast<int>(Sfx::Dig)] = g_DigVariants[0];
 
             // Explosion: long rumble.
             {
@@ -297,8 +333,16 @@ namespace Atlas
         if (!g_Available)
             return;
 
-        const std::vector<float>& buffer =
-            g_Buffers[static_cast<int>(sfx)];
+        const std::vector<float>* bufferPtr =
+            &g_Buffers[static_cast<int>(sfx)];
+
+        if (sfx == Sfx::Dig)
+        {
+            g_DigVariantIndex = (g_DigVariantIndex + 1) % DigVariantCount;
+            bufferPtr = &g_DigVariants[g_DigVariantIndex];
+        }
+
+        const std::vector<float>& buffer = *bufferPtr;
 
         if (buffer.empty())
             return;
