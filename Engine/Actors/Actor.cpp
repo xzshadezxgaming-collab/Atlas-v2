@@ -157,6 +157,7 @@ namespace Atlas
         m_Team(0),
         m_Fuel(1.0f),
         m_Jetting(false),
+        m_Gold(0),
         m_TintR(255),
         m_TintG(255),
         m_TintB(255),
@@ -858,6 +859,16 @@ namespace Atlas
     bool Actor::IsJetting() const
     {
         return m_Jetting;
+    }
+
+    void Actor::AddGold(int amount)
+    {
+        m_Gold += amount;
+    }
+
+    int Actor::GetGold() const
+    {
+        return m_Gold;
     }
 
     float Actor::GetX() const { return m_X; }

@@ -29,16 +29,20 @@ namespace Atlas
         // How much a pixel of this material resists being dug or shot away.
         // Air is 0; harder materials take more energy to remove.
         float Strength;
+
+        // Currency awarded per pixel destroyed, by any means (dig tools,
+        // bullets, explosions). 0 for everything but valuable ores.
+        int Value;
     };
 
     inline constexpr MaterialInfo MaterialTable[] =
     {
-        //  Name      R    G    B    Solid  Strength
-        { "Air",     0,   0,   0,   false, 0.0f  },
-        { "Grass",  86,  140,  60,  true,  1.0f  },
-        { "Dirt",  116,   84,  48,  true,  1.5f  },
-        { "Stone", 100,  100, 108,  true,  8.0f  },
-        { "Gold",  218,  176,  56,  true,  5.0f  },
+        //  Name      R    G    B    Solid  Strength  Value
+        { "Air",     0,   0,   0,   false, 0.0f,      0 },
+        { "Grass",  86,  140,  60,  true,  1.0f,       0 },
+        { "Dirt",  116,   84,  48,  true,  1.5f,       0 },
+        { "Stone", 100,  100, 108,  true,  8.0f,       0 },
+        { "Gold",  218,  176,  56,  true,  5.0f,       1 },
     };
 
     static_assert(

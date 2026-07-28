@@ -28,6 +28,15 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
   clips and reloads; switch with 1-5 or the scroll wheel.
   All stats data-driven from `Assets/weapons.ini` — tune or add weapons
   without recompiling.
+- **Specialized dig tools** — the digger is a rock/ore specialist:
+  cheap and fast against stone and gold, sluggish in dirt. The shovel
+  is an earthmover: huge cheap scoops of dirt/grass, but its blade
+  physically can't bite into stone or gold at all. Both erode
+  material gradually (a strength budget per swing) rather than
+  deleting a circle of terrain outright.
+- **Gold currency** — destroying gold pixels (by digger, bullet, or
+  explosion) pays out currency to whoever did it, tracked per actor
+  and shown in the HUD, ready for a future shop/delivery system.
 - **Grenades and explosions** — bouncing grenades with fuses; blasts
   carve craters, fling debris, and knock actors back.
 - **Health, gore, and gibbing** — bullet/explosion/fall damage,
@@ -100,6 +109,7 @@ cmake --build build -j
 - [x] **Milestone 3b — combat actors**: aim arm, weapons, grenades,
   gibbing, enemy AI, waves
 - [ ] **Milestone 4 — game layer**: scenes and props from data files,
-  inventory/pickups, drop-ship deliveries, objectives
+  inventory/pickups, a gold-spending shop/drop-ship delivery system
+  (currency already mineable and tracked), objectives
 - [ ] **Milestone 5 — feel and polish**: body pitch and stagger,
   screen shake, parallax background, performance pass, settings

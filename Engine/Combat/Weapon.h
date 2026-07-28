@@ -44,8 +44,17 @@ namespace Atlas
         float DigPower = 30.0f;
 
         // Material strength above this can't be dug at all by this tool
-        // (a shovel can't dig stone).
+        // (a shovel can't dig stone or gold).
         float MaxDigStrength = 100.0f;
+
+        // Multiplies a material's effective strength cost against this
+        // tool's DigPower budget - below 1.0 means the tool is cheaper
+        // (faster) against that material category, above 1.0 means
+        // slower. Only affects speed, not the MaxDigStrength cutoff:
+        // a tool that can't touch a material at all stays that way
+        // regardless of these multipliers.
+        float HardMaterialCost = 1.0f; // applies to Stone and Gold
+        float SoftMaterialCost = 1.0f; // applies to Grass and Dirt
     };
 
     // Loads weapon definitions from an INI file; returns built-in defaults

@@ -46,7 +46,7 @@ namespace Atlas
         ParticleType Type;
         Material SettleMaterial;
 
-        const Actor* Owner; // never collides with its owner
+        Actor* Owner; // never collides with its owner; credited for gold mined
     };
 
     // One pool for every moving pixel in the game: bullets, debris, blood,
@@ -64,7 +64,7 @@ namespace Atlas
             float velY,
             int damage,
             float power,
-            const Actor* owner);
+            Actor* owner);
 
         void SpawnDebris(float x, float y, float velX, float velY, Material material);
         void SpawnBlood(float x, float y, float velX, float velY);

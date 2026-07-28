@@ -802,6 +802,28 @@ namespace Atlas
                     selected ? 170 : 140);
             }
 
+            // Gold readout: a small nugget icon plus the tally, sitting
+            // to the right of the weapon slots in the same row.
+            {
+                const float goldX =
+                    16.0f + static_cast<float>(LoadoutSize) * 22.0f + 6.0f;
+
+                m_Window.DrawScreenRect(goldX, 73.0f, 8.0f, 8.0f,
+                    24, 22, 27, 255);
+                m_Window.DrawScreenRect(goldX + 1.0f, 74.0f, 6.0f, 6.0f,
+                    218, 176, 56, 255);
+                m_Window.DrawScreenRect(goldX + 1.0f, 74.0f, 6.0f, 2.0f,
+                    240, 205, 110, 255);
+
+                PixelFont::Draw(
+                    m_Window,
+                    goldX + 13.0f,
+                    75.0f,
+                    2.0f,
+                    std::to_string(player.GetGold()),
+                    230, 200, 110);
+            }
+
             // Wave status (top right): wave number and enemies left.
             {
                 const std::string waveText = "WAVE " + std::to_string(wave);

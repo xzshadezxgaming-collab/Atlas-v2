@@ -88,6 +88,13 @@ namespace Atlas
         float GetFuel() const;
         bool IsJetting() const;
 
+        // --- Economy ---
+
+        // Currency mined from valuable ore (gold veins), for later
+        // spending on equipment/deliveries. Persists across respawns.
+        void AddGold(int amount);
+        int GetGold() const;
+
         // --- Body ---
 
         float GetX() const;
@@ -162,6 +169,7 @@ namespace Atlas
         int m_Team;
         float m_Fuel;
         bool m_Jetting;
+        int m_Gold;
 
         Uint8 m_TintR;
         Uint8 m_TintG;

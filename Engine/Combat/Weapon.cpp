@@ -63,7 +63,9 @@ namespace Atlas
         }
 
         {
-            // Continuous grinder: fast small bites, chews stone slowly.
+            // Rock/ore specialist: cuts through stone and gold quickly,
+            // but is comparatively sluggish in soft dirt (bring a shovel
+            // for that).
             WeaponDef digger;
             digger.Name = "Digger";
             digger.Kind = WeaponKind::Digger;
@@ -72,13 +74,17 @@ namespace Atlas
             digger.DigRadius = 7.5f;
             digger.DigRange = 115.0f;
             digger.DigPower = 52.0f;
+            digger.HardMaterialCost = 0.35f; // cheap: great on stone/gold
+            digger.SoftMaterialCost = 1.6f;  // pricey: mediocre on dirt
             digger.BarrelLength = 12.0f;
             digger.Recoil = 0.0f;
             defs.push_back(digger);
         }
 
         {
-            // Big slow scoops of soft ground; useless against stone.
+            // Earthmover: huge scoops of soft ground, but the blade can't
+            // bite into stone or gold at all - MaxDigStrength sits below
+            // Gold's strength (5.0) so both hard materials are excluded.
             WeaponDef shovel;
             shovel.Name = "Shovel";
             shovel.Kind = WeaponKind::Shovel;
@@ -87,7 +93,8 @@ namespace Atlas
             shovel.DigRadius = 15.0f;
             shovel.DigRange = 58.0f;
             shovel.DigPower = 420.0f;
-            shovel.MaxDigStrength = 5.0f;
+            shovel.MaxDigStrength = 3.0f;
+            shovel.SoftMaterialCost = 0.7f; // cheap: great on dirt/grass
             shovel.BarrelLength = 17.0f;
             shovel.Recoil = 0.0f;
             defs.push_back(shovel);
@@ -176,6 +183,10 @@ namespace Atlas
             def->DigPower = ini.GetFloat(section, "DigPower", def->DigPower);
             def->MaxDigStrength = ini.GetFloat(
                 section, "MaxDigStrength", def->MaxDigStrength);
+            def->HardMaterialCost = ini.GetFloat(
+                section, "HardMaterialCost", def->HardMaterialCost);
+            def->SoftMaterialCost = ini.GetFloat(
+                section, "SoftMaterialCost", def->SoftMaterialCost);
         }
 
         return defs;
@@ -322,16 +333,37 @@ namespace Atlas
                         if (!info.Solid)
                             continue;
 
-                        if (info.Strength > m_Def->MaxDigStrength ||
-                            budget < info.Strength)
+                        // Eligibility (can this tool touch it at all) is
+                        // gated on the material's real strength; only the
+                        // budget cost (how fast) is adjusted by the
+                        // tool's material specialization.
+                        if (info.Strength > m_Def->MaxDigStrength)
                         {
                             struckHard = true;
                             continue;
                         }
 
-                        budget -= info.Strength;
+                        const bool isHardMaterial =
+                            material == Material::Stone ||
+                            material == Material::Gold;
+
+                        const float effectiveStrength = info.Strength *
+                            (isHardMaterial
+                                ? m_Def->HardMaterialCost
+                                : m_Def->SoftMaterialCost);
+
+                        if (budget < effectiveStrength)
+                        {
+                            struckHard = true;
+                            continue;
+                        }
+
+                        budget -= effectiveStrength;
                         terrain.DestroyPixel(px, py);
                         removed++;
+
+                        if (info.Value > 0 && owner)
+                            owner->AddGold(info.Value);
 
                         // Spray some of the spoil back toward the digger.
                         if ((removed & 1) == 0)

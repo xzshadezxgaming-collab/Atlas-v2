@@ -59,7 +59,7 @@ namespace Atlas
         float velY,
         int damage,
         float power,
-        const Actor* owner)
+        Actor* owner)
     {
         Particle p{};
         p.X = x;
@@ -380,8 +380,13 @@ namespace Atlas
                         if (p.Power >= strength)
                         {
                             // Punch through the pixel, knock it loose.
+                            const int value = GetMaterialInfo(material).Value;
+
                             terrain.DestroyPixel(px, py);
                             p.Power -= strength;
+
+                            if (value > 0 && p.Owner)
+                                p.Owner->AddGold(value);
 
                             if ((m_RandomState & 3u) == 0u)
                             {
