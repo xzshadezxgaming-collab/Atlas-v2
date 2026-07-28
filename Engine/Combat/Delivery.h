@@ -6,11 +6,13 @@ namespace Atlas
 {
     class Terrain;
     class Window;
+    struct WeaponDef;
 
     enum class DeliveryKind
     {
         SupplyCrate,
         Reinforcement,
+        WeaponPickup, // a loose weapon crate that becomes a field pickup
     };
 
     enum class DeliveryPhase
@@ -37,6 +39,11 @@ namespace Atlas
 
         float TargetX = 0.0f;
         bool Delivered = false;
+
+        // Reinforcement: the weapon it lands equipped with.
+        // WeaponPickup: the weapon the field pickup grants.
+        // SupplyCrate: unused (always null).
+        const WeaponDef* Weapon = nullptr;
     };
 
     // Cortex Command-style order delivery: a drop ship flies in from off
@@ -56,7 +63,14 @@ namespace Atlas
         // originX: world X the ship starts from (already offset off to
         // one side of the view). shipDir: +1 flies right, -1 flies left.
         // targetX: world X to fly to and release the payload above.
-        void Order(DeliveryKind kind, float originX, float shipDir, float targetX);
+        // weapon: only meaningful for Reinforcement (equipped on landing)
+        // and WeaponPickup (what the field pickup grants).
+        void Order(
+            DeliveryKind kind,
+            float originX,
+            float shipDir,
+            float targetX,
+            const WeaponDef* weapon = nullptr);
 
         // outLanded: deliveries whose payload touched down this tick (for
         // a landing thud). outDelivered: deliveries that reached their

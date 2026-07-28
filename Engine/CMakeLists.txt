@@ -1,5 +1,6 @@
 add_library(AtlasEngine STATIC
     Core/Application.cpp
+    Core/BuyCart.cpp
     Core/IniFile.cpp
     Core/Window.cpp
 

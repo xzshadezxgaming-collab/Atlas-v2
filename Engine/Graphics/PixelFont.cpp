@@ -64,8 +64,10 @@ namespace Atlas
             case ':': return Pack(0b000, 0b010, 0b000, 0b010, 0b000);
             case '/': return Pack(0b001, 0b001, 0b010, 0b100, 0b100);
             case '-': return Pack(0b000, 0b000, 0b111, 0b000, 0b000);
+            case '+': return Pack(0b000, 0b010, 0b111, 0b010, 0b000);
             case '.': return Pack(0b000, 0b000, 0b000, 0b000, 0b010);
             case '%': return Pack(0b101, 0b001, 0b010, 0b100, 0b101);
+            case '#': return Pack(0b101, 0b111, 0b101, 0b111, 0b101);
 
             default: return 0;
             }

@@ -27,6 +27,7 @@ namespace Atlas
             smg.Pellets = 1;
             smg.Recoil = 40.0f;
             smg.BarrelLength = 14.0f;
+            smg.Cost = 30;
             defs.push_back(smg);
         }
 
@@ -43,6 +44,7 @@ namespace Atlas
             shotgun.Pellets = 7;
             shotgun.Recoil = 170.0f;
             shotgun.BarrelLength = 16.0f;
+            shotgun.Cost = 45;
             defs.push_back(shotgun);
         }
 
@@ -59,6 +61,7 @@ namespace Atlas
             rifle.Pellets = 1;
             rifle.Recoil = 90.0f;
             rifle.BarrelLength = 20.0f;
+            rifle.Cost = 60;
             defs.push_back(rifle);
         }
 
@@ -81,6 +84,7 @@ namespace Atlas
             digger.ConeAngleDegrees = 20.0f;
             digger.ConeSweepSpeed = 1.6f;
             digger.LimbDamage = 8;
+            digger.Cost = 50;
             defs.push_back(digger);
         }
 
@@ -100,6 +104,7 @@ namespace Atlas
             shovel.SoftMaterialCost = 0.7f; // cheap: great on dirt/grass
             shovel.BarrelLength = 17.0f;
             shovel.Recoil = 0.0f;
+            shovel.Cost = 35;
             defs.push_back(shovel);
         }
 
@@ -196,6 +201,7 @@ namespace Atlas
                 section, "ConeSweepSpeed", def->ConeSweepSpeed);
             def->LimbDamage = ini.GetInt(
                 section, "LimbDamage", def->LimbDamage);
+            def->Cost = ini.GetInt(section, "Cost", def->Cost);
         }
 
         return defs;

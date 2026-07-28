@@ -54,18 +54,30 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
 - **Gold currency** — destroying gold pixels (by digger, bullet, or
   explosion) pays out currency to whoever did it, tracked per actor
   and shown in the HUD.
-- **Buy menu and drop-ship deliveries** — hold Tab to open a floating
-  wheel above the player; BUY opens an order panel showing your gold
-  total and two purchasable orders. A REINFORCEMENT (100G) buys an
-  AI-controlled ally who fights whatever enemy is nearest once landed;
-  a SUPPLY CRATE (40G) refills your current weapon's clip and heals
-  50 HP. Ordering spends the gold immediately and, Cortex Command
-  style, sends a drop ship flying in from off to one side; it releases
-  its cargo above you and flies on off the other side while the
-  payload parachutes down and lands. Rows grey out and can't be
-  clicked when you can't afford them. The world keeps running while
-  the menu is open, but it captures clicks so you don't fire through
-  it.
+- **Buy menu: a real Cortex Command-style order cart** — hold Tab to
+  open a floating wheel above the player; BUY opens an order panel with
+  a catalog (a RIFLEMAN body, all five weapons/tools, and a SUPPLY
+  CRATE) and a running cart. Buying a body makes it the active
+  assignment target: every weapon bought afterward equips onto that
+  body (replacing whatever it had), instead of just always handing out
+  a generic rifleman. An "EQUIP:" toggle lets you switch which cart
+  body a purchase targets, or send it to "LOOSE ITEM" mode instead -
+  weapons bought with no active body queue as loose field crates.
+  Click a body's line in the cart to make it the target again;
+  right-click any cart line to cancel just that item (nothing is spent
+  until you hit SEND ORDER). Rows and the send button grey out when
+  you can't afford them or (for bodies) when the field is already at
+  its ally cap.
+  Sending the order spends the total once and queues one Cortex
+  Command-style drop-ship delivery per line: reinforcement bodies land
+  and fight already equipped with whatever you assigned; loose weapons
+  parachute down as a distinct olive weapon case that sits on the
+  ground until you walk over it, instantly equipping (and fully
+  reloading) that weapon; supply crates still heal and refill your
+  current weapon on landing. Each delivery ship flies in from off to
+  one side and out the other while its payload parachutes down
+  independently. The world keeps running while the menu is open, but
+  it captures clicks so you don't fire through it.
 - **Bots toggle** — a HUD button temporarily turns off new wave
   spawns (existing enemies aren't affected) for testing or a breather.
 - **Grenades and explosions** — bouncing grenades with fuses; blasts
@@ -165,9 +177,11 @@ cmake --build build -j
 - [x] **Milestone 3b — combat actors**: aim arm, weapons, grenades,
   gibbing, enemy AI, waves
 - [ ] **Milestone 4 — game layer**: scenes and props from data files,
-  inventory/pickups, objectives. The buy menu now spends real gold on
-  drop-ship deliveries (a reinforcement ally or a supply crate); still
-  to come: more order types, direct control over multiple bodies, and
-  choosing your own landing zone instead of always dropping on you.
+  inventory/pickups, objectives. The buy menu is now a real order cart
+  (bodies, weapons/tools and supply crates, with weapons equippable to
+  a chosen body or dropped loose as field pickups); still to come:
+  more body classes and order types, direct control over multiple
+  bodies, and choosing your own landing zone instead of always
+  dropping on you.
 - [ ] **Milestone 5 — feel and polish**: body pitch and stagger,
   screen shake, parallax background, performance pass, settings

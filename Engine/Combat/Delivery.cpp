@@ -84,10 +84,9 @@ namespace Atlas
                 payloadX + 3.0f, payloadY - 12.0f, 210, 210, 200, 200);
         }
 
-        void DrawDeliveryPayload(
-            Window& window, float x, float y, bool isReinforcement)
+        void DrawDeliveryPayload(Window& window, float x, float y, DeliveryKind kind)
         {
-            if (isReinforcement)
+            if (kind == DeliveryKind::Reinforcement)
             {
                 // Soldier hanging in the harness.
                 window.DrawFilledRect(x - 4.0f, y - 16.0f, 8.0f, 10.0f,
@@ -98,6 +97,21 @@ namespace Atlas
                     50, 54, 62, 255);
                 window.DrawFilledRect(x + 1.0f, y - 6.0f, 3.0f, 6.0f,
                     50, 54, 62, 255);
+            }
+            else if (kind == DeliveryKind::WeaponPickup)
+            {
+                // Olive-drab weapon case, distinct from the wooden
+                // supply crate.
+                window.DrawFilledRect(x - 8.0f, y - 14.0f, 16.0f, 12.0f,
+                    24, 22, 27, 255);
+                window.DrawFilledRect(x - 7.0f, y - 13.0f, 14.0f, 10.0f,
+                    72, 82, 56, 255);
+                window.DrawFilledRect(x - 7.0f, y - 13.0f, 14.0f, 2.0f,
+                    92, 104, 70, 255);
+                window.DrawFilledRect(x - 1.0f, y - 13.0f, 2.0f, 10.0f,
+                    48, 54, 38, 255);
+                window.DrawFilledRect(x - 3.0f, y - 15.0f, 6.0f, 2.0f,
+                    48, 54, 38, 255);
             }
             else
             {
@@ -115,13 +129,18 @@ namespace Atlas
     }
 
     void DeliverySystem::Order(
-        DeliveryKind kind, float originX, float shipDir, float targetX)
+        DeliveryKind kind,
+        float originX,
+        float shipDir,
+        float targetX,
+        const WeaponDef* weapon)
     {
         Delivery delivery;
         delivery.Kind = kind;
         delivery.ShipX = originX;
         delivery.ShipDir = shipDir;
         delivery.TargetX = targetX;
+        delivery.Weapon = weapon;
 
         m_Deliveries.push_back(delivery);
     }
@@ -229,9 +248,6 @@ namespace Atlas
     {
         for (const Delivery& delivery : m_Deliveries)
         {
-            const bool isReinforcement =
-                delivery.Kind == DeliveryKind::Reinforcement;
-
             if (delivery.Phase == DeliveryPhase::FlyIn ||
                 delivery.Phase == DeliveryPhase::Descending)
             {
@@ -249,14 +265,14 @@ namespace Atlas
                     window, delivery.PayloadX, delivery.PayloadY, canopyOpen);
                 DrawDeliveryPayload(
                     window, delivery.PayloadX, delivery.PayloadY,
-                    isReinforcement);
+                    delivery.Kind);
             }
             else if (delivery.Phase == DeliveryPhase::Landed &&
                 !delivery.Delivered)
             {
                 DrawDeliveryPayload(
                     window, delivery.PayloadX, delivery.PayloadY,
-                    isReinforcement);
+                    delivery.Kind);
                 window.DrawGlow(
                     delivery.PayloadX, delivery.PayloadY - 8.0f, 16.0f,
                     230, 205, 110, 90);

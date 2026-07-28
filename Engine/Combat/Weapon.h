@@ -66,6 +66,11 @@ namespace Atlas
         // limb the tool's impact point is touching (0 = can't hurt
         // actors, only terrain).
         int LimbDamage = 0;
+
+        // Gold cost to order this weapon from the buy menu (equipped to
+        // a reinforcement, or as a loose field pickup). Weapons that
+        // aren't meant to be purchasable (EnemyGun) just go unused.
+        int Cost = 20;
     };
 
     // Loads weapon definitions from an INI file; returns built-in defaults
