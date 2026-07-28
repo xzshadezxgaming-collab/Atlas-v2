@@ -42,6 +42,24 @@ namespace Atlas
         constexpr float RespawnTime = 3.0f;
         constexpr int MaxEnemies = 8;
 
+        // Bots-spawn toggle button (screen space, top right).
+        constexpr float BotsButtonW = 108.0f;
+        constexpr float BotsButtonH = 20.0f;
+        constexpr float BotsButtonX =
+            static_cast<float>(ViewWidth) - 20.0f - BotsButtonW;
+        constexpr float BotsButtonY = 54.0f;
+
+        // Floating buy menu (world space, anchored above the player).
+        constexpr float WheelButtonW = 56.0f;
+        constexpr float WheelButtonH = 36.0f;
+        constexpr float WheelGap = 8.0f;
+        constexpr float WheelTotalW =
+            WheelButtonW * 3.0f + WheelGap * 2.0f;
+
+        constexpr float BuyPanelW = 210.0f;
+        constexpr float BuyPanelH = 132.0f;
+        constexpr float CloseButtonSize = 18.0f;
+
         std::string ResolveAssetPath(const std::string& relative)
         {
             const char* basePath = SDL_GetBasePath();
@@ -227,6 +245,10 @@ namespace Atlas
         float hurtVignette = 0.0f;
         int lastPlayerHealth = player.GetHealth();
 
+        // Bots-spawn toggle and the Tab-held buy menu.
+        bool botsEnabled = true;
+        bool buyPanelOpen = false;
+
         auto spawnEnemy = [&](float x)
         {
             Enemy enemy;
@@ -340,6 +362,129 @@ namespace Atlas
                 Input::WasMouseButtonPressed(SDL_BUTTON_RIGHT);
             const bool jumpPressed = Input::WasKeyPressed(SDL_SCANCODE_SPACE);
 
+            // --- UI: bots-spawn toggle button, and the Tab buy menu ---
+            //
+            // Click rects are computed once here (before this frame's
+            // simulation step) and the exact same numbers are reused for
+            // drawing later, via DrawScreenRect, so what gets clicked and
+            // what gets drawn can never disagree.
+            const float mouseScreenX = Input::GetMouseX();
+            const float mouseScreenY = Input::GetMouseY();
+
+            const bool botsButtonHovered =
+                mouseScreenX >= BotsButtonX &&
+                mouseScreenX <= BotsButtonX + BotsButtonW &&
+                mouseScreenY >= BotsButtonY &&
+                mouseScreenY <= BotsButtonY + BotsButtonH;
+
+            if (Input::WasMouseButtonPressed(SDL_BUTTON_LEFT) &&
+                botsButtonHovered)
+            {
+                botsEnabled = !botsEnabled;
+            }
+
+            const bool menuHeld =
+                player.IsAlive() && Input::IsKeyDown(SDL_SCANCODE_TAB);
+
+            if (!menuHeld)
+                buyPanelOpen = false;
+
+            const float uiCameraX = camera.GetX();
+            const float uiCameraY = camera.GetY();
+
+            // Floating menu anchor, in world space, above the player.
+            const float menuAnchorX = player.GetCenterX();
+            const float menuAnchorY = player.GetY() - 70.0f;
+
+            const float wheelScreenX =
+                menuAnchorX - WheelTotalW * 0.5f - uiCameraX;
+            const float wheelScreenY =
+                menuAnchorY - WheelButtonH * 0.5f - uiCameraY;
+
+            const float panelScreenX =
+                menuAnchorX - BuyPanelW * 0.5f - uiCameraX;
+            const float panelScreenY =
+                menuAnchorY - BuyPanelH * 0.5f - uiCameraY;
+
+            const float closeScreenX =
+                panelScreenX + BuyPanelW - CloseButtonSize - 6.0f;
+            const float closeScreenY = panelScreenY + 6.0f;
+
+            if (menuHeld && Input::WasMouseButtonPressed(SDL_BUTTON_LEFT))
+            {
+                if (!buyPanelOpen)
+                {
+                    const float buyX = wheelScreenX;
+                    const float buyY = wheelScreenY;
+
+                    if (mouseScreenX >= buyX &&
+                        mouseScreenX <= buyX + WheelButtonW &&
+                        mouseScreenY >= buyY &&
+                        mouseScreenY <= buyY + WheelButtonH)
+                    {
+                        buyPanelOpen = true;
+                    }
+                }
+                else if (mouseScreenX >= closeScreenX &&
+                    mouseScreenX <= closeScreenX + CloseButtonSize &&
+                    mouseScreenY >= closeScreenY &&
+                    mouseScreenY <= closeScreenY + CloseButtonSize)
+                {
+                    buyPanelOpen = false;
+                }
+            }
+
+            // While the buy menu is open, or the mouse is over a HUD
+            // button, the world shouldn't respond to left/right clicks
+            // (no shooting or grenade-throwing through the UI). Movement
+            // is left untouched so the player can still walk around with
+            // the menu open.
+            const bool uiCapturingInput = menuHeld || botsButtonHovered;
+
+            // Digger plasma-beam preview: a raycast every rendered frame
+            // (not tied to the tool's own slower fire-rate ticks) so the
+            // beam tracks the aim smoothly while held down.
+            if (player.IsAlive())
+            {
+                const Weapon& heldWeapon = player.GetWeapon();
+
+                const bool isDigging =
+                    heldWeapon.GetDef() &&
+                    heldWeapon.GetDef()->Kind == WeaponKind::Digger &&
+                    Input::IsMouseButtonDown(SDL_BUTTON_LEFT) &&
+                    !uiCapturingInput;
+
+                if (isDigging)
+                {
+                    const WeaponDef& def = *heldWeapon.GetDef();
+                    const float muzzleX = player.GetMuzzleX();
+                    const float muzzleY = player.GetMuzzleY();
+                    const float dirX = player.GetAimDirX();
+                    const float dirY = player.GetAimDirY();
+
+                    float hitX = 0.0f;
+                    float hitY = 0.0f;
+
+                    if (terrain.RaycastSolid(
+                        muzzleX, muzzleY, dirX, dirY,
+                        def.DigRange, hitX, hitY))
+                    {
+                        player.SetDigBeam(true, hitX, hitY);
+                    }
+                    else
+                    {
+                        player.SetDigBeam(
+                            true,
+                            muzzleX + dirX * def.DigRange,
+                            muzzleY + dirY * def.DigRange);
+                    }
+                }
+                else
+                {
+                    player.SetDigBeam(false, 0.0f, 0.0f);
+                }
+            }
+
             // Fixed-timestep simulation.
             accumulator += frameTime;
 
@@ -398,7 +543,8 @@ namespace Atlas
 
                     player.GetWeapon().Update(FixedTimeStep);
 
-                    if (Input::IsMouseButtonDown(SDL_BUTTON_LEFT))
+                    if (Input::IsMouseButtonDown(SDL_BUTTON_LEFT) &&
+                        !uiCapturingInput)
                     {
                         if (player.GetWeapon().TryFire(
                             particles,
@@ -430,7 +576,8 @@ namespace Atlas
                         }
                     }
 
-                    if (throwPressed && grenadeCooldown <= 0.0f)
+                    if (throwPressed && !uiCapturingInput &&
+                        grenadeCooldown <= 0.0f)
                     {
                         grenades.Throw(
                             player.GetHandX(),
@@ -567,7 +714,7 @@ namespace Atlas
                 }
 
                 // --- Waves ---
-                if (enemies.empty())
+                if (botsEnabled && enemies.empty())
                 {
                     waveTimer -= FixedTimeStep;
 
@@ -648,6 +795,145 @@ namespace Atlas
             m_Window.DrawFilledRect(
                 mouseWorldX - 1.0f, mouseWorldY - 4.0f, 2.0f, 8.0f,
                 255, 255, 255, 190);
+
+            // --- Floating buy menu (Tab held), anchored above the player ---
+            //
+            // Drawn with the exact screen coordinates computed earlier
+            // this frame for click detection, via DrawScreenRect, so the
+            // clickable area and the visible menu are always identical.
+            if (menuHeld)
+            {
+                // A thin connector from the menu down to the player's
+                // head, so it reads as anchored rather than floating
+                // free.
+                m_Window.DrawScreenRect(
+                    menuAnchorX - uiCameraX - 1.0f,
+                    menuAnchorY - uiCameraY + WheelButtonH * 0.5f,
+                    2.0f,
+                    (player.GetY() - uiCameraY) -
+                        (menuAnchorY - uiCameraY + WheelButtonH * 0.5f),
+                    150, 190, 230, 90);
+
+                if (!buyPanelOpen)
+                {
+                    // Three-slot wheel: BUY is live, the rest are
+                    // placeholders for future menu options.
+                    const char* labels[3] = { "BUY", "GEAR", "CALL" };
+                    const bool enabled[3] = { true, false, false };
+
+                    for (int i = 0; i < 3; i++)
+                    {
+                        const float slotX = wheelScreenX +
+                            static_cast<float>(i) *
+                                (WheelButtonW + WheelGap);
+
+                        m_Window.DrawScreenRect(
+                            slotX - 1.0f, wheelScreenY - 1.0f,
+                            WheelButtonW + 2.0f, WheelButtonH + 2.0f,
+                            120, 126, 148, 90);
+
+                        m_Window.DrawScreenRect(
+                            slotX, wheelScreenY,
+                            WheelButtonW, WheelButtonH,
+                            enabled[i] ? 30 : 16,
+                            enabled[i] ? 34 : 16,
+                            enabled[i] ? 30 : 20,
+                            230);
+
+                        if (enabled[i])
+                        {
+                            m_Window.DrawScreenRect(
+                                slotX, wheelScreenY,
+                                WheelButtonW, 3.0f,
+                                230, 205, 110, 220);
+                        }
+
+                        const std::string label = labels[i];
+                        const Uint8 textShade =
+                            enabled[i] ? 235 : 110;
+
+                        PixelFont::Draw(
+                            m_Window,
+                            slotX + (WheelButtonW -
+                                PixelFont::Measure(label, 2.0f)) * 0.5f,
+                            wheelScreenY + WheelButtonH * 0.5f - 5.0f,
+                            2.0f,
+                            label,
+                            textShade, textShade,
+                            enabled[i] ? 200 : textShade);
+                    }
+                }
+                else
+                {
+                    // Order panel: placeholders for a future drop-ship
+                    // delivery system, spending the gold already being
+                    // mined.
+                    m_Window.DrawScreenRect(
+                        panelScreenX - 1.0f, panelScreenY - 1.0f,
+                        BuyPanelW + 2.0f, BuyPanelH + 2.0f,
+                        120, 126, 148, 100);
+                    m_Window.DrawScreenRect(
+                        panelScreenX, panelScreenY,
+                        BuyPanelW, BuyPanelH,
+                        14, 14, 20, 235);
+
+                    PixelFont::Draw(
+                        m_Window,
+                        panelScreenX + 10.0f, panelScreenY + 10.0f,
+                        2.0f, "ORDER SUPPLIES", 235, 235, 240);
+
+                    const std::string goldLine =
+                        "GOLD: " + std::to_string(player.GetGold());
+
+                    PixelFont::Draw(
+                        m_Window,
+                        panelScreenX + 10.0f, panelScreenY + 26.0f,
+                        2.0f, goldLine, 230, 200, 110);
+
+                    m_Window.DrawScreenRect(
+                        panelScreenX + 8.0f, panelScreenY + 40.0f,
+                        BuyPanelW - 16.0f, 1.0f,
+                        120, 126, 148, 90);
+
+                    const char* items[2] =
+                    {
+                        "REINFORCEMENT - 100G",
+                        "SUPPLY CRATE  -  40G",
+                    };
+
+                    for (int i = 0; i < 2; i++)
+                    {
+                        const float rowY =
+                            panelScreenY + 50.0f + static_cast<float>(i) * 32.0f;
+
+                        m_Window.DrawScreenRect(
+                            panelScreenX + 8.0f, rowY,
+                            BuyPanelW - 16.0f, 24.0f,
+                            26, 26, 34, 200);
+
+                        PixelFont::Draw(
+                            m_Window,
+                            panelScreenX + 14.0f, rowY + 4.0f,
+                            2.0f, items[i], 140, 142, 150);
+
+                        PixelFont::Draw(
+                            m_Window,
+                            panelScreenX + 14.0f, rowY + 13.0f,
+                            2.0f, "COMING SOON", 110, 112, 120);
+                    }
+
+                    // Close button.
+                    m_Window.DrawScreenRect(
+                        closeScreenX, closeScreenY,
+                        CloseButtonSize, CloseButtonSize,
+                        70, 40, 40, 230);
+
+                    PixelFont::Draw(
+                        m_Window,
+                        closeScreenX + 5.0f, closeScreenY + 5.0f,
+                        2.0f, "X", 235, 200, 200);
+                }
+            }
 
             // --- Screen-edge vignette (always) + damage feedback ---
             {
@@ -847,6 +1133,34 @@ namespace Atlas
                         10.0f,
                         255, 118, 106, 255);
                 }
+            }
+
+            // Bots-spawn toggle button.
+            {
+                m_Window.DrawScreenRect(
+                    BotsButtonX, BotsButtonY, BotsButtonW, BotsButtonH,
+                    28, 28, 36, 255);
+
+                m_Window.DrawScreenRect(
+                    BotsButtonX + 1.0f, BotsButtonY + 1.0f,
+                    BotsButtonW - 2.0f, BotsButtonH - 2.0f,
+                    botsEnabled ? 42 : 92,
+                    botsEnabled ? 120 : 46,
+                    botsEnabled ? 58 : 46,
+                    220);
+
+                const std::string botsLabel =
+                    botsEnabled ? "BOTS: ON" : "BOTS: OFF";
+
+                PixelFont::Draw(
+                    m_Window,
+                    BotsButtonX +
+                        (BotsButtonW - PixelFont::Measure(botsLabel, 2.0f)) *
+                            0.5f,
+                    BotsButtonY + 7.0f,
+                    2.0f,
+                    botsLabel,
+                    235, 235, 240);
             }
 
             // Death overlay.

@@ -163,7 +163,11 @@ namespace Atlas
         m_TintB(255),
         m_BobPhase(0.0f),
         m_HurtFlash(0.0f),
-        m_Crouching(false)
+        m_Crouching(false),
+        m_DigBeamActive(false),
+        m_DigBeamTargetX(0.0f),
+        m_DigBeamTargetY(0.0f),
+        m_BeamPhase(0.0f)
     {
         m_Legs[0].Configure(HipXBack, HipY, ThighLength, ShinLength);
         m_Legs[1].Configure(HipXFront, HipY, ThighLength, ShinLength);
@@ -262,6 +266,8 @@ namespace Atlas
         // Walk-cycle bob for the body sprite.
         if (m_Grounded)
             m_BobPhase += std::fabs(m_VelocityX) * deltaTime * 0.09f;
+
+        m_BeamPhase += deltaTime;
 
         m_VelocityY += Gravity * deltaTime;
 
@@ -464,6 +470,7 @@ namespace Atlas
             m_TintR, m_TintG, m_TintB);
 
         DrawArmAndWeapon(window);
+        DrawDigBeam(window);
 
         // Jetpack flame under the body while thrusting.
         if (m_Jetting)
@@ -679,6 +686,97 @@ namespace Atlas
         }
     }
 
+    void Actor::DrawDigBeam(Window& window) const
+    {
+        if (!m_DigBeamActive)
+            return;
+
+        const WeaponDef* def = m_Weapon.GetDef();
+
+        if (!def || def->Kind != WeaponKind::Digger)
+            return;
+
+        const float startX = GetMuzzleX();
+        const float startY = GetMuzzleY();
+
+        const float dx = m_DigBeamTargetX - startX;
+        const float dy = m_DigBeamTargetY - startY;
+        const float length = std::sqrt(dx * dx + dy * dy);
+
+        if (length < 2.0f)
+            return;
+
+        const float ux = dx / length;
+        const float uy = dy / length;
+
+        // Perpendicular axis the two strands orbit around.
+        const float perpX = -uy;
+        const float perpY = ux;
+
+        constexpr float Step = 3.0f;
+        constexpr float Amplitude = 5.5f;
+        constexpr float TwistPerPixel = 0.30f;
+        constexpr float RotationSpeed = 9.0f;
+
+        // A dim core line gives the beam a solid center the two plasma
+        // strands can twist around.
+        const int coreSteps = std::max(1, static_cast<int>(length / 4.0f));
+
+        for (int i = 0; i <= coreSteps; i++)
+        {
+            const float t = static_cast<float>(i) / static_cast<float>(coreSteps);
+
+            window.DrawFilledRect(
+                startX + dx * t - 1.0f,
+                startY + dy * t - 1.0f,
+                2.0f, 2.0f,
+                90, 170, 230, 90);
+        }
+
+        const int steps = static_cast<int>(length / Step);
+
+        for (int i = 0; i <= steps; i++)
+        {
+            const float t = static_cast<float>(i) * Step;
+
+            const float centerX = startX + ux * t;
+            const float centerY = startY + uy * t;
+
+            const float angle =
+                m_BeamPhase * RotationSpeed + t * TwistPerPixel;
+
+            // Strands taper in near the impact point for a focused tip.
+            const float taper =
+                0.4f + 0.6f * std::min(1.0f, (length - t) / 20.0f);
+
+            const float offset1 = std::sin(angle) * Amplitude * taper;
+            const float offset2 =
+                std::sin(angle + 3.14159265f) * Amplitude * taper;
+
+            window.DrawFilledRect(
+                centerX + perpX * offset1 - 1.5f,
+                centerY + perpY * offset1 - 1.5f,
+                3.0f, 3.0f,
+                140, 220, 255, 230);
+
+            window.DrawFilledRect(
+                centerX + perpX * offset2 - 1.5f,
+                centerY + perpY * offset2 - 1.5f,
+                3.0f, 3.0f,
+                90, 160, 255, 200);
+        }
+
+        // Glow at the tool tip and a brighter flare at the impact point.
+        window.DrawGlow(startX, startY, 10.0f, 120, 200, 255, 70);
+        window.DrawGlow(
+            m_DigBeamTargetX, m_DigBeamTargetY, 12.0f, 150, 220, 255, 90);
+
+        window.DrawFilledRect(
+            m_DigBeamTargetX - 2.0f, m_DigBeamTargetY - 2.0f,
+            4.0f, 4.0f,
+            210, 240, 255, 240);
+    }
+
     void Actor::SetAim(float targetX, float targetY)
     {
         const float dx = targetX - ShoulderX();
@@ -750,6 +848,13 @@ namespace Atlas
 
         m_KnockVelX -= m_AimDirX * def->Recoil;
         m_VelocityY -= m_AimDirY * def->Recoil * 0.3f;
+    }
+
+    void Actor::SetDigBeam(bool active, float targetX, float targetY)
+    {
+        m_DigBeamActive = active;
+        m_DigBeamTargetX = targetX;
+        m_DigBeamTargetY = targetY;
     }
 
     bool Actor::IsAlive() const

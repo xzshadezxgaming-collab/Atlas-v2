@@ -34,10 +34,19 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
   physically can't bite into stone or gold at all. Both erode
   material gradually (a strength budget per swing) rather than
   deleting a circle of terrain outright, and dig silently with no
-  flying debris - that scatter is reserved for explosions.
+  flying debris - that scatter is reserved for explosions. The
+  digger draws a rotating double-helix plasma beam from the tool tip
+  to the point of impact while cutting.
 - **Gold currency** — destroying gold pixels (by digger, bullet, or
   explosion) pays out currency to whoever did it, tracked per actor
-  and shown in the HUD, ready for a future shop/delivery system.
+  and shown in the HUD.
+- **Buy menu** — hold Tab to open a floating wheel above the player;
+  BUY opens an order panel showing your gold total and placeholder
+  drop-ship items (not yet purchasable - groundwork for a future
+  reinforcement-delivery system). The world keeps running while the
+  menu is open, but it captures clicks so you don't fire through it.
+- **Bots toggle** — a HUD button temporarily turns off new wave
+  spawns (existing enemies aren't affected) for testing or a breather.
 - **Grenades and explosions** — bouncing grenades with fuses; blasts
   carve craters, fling debris, and knock actors back.
 - **Health, gore, and gibbing** — bullet/explosion/fall damage,
@@ -73,6 +82,7 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
 | Right mouse | Throw grenade |
 | 1-5 / scroll wheel | SMG / Shotgun / Rifle / Digger / Shovel |
 | R | Reload |
+| Tab (hold) | Open the buy menu |
 
 ## Building
 
@@ -110,7 +120,8 @@ cmake --build build -j
 - [x] **Milestone 3b — combat actors**: aim arm, weapons, grenades,
   gibbing, enemy AI, waves
 - [ ] **Milestone 4 — game layer**: scenes and props from data files,
-  inventory/pickups, a gold-spending shop/drop-ship delivery system
-  (currency already mineable and tracked), objectives
+  inventory/pickups, objectives, and wiring the buy menu's order panel
+  up to real spending and drop-ship deliveries (currency, UI shell,
+  and placeholder items already in place)
 - [ ] **Milestone 5 — feel and polish**: body pitch and stagger,
   screen shake, parallax background, performance pass, settings

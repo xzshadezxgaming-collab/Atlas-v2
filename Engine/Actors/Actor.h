@@ -69,6 +69,13 @@ namespace Atlas
         // Flashes the muzzle briefly (call after a successful shot).
         void NotifyFired();
 
+        // Drives the digger's plasma-helix beam visual: call every
+        // rendered frame while the tool is actively cutting, with the
+        // current impact point (a raycast preview, independent of the
+        // tool's own fire-rate ticks so the beam stays smooth). Pass
+        // active=false (or just stop calling with true) when not digging.
+        void SetDigBeam(bool active, float targetX, float targetY);
+
         // --- Vitals ---
 
         bool IsAlive() const;
@@ -135,6 +142,7 @@ namespace Atlas
         void TryLand(const Terrain& terrain);
 
         void DrawArmAndWeapon(Window& window) const;
+        void DrawDigBeam(Window& window) const;
 
         float HipWorldX(int leg) const;
         float HipWorldY(int leg) const;
@@ -180,6 +188,12 @@ namespace Atlas
         float m_HurtFlash;
 
         bool m_Crouching;
+
+        // Digger plasma beam.
+        bool m_DigBeamActive;
+        float m_DigBeamTargetX;
+        float m_DigBeamTargetY;
+        float m_BeamPhase;
 
         float CurrentStandHeight() const;
     };
