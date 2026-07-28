@@ -15,17 +15,6 @@ namespace Atlas
 
         constexpr float BulletGravity = 240.0f;
         constexpr float DebrisGravity = 900.0f;
-
-        bool HitsActor(const Actor& actor, float x, float y)
-        {
-            // Torso box plus the leg zone below it.
-            const float left = actor.GetX() - 2.0f;
-            const float right = actor.GetX() + actor.GetWidth() + 2.0f;
-            const float top = actor.GetY();
-            const float bottom = actor.GetY() + actor.GetHeight() + 26.0f;
-
-            return x >= left && x <= right && y >= top && y <= bottom;
-        }
     }
 
     ParticleSystem::ParticleSystem()
@@ -323,7 +312,9 @@ namespace Atlas
                         break;
                     }
 
-                    // Actor hits (bullets only).
+                    // Actor hits (bullets only), tested against each
+                    // actor's independent limb hitboxes rather than one
+                    // whole-body box.
                     if (p.Type == ParticleType::Bullet && actors)
                     {
                         for (int a = 0; a < actorCount && alive; a++)
@@ -333,10 +324,19 @@ namespace Atlas
                             if (!actor || actor == p.Owner || !actor->IsAlive())
                                 continue;
 
-                            if (HitsActor(*actor, p.X, p.Y))
+                            BodyPartId hitPart = BodyPartId::None;
+                            float local01X = 0.0f;
+                            float local01Y = 0.0f;
+
+                            if (actor->TestLimbHit(
+                                p.X, p.Y, hitPart, local01X, local01Y))
                             {
-                                actor->TakeDamage(
+                                actor->TakeLimbDamage(
+                                    hitPart,
                                     p.Damage,
+                                    local01X,
+                                    local01Y,
+                                    this,
                                     p.VelX * 0.03f,
                                     p.VelY * 0.03f);
 

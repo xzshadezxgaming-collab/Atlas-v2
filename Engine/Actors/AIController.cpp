@@ -115,7 +115,7 @@ namespace Atlas
             {
                 m_BurstTimer -= deltaTime;
 
-                if (self.GetWeapon().TryFire(
+                if (!self.IsArmDestroyed() && self.GetWeapon().TryFire(
                     particles,
                     mutableTerrain,
                     self.GetMuzzleX(),

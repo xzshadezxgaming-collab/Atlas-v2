@@ -452,15 +452,19 @@ namespace Atlas
                     heldWeapon.GetDef() &&
                     heldWeapon.GetDef()->Kind == WeaponKind::Digger &&
                     Input::IsMouseButtonDown(SDL_BUTTON_LEFT) &&
-                    !uiCapturingInput;
+                    !uiCapturingInput &&
+                    !player.IsArmDestroyed();
 
                 if (isDigging)
                 {
                     const WeaponDef& def = *heldWeapon.GetDef();
                     const float muzzleX = player.GetMuzzleX();
                     const float muzzleY = player.GetMuzzleY();
-                    const float dirX = player.GetAimDirX();
-                    const float dirY = player.GetAimDirY();
+
+                    float dirX = player.GetAimDirX();
+                    float dirY = player.GetAimDirY();
+                    heldWeapon.GetSweptDirection(
+                        player.GetAimDirX(), player.GetAimDirY(), dirX, dirY);
 
                     float hitX = 0.0f;
                     float hitY = 0.0f;
@@ -544,7 +548,8 @@ namespace Atlas
                     player.GetWeapon().Update(FixedTimeStep);
 
                     if (Input::IsMouseButtonDown(SDL_BUTTON_LEFT) &&
-                        !uiCapturingInput)
+                        !uiCapturingInput &&
+                        !player.IsArmDestroyed())
                     {
                         if (player.GetWeapon().TryFire(
                             particles,
@@ -572,6 +577,67 @@ namespace Atlas
                             {
                                 Audio::Play(FireSfxFor(def), 0.7f);
                                 toolSfxTimer = 0.1f;
+                            }
+
+                            // The digger can also maim: whatever limb its
+                            // impact point lands on takes LimbDamage. The
+                            // raycast here mirrors what TryFire just did
+                            // internally (same swept direction, no time
+                            // has passed), so the hit point matches.
+                            if (def.Kind == WeaponKind::Digger &&
+                                def.LimbDamage > 0)
+                            {
+                                float sweptDirX = 0.0f;
+                                float sweptDirY = 0.0f;
+                                player.GetWeapon().GetSweptDirection(
+                                    player.GetAimDirX(),
+                                    player.GetAimDirY(),
+                                    sweptDirX,
+                                    sweptDirY);
+
+                                const float reachBehind =
+                                    def.BarrelLength + 4.0f;
+
+                                float digHitX = 0.0f;
+                                float digHitY = 0.0f;
+
+                                if (terrain.RaycastSolid(
+                                    player.GetMuzzleX() -
+                                        sweptDirX * reachBehind,
+                                    player.GetMuzzleY() -
+                                        sweptDirY * reachBehind,
+                                    sweptDirX,
+                                    sweptDirY,
+                                    def.DigRange + reachBehind,
+                                    digHitX,
+                                    digHitY))
+                                {
+                                    for (Enemy& enemy : enemies)
+                                    {
+                                        if (!enemy.Body ||
+                                            !enemy.Body->IsAlive())
+                                            continue;
+
+                                        BodyPartId hitPart =
+                                            BodyPartId::None;
+                                        float local01X = 0.0f;
+                                        float local01Y = 0.0f;
+
+                                        if (enemy.Body->TestLimbHit(
+                                            digHitX, digHitY,
+                                            hitPart, local01X, local01Y))
+                                        {
+                                            enemy.Body->TakeLimbDamage(
+                                                hitPart,
+                                                def.LimbDamage,
+                                                local01X,
+                                                local01Y,
+                                                &particles,
+                                                -sweptDirX * 40.0f,
+                                                -sweptDirY * 40.0f);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

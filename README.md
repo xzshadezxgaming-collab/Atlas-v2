@@ -36,7 +36,17 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
   deleting a circle of terrain outright, and dig silently with no
   flying debris - that scatter is reserved for explosions. The
   digger draws a rotating double-helix plasma beam from the tool tip
-  to the point of impact while cutting.
+  to the point of impact while cutting, and rather than staying
+  perfectly straight, its effective direction smoothly sweeps back
+  and forth in a cone centered on the aim (data-driven per weapon via
+  `ConeAngleDegrees`/`ConeSweepSpeed` in `weapons.ini`).
+- **Independent, destructible limbs** — head, torso, arm and each leg
+  are separate hitboxes, every one with its own small destructible
+  pixel grid. Bullets and the digger's beam (via `LimbDamage` in
+  `weapons.ini`) chew into whichever limb they land on. Losing the
+  head or torso is fatal outright; a destroyed leg can never plant
+  again (a hobbled actor keeps fighting on the other one, but losing
+  both is fatal); a destroyed arm can no longer aim or fire.
 - **Gold currency** — destroying gold pixels (by digger, bullet, or
   explosion) pays out currency to whoever did it, tracked per actor
   and shown in the HUD.

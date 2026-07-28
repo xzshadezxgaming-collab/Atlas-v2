@@ -5,6 +5,7 @@ add_library(AtlasEngine STATIC
 
     Actors/Actor.cpp
     Actors/AIController.cpp
+    Actors/BodyPart.cpp
     Actors/Limb.cpp
 
     Audio/Audio.cpp

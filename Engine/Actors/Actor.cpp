@@ -137,6 +137,11 @@ namespace Atlas
                 24, 22, 27, 255);
             window.DrawFilledRect(x, y, w, h, r, g, b, 255);
         }
+
+        BodyPartId LegPart(int leg)
+        {
+            return leg == 0 ? BodyPartId::LegBack : BodyPartId::LegFront;
+        }
     }
 
     Actor::Actor()
@@ -167,7 +172,12 @@ namespace Atlas
         m_DigBeamActive(false),
         m_DigBeamTargetX(0.0f),
         m_DigBeamTargetY(0.0f),
-        m_BeamPhase(0.0f)
+        m_BeamPhase(0.0f),
+        m_HeadPart(5, 5),
+        m_TorsoPart(7, 10),
+        m_ArmPart(4, 8),
+        m_LegParts{ BodyPart(4, 10), BodyPart(4, 10) },
+        m_PartDetached{ false, false, false, false, false }
     {
         m_Legs[0].Configure(HipXBack, HipY, ThighLength, ShinLength);
         m_Legs[1].Configure(HipXFront, HipY, ThighLength, ShinLength);
@@ -307,6 +317,12 @@ namespace Atlas
         // exists (digging can remove it) and it is still within leg reach.
         for (int i = 0; i < 2; i++)
         {
+            if (IsPartDestroyed(LegPart(i)))
+            {
+                m_Legs[i].Unplant();
+                continue;
+            }
+
             if (!m_Legs[i].IsPlanted())
                 continue;
 
@@ -427,13 +443,26 @@ namespace Atlas
         const int nearLeg = 1;
         const int farLeg = 0;
 
-        m_Legs[farLeg].Draw(
-            window,
-            HipWorldX(farLeg),
-            HipWorldY(farLeg),
-            m_FacingDir,
-            false,
-            m_TintR, m_TintG, m_TintB);
+        if (IsPartDestroyed(LegPart(farLeg)))
+        {
+            window.DrawFilledRect(
+                HipWorldX(farLeg) - 3.0f, HipWorldY(farLeg) - 2.0f,
+                6.0f, 6.0f,
+                static_cast<Uint8>(70 * m_TintR / 255),
+                static_cast<Uint8>(30 * m_TintG / 255),
+                static_cast<Uint8>(28 * m_TintB / 255),
+                255);
+        }
+        else
+        {
+            m_Legs[farLeg].Draw(
+                window,
+                HipWorldX(farLeg),
+                HipWorldY(farLeg),
+                m_FacingDir,
+                false,
+                m_TintR, m_TintG, m_TintB);
+        }
 
         if (m_BodyTexture.GetTexture())
         {
@@ -461,13 +490,26 @@ namespace Atlas
                 m_FacingDir < 0.0f);
         }
 
-        m_Legs[nearLeg].Draw(
-            window,
-            HipWorldX(nearLeg),
-            HipWorldY(nearLeg),
-            m_FacingDir,
-            true,
-            m_TintR, m_TintG, m_TintB);
+        if (IsPartDestroyed(LegPart(nearLeg)))
+        {
+            window.DrawFilledRect(
+                HipWorldX(nearLeg) - 3.0f, HipWorldY(nearLeg) - 2.0f,
+                6.0f, 6.0f,
+                static_cast<Uint8>(90 * m_TintR / 255),
+                static_cast<Uint8>(38 * m_TintG / 255),
+                static_cast<Uint8>(34 * m_TintB / 255),
+                255);
+        }
+        else
+        {
+            m_Legs[nearLeg].Draw(
+                window,
+                HipWorldX(nearLeg),
+                HipWorldY(nearLeg),
+                m_FacingDir,
+                true,
+                m_TintR, m_TintG, m_TintB);
+        }
 
         DrawArmAndWeapon(window);
         DrawDigBeam(window);
@@ -504,6 +546,16 @@ namespace Atlas
 
     void Actor::DrawArmAndWeapon(Window& window) const
     {
+        if (IsPartDestroyed(BodyPartId::Arm))
+        {
+            // Stump at the shoulder; the weapon is gone with the arm.
+            DrawPart(window, ShoulderX() - 3.0f, ShoulderY() - 3.0f, 6.0f, 6.0f,
+                static_cast<Uint8>(90 * m_TintR / 255),
+                static_cast<Uint8>(38 * m_TintG / 255),
+                static_cast<Uint8>(34 * m_TintB / 255));
+            return;
+        }
+
         if (!m_Weapon.GetDef())
             return;
 
@@ -895,6 +947,215 @@ namespace Atlas
         m_Health = std::min(100, m_Health + amount);
     }
 
+    void Actor::GetPartBox(
+        BodyPartId part,
+        float& outMinX,
+        float& outMinY,
+        float& outMaxX,
+        float& outMaxY) const
+    {
+        switch (part)
+        {
+        case BodyPartId::Head:
+            outMinX = m_X;
+            outMaxX = m_X + BodyWidth;
+            outMinY = m_Y;
+            outMaxY = m_Y + 12.0f;
+            return;
+
+        case BodyPartId::Torso:
+            outMinX = m_X;
+            outMaxX = m_X + BodyWidth;
+            outMinY = m_Y + 12.0f;
+            outMaxY = m_Y + BodyHeight;
+            return;
+
+        case BodyPartId::Arm:
+        {
+            const float sx = ShoulderX();
+            const float sy = ShoulderY();
+            const float hx = GetHandX();
+            const float hy = GetHandY();
+
+            outMinX = std::min(sx, hx) - ArmThickness * 2.0f;
+            outMaxX = std::max(sx, hx) + ArmThickness * 2.0f;
+            outMinY = std::min(sy, hy) - ArmThickness * 2.0f;
+            outMaxY = std::max(sy, hy) + ArmThickness * 2.0f;
+            return;
+        }
+
+        case BodyPartId::LegBack:
+        case BodyPartId::LegFront:
+        {
+            const int leg = part == BodyPartId::LegBack ? 0 : 1;
+            const float hipX = HipWorldX(leg);
+            const float hipY = HipWorldY(leg);
+            const float footX = m_Legs[leg].GetFootX();
+            const float footY = m_Legs[leg].GetFootY();
+
+            outMinX = std::min(hipX, footX) - 6.0f;
+            outMaxX = std::max(hipX, footX) + 6.0f;
+            outMinY = std::min(hipY, footY) - 2.0f;
+            outMaxY = std::max(hipY, footY) + 2.0f;
+            return;
+        }
+
+        default:
+            outMinX = 0.0f;
+            outMinY = 0.0f;
+            outMaxX = 0.0f;
+            outMaxY = 0.0f;
+            return;
+        }
+    }
+
+    BodyPart* Actor::GetPartGrid(BodyPartId part)
+    {
+        switch (part)
+        {
+        case BodyPartId::Head: return &m_HeadPart;
+        case BodyPartId::Torso: return &m_TorsoPart;
+        case BodyPartId::Arm: return &m_ArmPart;
+        case BodyPartId::LegBack: return &m_LegParts[0];
+        case BodyPartId::LegFront: return &m_LegParts[1];
+        default: return nullptr;
+        }
+    }
+
+    const BodyPart* Actor::GetPartGrid(BodyPartId part) const
+    {
+        return const_cast<Actor*>(this)->GetPartGrid(part);
+    }
+
+    bool Actor::IsPartDestroyed(BodyPartId part) const
+    {
+        if (part == BodyPartId::None)
+            return false;
+
+        return m_PartDetached[static_cast<int>(part)];
+    }
+
+    bool Actor::IsArmDestroyed() const
+    {
+        return IsPartDestroyed(BodyPartId::Arm);
+    }
+
+    float Actor::GetPartHealth(BodyPartId part) const
+    {
+        const BodyPart* grid = GetPartGrid(part);
+        return grid ? grid->GetHealthFraction() : 0.0f;
+    }
+
+    void Actor::DestroyPart(BodyPartId part, ParticleSystem* particles)
+    {
+        if (part == BodyPartId::None || m_PartDetached[static_cast<int>(part)])
+            return;
+
+        m_PartDetached[static_cast<int>(part)] = true;
+
+        float minX = 0.0f, minY = 0.0f, maxX = 0.0f, maxY = 0.0f;
+        GetPartBox(part, minX, minY, maxX, maxY);
+
+        if (particles)
+            particles->BurstBlood((minX + maxX) * 0.5f, (minY + maxY) * 0.5f, 14, 200.0f);
+
+        switch (part)
+        {
+        case BodyPartId::Head:
+        case BodyPartId::Torso:
+            // Losing the head or torso is fatal outright.
+            TakeDamage(9999, 0.0f, 0.0f);
+            break;
+
+        case BodyPartId::Arm:
+            // No crawl/incapacitated sub-state: the arm simply can't
+            // fire any more (gated via IsArmDestroyed at the call sites).
+            break;
+
+        case BodyPartId::LegBack:
+        case BodyPartId::LegFront:
+        {
+            const int leg = part == BodyPartId::LegBack ? 0 : 1;
+            m_Legs[leg].Unplant();
+
+            if (IsPartDestroyed(BodyPartId::LegBack) &&
+                IsPartDestroyed(BodyPartId::LegFront))
+            {
+                TakeDamage(9999, 0.0f, 0.0f);
+            }
+            break;
+        }
+
+        default:
+            break;
+        }
+    }
+
+    bool Actor::TestLimbHit(
+        float x,
+        float y,
+        BodyPartId& outPart,
+        float& outLocal01X,
+        float& outLocal01Y) const
+    {
+        constexpr BodyPartId order[] =
+        {
+            BodyPartId::Head,
+            BodyPartId::Arm,
+            BodyPartId::LegFront,
+            BodyPartId::LegBack,
+            BodyPartId::Torso,
+        };
+
+        for (BodyPartId part : order)
+        {
+            if (IsPartDestroyed(part))
+                continue;
+
+            float minX = 0.0f, minY = 0.0f, maxX = 0.0f, maxY = 0.0f;
+            GetPartBox(part, minX, minY, maxX, maxY);
+
+            if (x < minX || x > maxX || y < minY || y > maxY)
+                continue;
+
+            outPart = part;
+            outLocal01X = (maxX > minX) ? (x - minX) / (maxX - minX) : 0.5f;
+            outLocal01Y = (maxY > minY) ? (y - minY) / (maxY - minY) : 0.5f;
+            return true;
+        }
+
+        return false;
+    }
+
+    void Actor::TakeLimbDamage(
+        BodyPartId part,
+        int damage,
+        float local01X,
+        float local01Y,
+        ParticleSystem* particles,
+        float impulseX,
+        float impulseY)
+    {
+        if (!IsAlive())
+            return;
+
+        TakeDamage(damage, impulseX, impulseY);
+
+        if (!IsAlive())
+            return;
+
+        BodyPart* grid = GetPartGrid(part);
+
+        if (!grid)
+            return;
+
+        // A bigger hit chews a visibly bigger hole than a graze.
+        const float radiusCells = 1.0f + static_cast<float>(damage) * 0.05f;
+
+        if (grid->DamageAtLocal(local01X, local01Y, radiusCells))
+            DestroyPart(part, particles);
+    }
+
     void Actor::Gib(ParticleSystem& particles)
     {
         const float cx = GetCenterX();
@@ -944,6 +1205,15 @@ namespace Atlas
         m_Fuel = 1.0f;
         m_KnockVelX = 0.0f;
         m_VelocityY = 0.0f;
+
+        m_HeadPart.Reset();
+        m_TorsoPart.Reset();
+        m_ArmPart.Reset();
+        m_LegParts[0].Reset();
+        m_LegParts[1].Reset();
+
+        for (bool& detached : m_PartDetached)
+            detached = false;
     }
 
     void Actor::SetTeam(int team)
@@ -1246,6 +1516,17 @@ namespace Atlas
 
     void Actor::UpdateWalkGait(const Terrain& terrain, float deltaTime)
     {
+        // A destroyed leg never swings or plants; redirect the gait to
+        // work the remaining leg instead.
+        if (IsPartDestroyed(LegPart(m_SwingLeg)) &&
+            !IsPartDestroyed(LegPart(1 - m_SwingLeg)))
+        {
+            m_SwingLeg = 1 - m_SwingLeg;
+        }
+
+        if (IsPartDestroyed(LegPart(m_SwingLeg)))
+            return;
+
         Limb& swing = m_Legs[m_SwingLeg];
         Limb& stance = m_Legs[1 - m_SwingLeg];
 
@@ -1336,6 +1617,9 @@ namespace Atlas
     {
         for (int i = 0; i < 2; i++)
         {
+            if (IsPartDestroyed(LegPart(i)))
+                continue;
+
             if (m_Legs[i].IsPlanted())
                 continue;
 
@@ -1371,6 +1655,9 @@ namespace Atlas
         {
             m_Legs[i].Unplant();
 
+            if (IsPartDestroyed(LegPart(i)))
+                continue;
+
             m_Legs[i].DangleToward(
                 HipWorldX(i) + m_FacingDir * 2.0f,
                 HipWorldY(i) + m_Legs[i].GetReach() * 0.8f,
@@ -1385,6 +1672,9 @@ namespace Atlas
         // so a slope beside the hip still counts.
         for (int i = 0; i < 2; i++)
         {
+            if (IsPartDestroyed(LegPart(i)))
+                continue;
+
             for (float offset : { 0.0f, 6.0f, -6.0f })
             {
                 const float probeX = HipWorldX(i) + offset;

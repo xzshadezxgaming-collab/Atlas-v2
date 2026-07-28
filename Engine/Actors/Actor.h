@@ -1,5 +1,6 @@
 #pragma once
 
+#include "BodyPart.h"
 #include "Limb.h"
 
 #include "../Combat/Weapon.h"
@@ -14,6 +15,19 @@ namespace Atlas
     class ParticleSystem;
     class Terrain;
     class Window;
+
+    // Independent, individually-destructible body parts. Only one arm
+    // exists as an interactive element (the far arm is baked into the
+    // torso sprite), so it stands alone rather than as a Left/Right pair.
+    enum class BodyPartId
+    {
+        Head,
+        Torso,
+        Arm,
+        LegBack,
+        LegFront,
+        None,
+    };
 
     // A walking character, Cortex Command style: the torso is one hitbox
     // and each leg is a Limb with its own foot hitbox. Feet find and hold
@@ -95,6 +109,39 @@ namespace Atlas
         float GetFuel() const;
         bool IsJetting() const;
 
+        // --- Limbs ---
+
+        // Tests whether the world point (x, y) lands inside one of this
+        // actor's limb boxes. On a hit, reports which part and the hit
+        // position mapped to that part's local 0..1 box, for addressing
+        // its per-pixel BodyPart grid.
+        bool TestLimbHit(
+            float x,
+            float y,
+            BodyPartId& outPart,
+            float& outLocal01X,
+            float& outLocal01Y) const;
+
+        // Applies pixel-local damage to one limb (from TestLimbHit) on
+        // top of the usual aggregate TakeDamage. Destroying a limb has
+        // real consequences: head/torso destruction kills outright, the
+        // arm can no longer fire, a destroyed leg can never plant again
+        // (losing both legs is fatal). particles may be null.
+        void TakeLimbDamage(
+            BodyPartId part,
+            int damage,
+            float local01X,
+            float local01Y,
+            ParticleSystem* particles,
+            float impulseX,
+            float impulseY);
+
+        bool IsPartDestroyed(BodyPartId part) const;
+        bool IsArmDestroyed() const;
+
+        // 1.0 = untouched, 0.0 = destroyed (or an invalid/None part).
+        float GetPartHealth(BodyPartId part) const;
+
         // --- Economy ---
 
         // Currency mined from valuable ore (gold veins), for later
@@ -149,6 +196,20 @@ namespace Atlas
         float ShoulderX() const;
         float ShoulderY() const;
 
+        // Current world-space AABB a limb occupies, used both for hit
+        // testing and for rendering damage holes over it.
+        void GetPartBox(
+            BodyPartId part,
+            float& outMinX,
+            float& outMinY,
+            float& outMaxX,
+            float& outMaxY) const;
+
+        BodyPart* GetPartGrid(BodyPartId part);
+        const BodyPart* GetPartGrid(BodyPartId part) const;
+
+        void DestroyPart(BodyPartId part, ParticleSystem* particles);
+
         Texture2D m_BodyTexture;
 
         float m_X;
@@ -194,6 +255,14 @@ namespace Atlas
         float m_DigBeamTargetX;
         float m_DigBeamTargetY;
         float m_BeamPhase;
+
+        // Per-limb pixel destruction. Indexed by BodyPartId (excluding
+        // None): Head, Torso, Arm, LegBack, LegFront.
+        BodyPart m_HeadPart;
+        BodyPart m_TorsoPart;
+        BodyPart m_ArmPart;
+        BodyPart m_LegParts[2];
+        bool m_PartDetached[5];
 
         float CurrentStandHeight() const;
     };

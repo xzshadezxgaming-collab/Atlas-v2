@@ -55,6 +55,17 @@ namespace Atlas
         // regardless of these multipliers.
         float HardMaterialCost = 1.0f; // applies to Stone and Gold
         float SoftMaterialCost = 1.0f; // applies to Grass and Dirt
+
+        // The tool's effective direction smoothly sweeps back and forth
+        // within a cone this many degrees wide, centered on the aim
+        // direction, instead of staying rigidly straight (0 = no sweep).
+        float ConeAngleDegrees = 0.0f;
+        float ConeSweepSpeed = 2.0f; // sweep oscillations per second-ish
+
+        // Dig tools only: damage dealt per fire tick to another actor's
+        // limb the tool's impact point is touching (0 = can't hurt
+        // actors, only terrain).
+        int LimbDamage = 0;
     };
 
     // Loads weapon definitions from an INI file; returns built-in defaults
@@ -94,12 +105,25 @@ namespace Atlas
         int GetAmmo() const;
         int GetClipSize() const;
 
+        // Applies this weapon's cone-sweep (if any) to the given aim
+        // direction, returning the tool's actual effective direction for
+        // this instant. With ConeAngleDegrees == 0 this just returns
+        // (aimDirX, aimDirY) unchanged. Shared by the real dig raycast and
+        // the beam preview so they can never disagree.
+        void GetSweptDirection(
+            float aimDirX,
+            float aimDirY,
+            float& outDirX,
+            float& outDirY) const;
+
     private:
         const WeaponDef* m_Def;
 
         float m_Cooldown;
         float m_ReloadTimer;
         int m_Ammo;
+
+        float m_SweepPhase;
 
         std::uint32_t m_RandomState;
 

@@ -78,6 +78,9 @@ namespace Atlas
             digger.SoftMaterialCost = 1.6f;  // pricey: mediocre on dirt
             digger.BarrelLength = 12.0f;
             digger.Recoil = 0.0f;
+            digger.ConeAngleDegrees = 20.0f;
+            digger.ConeSweepSpeed = 1.6f;
+            digger.LimbDamage = 8;
             defs.push_back(digger);
         }
 
@@ -187,6 +190,12 @@ namespace Atlas
                 section, "HardMaterialCost", def->HardMaterialCost);
             def->SoftMaterialCost = ini.GetFloat(
                 section, "SoftMaterialCost", def->SoftMaterialCost);
+            def->ConeAngleDegrees = ini.GetFloat(
+                section, "ConeAngleDegrees", def->ConeAngleDegrees);
+            def->ConeSweepSpeed = ini.GetFloat(
+                section, "ConeSweepSpeed", def->ConeSweepSpeed);
+            def->LimbDamage = ini.GetInt(
+                section, "LimbDamage", def->LimbDamage);
         }
 
         return defs;
@@ -197,6 +206,7 @@ namespace Atlas
         m_Cooldown(0.0f),
         m_ReloadTimer(0.0f),
         m_Ammo(0),
+        m_SweepPhase(0.0f),
         m_RandomState(0xB5297A4Du)
     {
     }
@@ -235,6 +245,33 @@ namespace Atlas
             if (m_ReloadTimer <= 0.0f && m_Def)
                 m_Ammo = m_Def->ClipSize;
         }
+
+        m_SweepPhase += deltaTime;
+    }
+
+    void Weapon::GetSweptDirection(
+        float aimDirX,
+        float aimDirY,
+        float& outDirX,
+        float& outDirY) const
+    {
+        if (!m_Def || m_Def->ConeAngleDegrees <= 0.0f)
+        {
+            outDirX = aimDirX;
+            outDirY = aimDirY;
+            return;
+        }
+
+        const float baseAngle = std::atan2(aimDirY, aimDirX);
+        const float halfCone =
+            m_Def->ConeAngleDegrees * 0.5f * 3.14159265f / 180.0f;
+        const float sweep =
+            std::sin(m_SweepPhase * m_Def->ConeSweepSpeed * 6.28318530f) *
+            halfCone;
+
+        const float angle = baseAngle + sweep;
+        outDirX = std::cos(angle);
+        outDirY = std::sin(angle);
     }
 
     bool Weapon::TryFire(
@@ -267,6 +304,14 @@ namespace Atlas
         if (m_Def->Kind == WeaponKind::Digger ||
             m_Def->Kind == WeaponKind::Shovel)
         {
+            // The tool's effective direction may sweep in a cone around
+            // the aim direction instead of staying rigidly straight; both
+            // the raycast and the visual preview call the same function so
+            // they can never disagree.
+            float sweptDirX = dirX;
+            float sweptDirY = dirY;
+            GetSweptDirection(dirX, dirY, sweptDirX, sweptDirY);
+
             // Dig tools work like a raycast: whatever surface is first in
             // front of the tool gets broken. No carving through walls at
             // the cursor. The ray starts back at the hand so a muzzle
@@ -277,10 +322,10 @@ namespace Atlas
             float hitY = 0.0f;
 
             if (!terrain.RaycastSolid(
-                muzzleX - dirX * reachBehind,
-                muzzleY - dirY * reachBehind,
-                dirX,
-                dirY,
+                muzzleX - sweptDirX * reachBehind,
+                muzzleY - sweptDirY * reachBehind,
+                sweptDirX,
+                sweptDirY,
                 m_Def->DigRange + reachBehind,
                 hitX,
                 hitY))
@@ -292,8 +337,8 @@ namespace Atlas
             // nearest pixels first, so soft dirt melts away while stone
             // is ground down slowly. Material harder than the tool's cap
             // doesn't budge at all.
-            const float digX = hitX + dirX * m_Def->DigRadius * 0.35f;
-            const float digY = hitY + dirY * m_Def->DigRadius * 0.35f;
+            const float digX = hitX + sweptDirX * m_Def->DigRadius * 0.35f;
+            const float digY = hitY + sweptDirY * m_Def->DigRadius * 0.35f;
 
             float budget = m_Def->DigPower;
             int removed = 0;
@@ -378,11 +423,11 @@ namespace Atlas
             {
                 particles.SpawnSpark(
                     hitX, hitY,
-                    -dirX * 60.0f + RandomUnit() * 70.0f,
-                    -dirY * 60.0f - 40.0f);
+                    -sweptDirX * 60.0f + RandomUnit() * 70.0f,
+                    -sweptDirY * 60.0f - 40.0f);
                 particles.SpawnSpark(
                     hitX, hitY,
-                    -dirX * 30.0f + RandomUnit() * 70.0f,
+                    -sweptDirX * 30.0f + RandomUnit() * 70.0f,
                     -30.0f + RandomUnit() * 40.0f);
             }
 
