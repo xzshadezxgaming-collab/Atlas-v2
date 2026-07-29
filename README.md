@@ -1,9 +1,10 @@
 # Strain Empire
 
-An idle cultivation empire game for Steam: breed strains, mix
-ingredients to match a shifting seasonal market, and climb a weekly
-Empire Value leaderboard. No player trading, no pay-to-win — see
-`GAME_CONCEPT.md` for the full pitch.
+An idle cultivation empire mobile game: breed strains, mix ingredients
+to match a shifting seasonal market, and climb a weekly Empire Value
+leaderboard. Optional rewarded ads and buyable Gems only ever
+compress time — never pay-to-win — see `GAME_CONCEPT.md` for the full
+pitch.
 
 ## Docs
 
@@ -11,13 +12,13 @@ Empire Value leaderboard. No player trading, no pay-to-win — see
   layer, monetization
 - [`docs/systems-design.md`](docs/systems-design.md) — concrete
   formulas: breeding/mutation, ingredient mixing, market pricing,
-  economy balance, leaderboard score
+  Gems/speedups, economy balance, leaderboard score
 - [`docs/unity-project-notes.md`](docs/unity-project-notes.md) —
   project layout, how to open it, what's verified vs. not
-- [`docs/steam-publishing-checklist.md`](docs/steam-publishing-checklist.md) —
-  what's done vs. what needs a real Steamworks account to finish
+- [`docs/mobile-publishing-checklist.md`](docs/mobile-publishing-checklist.md) —
+  what's done vs. what needs real App Store/Play Console accounts to finish
 - [`docs/store-page-copy.md`](docs/store-page-copy.md) — draft store
-  description, tags, content-rating notes
+  listing copy, keywords, content-rating notes
 
 ## Running the tests
 

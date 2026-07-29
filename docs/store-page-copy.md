@@ -1,19 +1,25 @@
-# Store Page Copy (draft)
+# Store Listing Copy (draft, mobile)
 
-Draft copy for the Steam store page. Screenshots/trailer/capsule art
-are not included here — see `docs/steam-publishing-checklist.md`, they
-need real gameplay footage which requires the art pass to happen
-first.
+Draft copy for the App Store / Play Console listings. Screenshots,
+app icon, feature graphic, and preview video are not included here —
+see `docs/mobile-publishing-checklist.md`; they need real gameplay
+footage, which requires the art pass to happen first, and per that
+doc's item 6, a content-policy read should happen *before* investing
+in that art.
 
-## Short description (store search/list, ~300 chars)
+## App title
 
-> Breed strains, master the mix, and read the market. Strain Empire is
-> an idle cultivation game where genetics take weeks to perfect,
-> ingredients shape what you're selling, and demand shifts every
-> season. Climb the weekly Empire Value leaderboard — no pay-to-win,
-> ever.
+**Strain Empire: Idle Cultivator**
 
-## Long description
+## Subtitle / short description
+
+Apple subtitle (30 char max) and Google Play short description (80
+char max) have different limits — two versions:
+
+- Apple subtitle: `Breed, mix, and read the market`
+- Google Play short description: `Idle cultivation game — breed strains, mix for the market, climb the ladder`
+
+## Long description (both stores support up to ~4000 chars)
 
 **Grow smarter, not just longer.**
 
@@ -36,27 +42,35 @@ the game.
   before it hits.
 - **Climb an honest leaderboard.** Every season resets the ladder, so
   new and veteran players compete on read-the-market skill, not just
-  hours logged. Nothing you can buy increases your score — cosmetics
-  and quality-of-life only, never a shortcut to rank.
+  hours logged or wallet size. Nothing you can buy raises the
+  ceiling — Gems only ever compress time you'd otherwise wait through,
+  never genetics, quality, or price.
+- **Speed up on your terms.** Watch a short ad for free Gems, or buy
+  them if you'd rather not wait. Either way, no loot boxes, no gacha,
+  no pay-to-win.
 
-No player trading, no loot boxes, no pay-to-win. Just an operation
-that's yours to build.
+No player trading, no forced ads, no predatory monetization. Just an
+operation that's yours to build.
 
-## Tags (suggested)
+## Keywords (Apple, 100 char field, comma-separated no spaces)
 
-Idle, Simulation, Farming Sim, Management, Crafting, Economy,
-Leaderboard, Singleplayer, Strategy
+`idle,tycoon,farming,simulation,crafting,management,economy,strategy,cultivator,empire`
+
+## Category
+
+Games > Simulation (primary), Games > Strategy (secondary, if the
+store allows a second category)
 
 ## Content rating notes
 
-The cultivation/processing theme has direct Steam precedent
-(*Schedule I*, *Weedcraft Inc*, *Drug Dealer Simulator*), so this is
-not a novel content-policy question — but expect the IARC
-questionnaire to land on an adult-leaning rating band. Answer it
-honestly rather than trying to word around it; getting flagged for a
-mismatched rating after launch is a worse outcome than an accurate
-rating up front. Store page copy above avoids real-world drug/brand
-references and keeps language commercial/neutral ("strains",
-"cultivation", "processing") rather than leaning into anything more
-explicit — worth keeping that tone consistent in screenshots/trailer
-too.
+Unlike Steam, neither Apple nor Google has direct precedent for this
+theme the way *Schedule I*/*Weedcraft Inc* set on Steam — see
+`docs/mobile-publishing-checklist.md` item 6, this needs an actual
+current-guidelines read before finalizing, not just a rating
+questionnaire answered on autopilot. Copy above already avoids
+real-world drug/brand references and keeps language commercial/neutral
+("strains", "cultivation", "processing") rather than anything more
+explicit — worth keeping that tone consistent in screenshots and any
+preview video too, and worth revisiting harder (fictional substance
+names, further-abstracted framing) if the guidelines read comes back
+stricter than expected.

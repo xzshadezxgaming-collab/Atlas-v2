@@ -6,7 +6,7 @@ namespace StrainEmpire.Gameplay.Cloud
     {
         public void Unlock(string apiName)
         {
-            Debug.Log($"[LocalAchievementService] Would unlock '{apiName}' (Steamworks.NET not installed).");
+            Debug.Log($"[LocalAchievementService] Would unlock '{apiName}' (no cloud backend configured).");
         }
     }
 }

@@ -2,15 +2,15 @@ using UnityEngine;
 
 namespace StrainEmpire.Gameplay.Cloud
 {
-    /// Fallback used until the Steamworks.NET plugin is imported and the
-    /// STEAMWORKS_NET scripting define symbol is set (Project Settings >
-    /// Player > Scripting Define Symbols). See docs/steam-publishing-checklist.md.
-    /// Keeps the game fully playable/buildable without the plugin present.
+    /// Fallback used until a real cloud leaderboard backend (Firebase by
+    /// default — see docs/unity-project-notes.md "Mobile integration") is
+    /// configured and its scripting define symbol is set. Keeps the game
+    /// fully playable/buildable without any backend present.
     public class LocalLeaderboardService : ILeaderboardService
     {
         public void SubmitScore(string leaderboardName, int score)
         {
-            Debug.Log($"[LocalLeaderboardService] Would submit {score} to '{leaderboardName}' (Steamworks.NET not installed).");
+            Debug.Log($"[LocalLeaderboardService] Would submit {score} to '{leaderboardName}' (no cloud backend configured).");
         }
     }
 }
