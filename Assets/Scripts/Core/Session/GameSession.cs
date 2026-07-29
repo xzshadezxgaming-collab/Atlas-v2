@@ -20,8 +20,14 @@ namespace StrainEmpire.Core.Session
         public SeasonArchetype CurrentSeason { get; private set; }
         public DemandMultipliers CurrentDemand { get; private set; }
 
+        /// Whether a Breed() call would currently succeed (see BreedingCooldownHours).
+        public bool CanBreed => _breedingCooldownRemainingHours <= 0f;
+
         private readonly IRandomSource _rng;
         private int _nextStrainId = 1;
+        private float _breedingCooldownRemainingHours;
+
+        public const float BreedingCooldownHours = 12f; // docs/systems-design.md "Breeding cooldown"
 
         public GameSession(IRandomSource rng, SeasonArchetype startingSeason)
         {
@@ -104,6 +110,9 @@ namespace StrainEmpire.Core.Session
         {
             foreach (GrowPlot plot in Plots)
                 plot.Advance(hours);
+
+            if (_breedingCooldownRemainingHours > 0f)
+                _breedingCooldownRemainingHours = System.Math.Max(0f, _breedingCooldownRemainingHours - hours);
         }
 
         /// Harvests a mature plot, mixes with the given ingredients, and
@@ -130,10 +139,16 @@ namespace StrainEmpire.Core.Session
             return revenue;
         }
 
+        /// Returns null if a breeding cooldown is still active (see
+        /// BreedingCooldownHours / CanBreed) — check CanBreed before calling
+        /// if the UI needs to disable the action rather than silently no-op.
         public Strain Breed(Strain parentA, Strain parentB, string offspringName)
         {
+            if (!CanBreed) return null;
+
             Strain offspring = BreedingSystem.Breed(parentA, parentB, _rng, $"strain-{_nextStrainId++}", offspringName);
             StrainInventory.Add(offspring);
+            _breedingCooldownRemainingHours = BreedingCooldownHours;
             return offspring;
         }
 

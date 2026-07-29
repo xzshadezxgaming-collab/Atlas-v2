@@ -71,6 +71,27 @@ namespace StrainEmpire.Core.Tests
         }
 
         [Fact]
+        public void Breed_BlockedByCooldown_ThenAllowedAfter12Hours()
+        {
+            var session = new GameSession(new FakeRandomSource(new[] { 0.99 }), SeasonArchetype.HeavyHitterWeek);
+            Strain parentA = session.CreateStarterStrain("A", 40, 60, 50, 30, 20, 10, 15);
+            Strain parentB = session.CreateStarterStrain("B", 60, 40, 30, 50, 40, 30, 25);
+
+            Assert.True(session.CanBreed);
+            Assert.NotNull(session.Breed(parentA, parentB, "Child1"));
+
+            Assert.False(session.CanBreed);
+            Assert.Null(session.Breed(parentA, parentB, "Child2"));
+
+            session.AdvanceTime(11f);
+            Assert.False(session.CanBreed);
+
+            session.AdvanceTime(1f); // total 12h elapsed -> cooldown clears
+            Assert.True(session.CanBreed);
+            Assert.NotNull(session.Breed(parentA, parentB, "Child3"));
+        }
+
+        [Fact]
         public void AdvanceSeason_UpdatesCurrentSeasonAndDemand()
         {
             var session = new GameSession(new FakeRandomSource(new[] { 0.99 }), SeasonArchetype.HeavyHitterWeek);

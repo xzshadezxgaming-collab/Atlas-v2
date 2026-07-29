@@ -169,7 +169,7 @@ namespace StrainEmpire.Gameplay
 
         private void OnBreedClicked()
         {
-            if (_session.StrainInventory.Count < 2) return;
+            if (!_session.CanBreed || _session.StrainInventory.Count < 2) return;
             Strain a = _session.StrainInventory[0];
             Strain b = _session.StrainInventory[1];
             _session.Breed(a, b, $"{a.Name}x{b.Name}");
