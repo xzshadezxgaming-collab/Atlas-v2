@@ -1,0 +1,15 @@
+{
+    "name": "StrainEmpire.Gameplay",
+    "rootNamespace": "StrainEmpire.Gameplay",
+    "references": [
+        "StrainEmpire.Core"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": []
+}
