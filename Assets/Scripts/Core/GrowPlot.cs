@@ -18,6 +18,19 @@ namespace StrainEmpire.Core
             ElapsedHours = 0f;
         }
 
+        /// Rebuilds a plot from saved state (see Gameplay save system).
+        /// Pass a null strain for an empty plot.
+        public static GrowPlot Restore(Strain plantedStrain, float elapsedHours)
+        {
+            var plot = new GrowPlot();
+            if (plantedStrain != null)
+            {
+                plot.PlantedStrain = plantedStrain;
+                plot.ElapsedHours = elapsedHours;
+            }
+            return plot;
+        }
+
         public void Advance(float hours)
         {
             if (!IsPlanted) return;

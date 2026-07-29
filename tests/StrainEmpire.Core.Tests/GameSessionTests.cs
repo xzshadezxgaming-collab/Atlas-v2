@@ -96,5 +96,34 @@ namespace StrainEmpire.Core.Tests
             // cash 50 + plotValue 150 + (4*500) + (1*500) = 50 + 150 + 2000 + 500 = 2700
             Assert.True(System.Math.Abs(value - 2700f) < 0.01f, $"Expected ~2700, got {value}");
         }
+
+        [Fact]
+        public void Restore_RebuildsSessionExactlyFromSavedState()
+        {
+            var original = new GameSession(new FakeRandomSource(new[] { 0.99 }), SeasonArchetype.ChillWave);
+            original.BuyPlot();
+            Strain planted = original.CreateStarterStrain("Planted", 70, 60, 50, 40, 30, 20, 10);
+            Strain bench = original.CreateStarterStrain("Bench", 10, 10, 10, 10, 10, 10, 10);
+            original.Plant(0, planted);
+            original.AdvanceTime(5f);
+
+            var restored = GameSession.Restore(
+                new FakeRandomSource(new[] { 0.99 }),
+                original.Cash,
+                original.Plots,
+                original.StrainInventory,
+                original.CurrentSeason,
+                nextStrainId: 99);
+
+            Assert.Equal(original.Cash, restored.Cash);
+            Assert.Equal(original.Plots.Count, restored.Plots.Count);
+            Assert.True(restored.Plots[0].IsPlanted);
+            Assert.Equal(5f, restored.Plots[0].ElapsedHours);
+            Assert.Equal(original.StrainInventory.Count, restored.StrainInventory.Count);
+            Assert.Equal(SeasonArchetype.ChillWave, restored.CurrentSeason);
+
+            Strain nextOffspring = restored.Breed(planted, bench, "Next");
+            Assert.Equal("strain-99", nextOffspring.Id);
+        }
     }
 }

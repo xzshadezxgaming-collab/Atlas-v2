@@ -32,6 +32,29 @@ namespace StrainEmpire.Core.Session
             CurrentDemand = MarketSystem.GetDemandMultipliers(startingSeason, _rng);
         }
 
+        /// Rebuilds a session from saved state (see Gameplay save system),
+        /// bypassing the "1 free starting plot / starting cash" defaults the
+        /// normal constructor applies.
+        public static GameSession Restore(
+            IRandomSource rng,
+            float cash,
+            IEnumerable<GrowPlot> plots,
+            IEnumerable<Strain> strainInventory,
+            SeasonArchetype currentSeason,
+            int nextStrainId)
+        {
+            var session = new GameSession(rng, currentSeason)
+            {
+                Cash = cash,
+            };
+            session.Plots.Clear();
+            session.Plots.AddRange(plots);
+            session.StrainInventory.Clear();
+            session.StrainInventory.AddRange(strainInventory);
+            session._nextStrainId = nextStrainId;
+            return session;
+        }
+
         public Strain CreateStarterStrain(string name, int potency, int yield, int speed, int resilience, int relaxation, int energy, int focus)
         {
             var strain = new Strain
