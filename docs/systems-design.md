@@ -40,7 +40,12 @@ weak Tier 0 strain up to 24h for a maxed Tier 4 strain. Better
 strains take longer to grow — a deliberate plot-allocation trade-off.
 
 **Breeding cooldown**: fixed 12h after both parents are mature before
-a seed batch (3 seeds) is produced.
+a seed batch (3 seeds) is produced. The 3 seeds are independently
+rolled (each gets its own mutation check), so the player picks the
+best of the batch to carry forward — that selection is what gives
+genetics real upward progress across generations. A single averaged
+result with no selection would just random-walk around the parents'
+tier rather than climbing.
 
 **Pacing target**: reaching Tier 4 from Tier 0 stock takes roughly
 4–6 breeding generations. Each generation = grow parents to maturity

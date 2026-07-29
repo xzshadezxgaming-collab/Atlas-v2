@@ -64,10 +64,14 @@ namespace StrainEmpire.Core.Tests
             Strain parentA = session.CreateStarterStrain("A", 40, 60, 50, 30, 20, 10, 15);
             Strain parentB = session.CreateStarterStrain("B", 60, 40, 30, 50, 40, 30, 25);
 
-            Strain offspring = session.Breed(parentA, parentB, "Child");
+            IReadOnlyList<Strain> seeds = session.Breed(parentA, parentB, "Child");
 
-            Assert.Equal(50, offspring.Potency);
-            Assert.Contains(offspring, session.StrainInventory);
+            Assert.Equal(3, seeds.Count); // docs/systems-design.md: a breeding cycle yields 3 seeds
+            foreach (Strain seed in seeds)
+            {
+                Assert.Equal(50, seed.Potency);
+                Assert.Contains(seed, session.StrainInventory);
+            }
         }
 
         [Fact]
@@ -143,8 +147,9 @@ namespace StrainEmpire.Core.Tests
             Assert.Equal(original.StrainInventory.Count, restored.StrainInventory.Count);
             Assert.Equal(SeasonArchetype.ChillWave, restored.CurrentSeason);
 
-            Strain nextOffspring = restored.Breed(planted, bench, "Next");
-            Assert.Equal("strain-99", nextOffspring.Id);
+            IReadOnlyList<Strain> nextSeeds = restored.Breed(planted, bench, "Next");
+            Assert.Equal("strain-99", nextSeeds[0].Id);
+            Assert.Equal("strain-101", nextSeeds[2].Id);
         }
     }
 }

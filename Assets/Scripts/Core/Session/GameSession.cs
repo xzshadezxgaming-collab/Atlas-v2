@@ -28,6 +28,7 @@ namespace StrainEmpire.Core.Session
         private float _breedingCooldownRemainingHours;
 
         public const float BreedingCooldownHours = 12f; // docs/systems-design.md "Breeding cooldown"
+        public const int SeedsPerBreeding = 3; // docs/systems-design.md "a seed batch (3 seeds)"
 
         public GameSession(IRandomSource rng, SeasonArchetype startingSeason)
         {
@@ -139,17 +140,28 @@ namespace StrainEmpire.Core.Session
             return revenue;
         }
 
-        /// Returns null if a breeding cooldown is still active (see
-        /// BreedingCooldownHours / CanBreed) — check CanBreed before calling
-        /// if the UI needs to disable the action rather than silently no-op.
-        public Strain Breed(Strain parentA, Strain parentB, string offspringName)
+        /// Produces SeedsPerBreeding independently-rolled offspring (each
+        /// with its own mutation roll) so the player has a pool to select
+        /// the best mutant from each generation — that selection is what
+        /// gives genetics real upward progress over time, not a guaranteed
+        /// single averaged result. Returns null if a breeding cooldown is
+        /// still active (see BreedingCooldownHours / CanBreed) — check
+        /// CanBreed before calling if the UI needs to disable the action
+        /// rather than silently no-op.
+        public IReadOnlyList<Strain> Breed(Strain parentA, Strain parentB, string offspringNamePrefix)
         {
             if (!CanBreed) return null;
 
-            Strain offspring = BreedingSystem.Breed(parentA, parentB, _rng, $"strain-{_nextStrainId++}", offspringName);
-            StrainInventory.Add(offspring);
+            var seeds = new List<Strain>(SeedsPerBreeding);
+            for (int i = 0; i < SeedsPerBreeding; i++)
+            {
+                Strain seed = BreedingSystem.Breed(parentA, parentB, _rng, $"strain-{_nextStrainId++}", $"{offspringNamePrefix} #{i + 1}");
+                StrainInventory.Add(seed);
+                seeds.Add(seed);
+            }
+
             _breedingCooldownRemainingHours = BreedingCooldownHours;
-            return offspring;
+            return seeds;
         }
 
         public void AdvanceSeason(SeasonArchetype nextArchetype)
