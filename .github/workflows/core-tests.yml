@@ -19,3 +19,7 @@ jobs:
       - name: Run Core tests
         working-directory: tests/StrainEmpire.Core.Tests
         run: dotnet test --logger "console;verbosity=normal"
+
+      - name: Gameplay/Editor compile check (against UnityStubs, not real Unity)
+        working-directory: tests/StrainEmpire.Gameplay.CompileCheck
+        run: dotnet build

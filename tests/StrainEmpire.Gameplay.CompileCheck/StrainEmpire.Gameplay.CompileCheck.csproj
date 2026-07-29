@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Compiles the real Assets/Scripts/Core, Assets/Scripts/Gameplay, and
+    Assets/Editor sources against ../UnityStubs (a hand-written, best-effort
+    approximation of the Unity API — see UnityStubs/README.md) so this code
+    gets *some* compiler pass instead of staying completely unverified.
+    This is NOT a substitute for a real Unity Editor compile; delete this
+    whole project once one is actually available. See
+    docs/unity-project-notes.md "What's unverified."
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <OutputType>Library</OutputType>
+    <!-- Files gated behind #if STEAMWORKS_NET / FIREBASE_ENABLED /
+         UNITY_ADS_ENABLED / UNITY_IAP_ENABLED compile to nothing here,
+         same as in a real build without those symbols defined - the
+         Steamworks/Firebase/ad/IAP SDK namespaces are intentionally not
+         stubbed. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../Assets/Scripts/Core/**/*.cs" LinkBase="Core" />
+    <Compile Include="../../Assets/Scripts/Gameplay/**/*.cs" LinkBase="Gameplay" />
+    <Compile Include="../../Assets/Editor/**/*.cs" LinkBase="Editor" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../UnityStubs/UnityStubs.csproj" />
+  </ItemGroup>
+
+</Project>

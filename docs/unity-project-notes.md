@@ -95,20 +95,37 @@ The test project compiles the real `Assets/Scripts/Core/**/*.cs` files
 directly (see the `.csproj`), so it's testing the shipped code, not a
 copy.
 
-## What's unverified
+## What's compile-checked, and what's still genuinely unverified
 
 `Assets/Scripts/Gameplay/**` and `Assets/Editor/**` depend on
-UnityEngine/UnityEditor and were **not** compiled or run in this
-session — there is no way to do that without the Editor or its DLLs.
-This is real, non-trivial code (a runtime-built UI, save/load, ad/IAP/
-leaderboard service wrappers, an Editor menu command), written
-carefully and kept as simple as reasonably possible to limit risk, but
-**the first thing to do on actually opening this in Unity is fix
-whatever the Editor's compiler flags** — treat a clean first compile
-as unlikely, not a given. The current UI (`RuntimeUIBuilder`) is
-deliberately "programmer art": functional text/button layout, not real
-UI/UX — it exists so the loop is playable end-to-end, not as final
-presentation.
+UnityEngine/UnityEditor and were never compiled by a real Unity
+Editor — there's no way to do that without the Editor or its DLLs,
+neither of which is available in this environment (no GUI, and even
+Unity Personal requires an account login to activate).
+
+What *is* now checked: `tests/StrainEmpire.Gameplay.CompileCheck`
+compiles the real `Assets/Scripts/Gameplay/**/*.cs` and
+`Assets/Editor/**/*.cs` files against `tests/UnityStubs` — a hand-
+written approximation of the subset of the Unity API this code
+actually calls (see `tests/UnityStubs/README.md` for exactly what that
+does and doesn't prove). It catches real bugs: typos, wrong method
+signatures, missing usings, type mismatches — the kind of thing that
+would otherwise sit completely unverified. It does **not** prove the
+real Unity compiler accepts the code (the stub signatures are written
+from memory, not copied from actual Unity DLLs) or that anything works
+at runtime (no real MonoBehaviour lifecycle, Canvas layout, or Editor
+scene serialization). CI runs this build on every push
+(`.github/workflows/core-tests.yml`).
+
+So: **the first thing to do on actually opening this in Unity is still
+fix whatever the real Editor's compiler flags** — a stub passing is
+meaningfully more confidence than nothing, not a guarantee. Once a
+real Unity Editor is available, delete `tests/UnityStubs` and
+`tests/StrainEmpire.Gameplay.CompileCheck` — the real compiler is
+strictly better than this approximation. The current UI
+(`RuntimeUIBuilder`) is deliberately "programmer art": functional
+text/button layout, not real UI/UX — it exists so the loop is playable
+end-to-end, not as final presentation.
 
 Ad/IAP SDK API surfaces in particular shift across package versions
 more than most Unity APIs — `UnityAdsRewardedService` and

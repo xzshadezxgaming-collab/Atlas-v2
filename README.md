@@ -30,7 +30,17 @@ cd tests/StrainEmpire.Core.Tests
 dotnet test
 ```
 
-CI runs this on every push/PR (`.github/workflows/core-tests.yml`).
+The Unity-dependent `Gameplay`/`Editor` layer additionally gets a
+compile check against `tests/UnityStubs` (a hand-written approximation
+of the Unity API — see that folder's README for what it does and
+doesn't prove; it's not a substitute for a real Unity Editor compile):
+
+```
+cd tests/StrainEmpire.Gameplay.CompileCheck
+dotnet build
+```
+
+CI runs both on every push/PR (`.github/workflows/core-tests.yml`).
 
 ## Opening in Unity
 

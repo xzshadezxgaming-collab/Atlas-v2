@@ -32,6 +32,11 @@ alongside mobile, but it's not the priority path.
       `IAchievementService`), each with a safe local fallback and a
       real implementation guarded by a scripting define symbol —
       ready to activate once the actual SDKs are imported
+- [x] Content-policy research (drug theme on mobile stores) — actually
+      done, not deferred; see item 6 below
+- [x] Gameplay/Editor code now gets a compile check (not a real Unity
+      compile — see `docs/unity-project-notes.md` "What's compile-
+      checked") instead of sitting completely unverified
 
 ## Blocked on your developer accounts (I can't do these)
 
