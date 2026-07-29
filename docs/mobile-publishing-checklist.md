@@ -54,18 +54,47 @@ alongside mobile, but it's not the priority path.
    create the three Gem-pack products in both stores with IDs matching
    `GemPackCatalog` exactly (`gems_small`, `gems_medium`,
    `gems_large`) — pricing is set per-store, not in code.
-6. **Content-policy risk — read this before investing in art/marketing**:
-   both Apple's App Store Review Guidelines and Google Play's
-   Developer Program Policy are meaningfully stricter about drug-
-   themed content than Steam, and neither has Steam's precedent
-   (*Schedule I*, *Weedcraft Inc*). This needs an actual read of the
-   *current* guidelines on both platforms before committing further —
-   they change, and a summary here would go stale. Depending on what
-   they say, consider softening real-world framing further for the
-   mobile listing specifically (fictional substance names, avoid any
-   real-drug branding/imagery) even beyond what `docs/store-page-copy.md`
-   already does. This is a real go/no-go decision, not a formality —
-   worth resolving before the art pass, not after.
+6. **Content policy — researched, precedented, but has real rules to
+   follow.** This was flagged as an open risk in an earlier pass;
+   here's the actual finding after reading both platforms' current
+   policies and checking live app store listings (as of mid-2026).
+
+   Both platforms explicitly restrict the same two things: **content
+   that facilitates a real drug sale/purchase**, and (Google's
+   wording specifically) **real instructions for growing or
+   manufacturing illegal drugs**. Neither restricts *fictional,
+   gamified simulation* of the theme — and this isn't theoretical:
+   drug-cultivation/dealing sim games are live *right now* on both
+   Google Play and the Apple App Store (e.g. "Drug Dealer Simulator,"
+   "Schedule I," "Weed Farm," "Drug Dealer: Grand Mafia Games" —
+   several with a 17+/Mature rating and disclosed content descriptors
+   like "Alcohol, Tobacco, Drug Use or References"). So the theme
+   itself is approvable on mobile, contrary to what I originally
+   assumed here — this game's category isn't unprecedented.
+
+   What actually matters for staying on the right side of this:
+   - Set the age rating to 17+/Mature and disclose the relevant
+     content descriptors honestly in both stores' rating
+     questionnaires — every live comparable does this, don't try to
+     rate it lower to widen the audience.
+   - Keep the game a fictional simulation with abstract numbers
+     (which it already is — see `docs/systems-design.md`'s trait/
+     ingredient system), not real cultivation/synthesis instructions
+     dressed up as gameplay tips.
+   - No real transactions: Gems/IAP buy in-game currency only, never
+     anything that reads as a real drug purchase — already the case,
+     see `GAME_CONCEPT.md` "Monetization."
+   - `docs/store-page-copy.md`'s existing avoidance of real-world
+     drug/brand references in the listing copy is good practice and
+     worth keeping, even though it's not strictly required by what's
+     live today.
+
+   This is Apple/Google policy as researched today, not a legal
+   opinion — policies and enforcement drift over time, so a final
+   read of the current guidelines immediately before submission is
+   still worth doing, just as a confirmation rather than a blocking
+   unknown. Sources: [App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/),
+   [Illegal or Recreational Drugs — Play Console Help](https://support.google.com/googleplay/android-developer/answer/6159991).
 7. **Privacy compliance** (both platforms now require this
    explicitly, and ads/IAP make it non-optional here):
    - **Apple**: Privacy Nutrition Labels in App Store Connect, and an
@@ -81,8 +110,8 @@ alongside mobile, but it's not the priority path.
      should be explicitly marked not-directed-at-children on both
      stores — don't opt into any children's category.
 8. **Age rating**: Apple's age rating questionnaire and Google Play's
-   IARC content rating questionnaire, both informed by the same
-   content-policy read in step 6.
+   IARC content rating questionnaire — target 17+/Mature with drug-
+   reference content descriptors disclosed, per step 6's findings.
 9. **Store listing assets**: app icon, feature graphic (Google Play),
    screenshots for each required device size, and (recommended, not
    always required) a preview video — all need to show *real, running
@@ -108,8 +137,8 @@ first thing to do on opening the project is:
 4. Run **Strain Empire > Create MVP Scene**, press Play, and confirm
    the plant → grow → harvest → sell → breed → Gems/Instant Grow loop
    actually works end-to-end with real Editor timing.
-5. Only after that: start the art pass, the content-policy read
-   (step 6 above), and the developer-account/SDK steps.
+5. Only after that: start the art pass and the developer-account/SDK
+   steps (content policy is already researched — see step 6 above).
 
 ## Not blocking a first release, but worth planning
 

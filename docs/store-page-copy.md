@@ -63,14 +63,14 @@ store allows a second category)
 
 ## Content rating notes
 
-Unlike Steam, neither Apple nor Google has direct precedent for this
-theme the way *Schedule I*/*Weedcraft Inc* set on Steam — see
-`docs/mobile-publishing-checklist.md` item 6, this needs an actual
-current-guidelines read before finalizing, not just a rating
-questionnaire answered on autopilot. Copy above already avoids
-real-world drug/brand references and keeps language commercial/neutral
-("strains", "cultivation", "processing") rather than anything more
-explicit — worth keeping that tone consistent in screenshots and any
-preview video too, and worth revisiting harder (fictional substance
-names, further-abstracted framing) if the guidelines read comes back
-stricter than expected.
+This theme does have live mobile precedent — see
+`docs/mobile-publishing-checklist.md` item 6 for the researched
+findings: comparable drug-cultivation/dealing sim games are live on
+both stores today with a 17+/Mature rating and disclosed drug-
+reference content descriptors. Target the same: 17+/Mature, disclose
+honestly in both rating questionnaires, don't try to rate it lower to
+widen the audience. Copy above already avoids real-world drug/brand
+references and keeps language commercial/neutral ("strains",
+"cultivation", "processing") — that's good practice worth keeping
+even though it's not strictly required by what's currently live, and
+worth keeping consistent in screenshots and any preview video too.
