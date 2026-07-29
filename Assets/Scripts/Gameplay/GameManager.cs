@@ -6,8 +6,10 @@ using StrainEmpire.Core.Market;
 using StrainEmpire.Core.Mixing;
 using StrainEmpire.Core.Random;
 using StrainEmpire.Core.Session;
-using StrainEmpire.Gameplay.Save;
+using StrainEmpire.Gameplay.Ads;
 using StrainEmpire.Gameplay.Cloud;
+using StrainEmpire.Gameplay.Save;
+using StrainEmpire.Gameplay.Store;
 using StrainEmpire.Gameplay.UI;
 using UnityEngine;
 using UnityEngine.UI;
@@ -16,10 +18,11 @@ namespace StrainEmpire.Gameplay
 {
     /// Scene entry point: owns the GameSession, ticks it against real time,
     /// builds a minimal (programmer-art) runtime UI, and wires save/load +
-    /// Steam leaderboard/achievement submission. This class and everything
-    /// under UI/ has NOT been run in a Unity Editor/Player in this session
-    /// (none was available) — see docs/unity-project-notes.md for exactly
-    /// what has and hasn't been verified.
+    /// cloud leaderboard/achievement + rewarded-ad/IAP submission. This
+    /// class and everything under UI/ has NOT been run in a Unity
+    /// Editor/Player in this session (none was available) — see
+    /// docs/unity-project-notes.md for exactly what has and hasn't been
+    /// verified.
     public class GameManager : MonoBehaviour
     {
         // UI only renders the first N plots; buying beyond this is still
@@ -31,20 +34,30 @@ namespace StrainEmpire.Gameplay
         private GameSession _session;
         private ILeaderboardService _leaderboard;
         private IAchievementService _achievements;
+        private IAdService _ads;
+        private ICurrencyStoreService _currencyStore;
 
         private Text _cashText;
         private Text _seasonText;
         private Text _empireValueText;
+        private Text _gemsText;
+        private Text _watchAdButtonLabel;
         private readonly List<Text> _plotTexts = new List<Text>();
         private readonly List<Button> _plotButtons = new List<Button>();
+        private readonly List<Button> _instantGrowButtons = new List<Button>();
         private readonly List<Button> _ingredientButtons = new List<Button>();
         private readonly List<Ingredient> _selectedIngredients = new List<Ingredient>();
 
         private float _secondsSinceSeasonStart;
 
-        // One-shot achievement gates. Steam's own SetAchievement call is
-        // idempotent, but these avoid repeat local-fallback log spam and
-        // make "first X" semantics explicit.
+        // Daily rewarded-ad cap (EconomyConfig.MaxRewardedAdsPerDay), tracked
+        // against the real calendar day and persisted via SaveSystem.
+        private int _adsWatchedToday;
+        private string _adsCapDayUtc;
+
+        // One-shot achievement gates. A platform's own achievement-unlock
+        // call is generally idempotent, but these avoid repeat
+        // local-fallback log spam and make "first X" semantics explicit.
         private bool _firstHarvestUnlocked;
         private bool _firstBreedUnlocked;
         private bool _firstTier4Unlocked;
@@ -53,14 +66,19 @@ namespace StrainEmpire.Gameplay
         {
             _leaderboard = LeaderboardServiceFactory.Create();
             _achievements = AchievementServiceFactory.Create();
+            _ads = AdServiceFactory.Create();
+            _currencyStore = CurrencyStoreServiceFactory.Create();
 
             var rng = new SystemRandomSource();
 
             if (SaveSystem.HasSave())
             {
-                (_session, float offlineHours) = SaveSystem.Load(rng, EconomyConfig.OfflineCapBaseHours);
+                (_session, float offlineHours, int adsWatched, string adsCapDay) = SaveSystem.Load(rng, EconomyConfig.OfflineCapBaseHours);
                 if (offlineHours > 0f)
                     _session.AdvanceTime(offlineHours);
+
+                _adsWatchedToday = adsWatched;
+                _adsCapDayUtc = adsCapDay;
             }
             else
             {
@@ -68,7 +86,17 @@ namespace StrainEmpire.Gameplay
                 CreateStarterStrains();
             }
 
+            ResetAdCapIfNewDay();
             BuildUI();
+        }
+
+        private void ResetAdCapIfNewDay()
+        {
+            string today = System.DateTime.UtcNow.ToString("yyyy-MM-dd");
+            if (_adsCapDayUtc == today) return;
+
+            _adsCapDayUtc = today;
+            _adsWatchedToday = 0;
         }
 
         private void CreateStarterStrains()
@@ -93,6 +121,7 @@ namespace StrainEmpire.Gameplay
                 RotateSeason();
             }
 
+            ResetAdCapIfNewDay(); // cheap string compare; catches midnight rollover mid-session
             RefreshUI();
         }
 
@@ -107,11 +136,11 @@ namespace StrainEmpire.Gameplay
             _leaderboard.SubmitScore("alltime_empire_value", empireValue);
         }
 
-        private void OnApplicationQuit() => SaveSystem.Save(_session);
+        private void OnApplicationQuit() => SaveSystem.Save(_session, _adsWatchedToday, _adsCapDayUtc);
 
         private void OnApplicationPause(bool paused)
         {
-            if (paused) SaveSystem.Save(_session);
+            if (paused) SaveSystem.Save(_session, _adsWatchedToday, _adsCapDayUtc);
         }
 
         // ---- UI ----
@@ -122,20 +151,31 @@ namespace StrainEmpire.Gameplay
             Transform root = canvas.transform;
 
             _cashText = RuntimeUIBuilder.CreateText(root, "CashText", "", new Vector2(20, -20), new Vector2(400, 30));
+            _gemsText = RuntimeUIBuilder.CreateText(root, "GemsText", "", new Vector2(430, -20), new Vector2(200, 30));
             _seasonText = RuntimeUIBuilder.CreateText(root, "SeasonText", "", new Vector2(20, -55), new Vector2(400, 30));
             _empireValueText = RuntimeUIBuilder.CreateText(root, "EmpireValueText", "", new Vector2(20, -90), new Vector2(400, 30));
 
             RuntimeUIBuilder.CreateButton(root, "Buy Plot", new Vector2(20, -130), new Vector2(160, 40), OnBuyPlotClicked);
             RuntimeUIBuilder.CreateButton(root, "Breed First Two", new Vector2(190, -130), new Vector2(200, 40), OnBreedClicked);
+            Button watchAdButton = RuntimeUIBuilder.CreateButton(root, "Watch Ad", new Vector2(400, -130), new Vector2(160, 40), OnWatchAdClicked);
+            _watchAdButtonLabel = watchAdButton.GetComponentInChildren<Text>();
+
+            for (int i = 0; i < GemPackCatalog.All.Count; i++)
+            {
+                GemPack pack = GemPackCatalog.All[i];
+                RuntimeUIBuilder.CreateButton(root, $"Buy {pack.GemAmount}", new Vector2(570 + i * 130, -130), new Vector2(120, 40), () => OnBuyGemsClicked(pack));
+            }
 
             for (int i = 0; i < MaxDisplayedPlots; i++)
             {
                 float y = -190 - i * 45;
-                Text plotText = RuntimeUIBuilder.CreateText(root, $"PlotText_{i}", "", new Vector2(20, y), new Vector2(500, 30));
+                Text plotText = RuntimeUIBuilder.CreateText(root, $"PlotText_{i}", "", new Vector2(20, y), new Vector2(430, 30));
                 int plotIndex = i;
-                Button plotButton = RuntimeUIBuilder.CreateButton(root, "Action", new Vector2(540, y), new Vector2(150, 30), () => OnPlotActionClicked(plotIndex));
+                Button plotButton = RuntimeUIBuilder.CreateButton(root, "Action", new Vector2(460, y), new Vector2(120, 30), () => OnPlotActionClicked(plotIndex));
+                Button instantGrowButton = RuntimeUIBuilder.CreateButton(root, "Instant Grow", new Vector2(590, y), new Vector2(150, 30), () => OnInstantGrowClicked(plotIndex));
                 _plotTexts.Add(plotText);
                 _plotButtons.Add(plotButton);
+                _instantGrowButtons.Add(instantGrowButton);
             }
 
             float ingredientsY = -190 - MaxDisplayedPlots * 45 - 20;
@@ -154,14 +194,21 @@ namespace StrainEmpire.Gameplay
         private void RefreshUI()
         {
             _cashText.text = $"Cash: {_session.Cash:0}";
+            _gemsText.text = $"Gems: {_session.Gems:0}";
             _seasonText.text = $"Season: {_session.CurrentSeason}";
             _empireValueText.text = $"Empire Value: {_session.ComputeEmpireValue():0}";
+
+            bool adAvailable = _ads.IsRewardedAdReady && _adsWatchedToday < EconomyConfig.MaxRewardedAdsPerDay;
+            _watchAdButtonLabel.text = adAvailable
+                ? $"Watch Ad ({_adsWatchedToday}/{EconomyConfig.MaxRewardedAdsPerDay})"
+                : $"Ad limit reached ({_adsWatchedToday}/{EconomyConfig.MaxRewardedAdsPerDay})";
 
             for (int i = 0; i < MaxDisplayedPlots; i++)
             {
                 bool exists = i < _session.Plots.Count;
                 _plotTexts[i].gameObject.SetActive(exists);
                 _plotButtons[i].gameObject.SetActive(exists);
+                _instantGrowButtons[i].gameObject.SetActive(exists);
                 if (!exists) continue;
 
                 GrowPlot plot = _session.Plots[i];
@@ -169,17 +216,23 @@ namespace StrainEmpire.Gameplay
                 {
                     _plotTexts[i].text = $"Plot {i}: empty";
                     _plotButtons[i].GetComponentInChildren<Text>().text = "Plant";
+                    _instantGrowButtons[i].gameObject.SetActive(false);
                 }
                 else if (!plot.IsMature)
                 {
                     float pct = Mathf.Clamp01(plot.ElapsedHours / plot.PlantedStrain.GrowTimeHours) * 100f;
                     _plotTexts[i].text = $"Plot {i}: {plot.PlantedStrain.Name} growing ({pct:0}%)";
                     _plotButtons[i].GetComponentInChildren<Text>().text = "...";
+
+                    float remainingHours = plot.PlantedStrain.GrowTimeHours - plot.ElapsedHours;
+                    int gemCost = Mathf.CeilToInt(remainingHours * EconomyConfig.InstantGrowGemsCostPerHour);
+                    _instantGrowButtons[i].GetComponentInChildren<Text>().text = $"Skip ({gemCost} Gems)";
                 }
                 else
                 {
                     _plotTexts[i].text = $"Plot {i}: {plot.PlantedStrain.Name} ready!";
                     _plotButtons[i].GetComponentInChildren<Text>().text = "Sell";
+                    _instantGrowButtons[i].gameObject.SetActive(false);
                 }
             }
 
@@ -195,6 +248,24 @@ namespace StrainEmpire.Gameplay
         // ---- Actions ----
 
         private void OnBuyPlotClicked() => _session.BuyPlot();
+
+        private void OnWatchAdClicked()
+        {
+            if (!_ads.IsRewardedAdReady || _adsWatchedToday >= EconomyConfig.MaxRewardedAdsPerDay) return;
+
+            _ads.ShowRewardedAd(() =>
+            {
+                _session.AddGems(EconomyConfig.GemsPerRewardedAd);
+                _adsWatchedToday++;
+            });
+        }
+
+        private void OnBuyGemsClicked(GemPack pack)
+        {
+            _currencyStore.Purchase(pack, gemsGranted => _session.AddGems(gemsGranted));
+        }
+
+        private void OnInstantGrowClicked(int plotIndex) => _session.InstantGrow(plotIndex);
 
         private void OnBreedClicked()
         {

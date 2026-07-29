@@ -29,6 +29,7 @@ namespace StrainEmpire.Gameplay.Save
     public class SaveData
     {
         public float cash;
+        public float gems;
         public List<PlotData> plots = new List<PlotData>();
         public List<StrainData> strainInventory = new List<StrainData>();
         public string currentSeason; // SeasonArchetype enum name
@@ -36,5 +37,9 @@ namespace StrainEmpire.Gameplay.Save
 
         /// ISO 8601 UTC timestamp, used to compute offline catch-up time on next load.
         public string lastSavedUtc;
+
+        // Daily rewarded-ad cap tracking (EconomyConfig.MaxRewardedAdsPerDay).
+        public int adsWatchedToday;
+        public string adsCapDayUtc; // "yyyy-MM-dd" — reset when this no longer matches today
     }
 }

@@ -13,12 +13,12 @@ using UnityEngine;
 namespace StrainEmpire.Gameplay.Save
 {
     /// Local JSON save (UnityEngine.JsonUtility) under Application.persistentDataPath.
-    /// If Steam Cloud is configured for that folder in the Steamworks partner
-    /// site (App Admin > Cloud), this file syncs automatically with no extra
-    /// code — see docs/steam-publishing-checklist.md. Converts to/from the
-    /// Core GameSession via GameSession.Restore / GrowPlot.Restore, so the
-    /// actual game-state logic stays in the tested, UnityEngine-independent
-    /// Core layer.
+    /// Cloud-sync-compatible: if the platform's save-sync (Steam Cloud,
+    /// iCloud, Google Play saved games) is pointed at this folder, it
+    /// syncs with no extra code — see docs/mobile-publishing-checklist.md.
+    /// Converts to/from the Core GameSession via GameSession.Restore /
+    /// GrowPlot.Restore, so the actual game-state logic stays in the
+    /// tested, UnityEngine-independent Core layer.
     public static class SaveSystem
     {
         private const string FileName = "savegame.json";
@@ -27,14 +27,17 @@ namespace StrainEmpire.Gameplay.Save
 
         public static bool HasSave() => File.Exists(FilePath);
 
-        public static void Save(GameSession session)
+        public static void Save(GameSession session, int adsWatchedToday, string adsCapDayUtc)
         {
             var data = new SaveData
             {
                 cash = session.Cash,
+                gems = session.Gems,
                 currentSeason = session.CurrentSeason.ToString(),
                 nextStrainId = GetNextStrainId(session),
                 lastSavedUtc = DateTime.UtcNow.ToString("o"),
+                adsWatchedToday = adsWatchedToday,
+                adsCapDayUtc = adsCapDayUtc,
             };
 
             foreach (GrowPlot plot in session.Plots)
@@ -54,10 +57,11 @@ namespace StrainEmpire.Gameplay.Save
             File.WriteAllText(FilePath, json);
         }
 
-        /// Returns the restored session and the real-time hours elapsed
-        /// since the save (already capped by the offline cap) so the caller
-        /// can immediately AdvanceTime() with it.
-        public static (GameSession session, float offlineCatchUpHours) Load(IRandomSource rng, int offlineCapHours)
+        /// Returns the restored session, the real-time hours elapsed since
+        /// the save (already capped by the offline cap, ready to feed
+        /// straight into AdvanceTime()), and the saved daily ad-watch cap
+        /// state (the caller resets it if the calendar day has rolled over).
+        public static (GameSession session, float offlineCatchUpHours, int adsWatchedToday, string adsCapDayUtc) Load(IRandomSource rng, int offlineCapHours)
         {
             string json = File.ReadAllText(FilePath);
             SaveData data = JsonUtility.FromJson<SaveData>(json);
@@ -72,14 +76,14 @@ namespace StrainEmpire.Gameplay.Save
             List<Strain> inventory = data.strainInventory.Select(FromStrainData).ToList();
             var season = (SeasonArchetype)Enum.Parse(typeof(SeasonArchetype), data.currentSeason);
 
-            GameSession session = GameSession.Restore(rng, data.cash, plots, inventory, season, data.nextStrainId);
+            GameSession session = GameSession.Restore(rng, data.cash, data.gems, plots, inventory, season, data.nextStrainId);
 
             double elapsedRealSeconds = 0;
             if (DateTime.TryParse(data.lastSavedUtc, null, System.Globalization.DateTimeStyles.RoundtripKind, out DateTime lastSaved))
                 elapsedRealSeconds = (DateTime.UtcNow - lastSaved).TotalSeconds;
 
             float catchUpHours = OfflineProgressCalculator.ComputeCatchUpHours(elapsedRealSeconds, offlineCapHours);
-            return (session, catchUpHours);
+            return (session, catchUpHours, data.adsWatchedToday, data.adsCapDayUtc);
         }
 
         private static int GetNextStrainId(GameSession session)
