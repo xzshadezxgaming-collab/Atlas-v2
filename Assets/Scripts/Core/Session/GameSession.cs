@@ -15,6 +15,7 @@ namespace StrainEmpire.Core.Session
     public class GameSession
     {
         public float Cash { get; private set; }
+        public float Gems { get; private set; }
         public List<GrowPlot> Plots { get; } = new List<GrowPlot>();
         public List<Strain> StrainInventory { get; } = new List<Strain>();
         public SeasonArchetype CurrentSeason { get; private set; }
@@ -45,6 +46,7 @@ namespace StrainEmpire.Core.Session
         public static GameSession Restore(
             IRandomSource rng,
             float cash,
+            float gems,
             IEnumerable<GrowPlot> plots,
             IEnumerable<Strain> strainInventory,
             SeasonArchetype currentSeason,
@@ -53,6 +55,7 @@ namespace StrainEmpire.Core.Session
             var session = new GameSession(rng, currentSeason)
             {
                 Cash = cash,
+                Gems = gems,
             };
             session.Plots.Clear();
             session.Plots.AddRange(plots);
@@ -164,13 +167,39 @@ namespace StrainEmpire.Core.Session
             return seeds;
         }
 
+        /// From a rewarded ad or a Gem-pack IAP — the source doesn't matter
+        /// to Core, only that Gems went up. Per-day ad-watch capping is a
+        /// real-clock concern handled in Gameplay (GameManager), not here.
+        public void AddGems(float amount) => Gems += amount;
+
+        /// Skips a plot's remaining grow time immediately. Costs
+        /// ceil(remaining hours * InstantGrowGemsCostPerHour) Gems — see
+        /// docs/systems-design.md "Gems & Speedups". Never changes the
+        /// strain's stats, only how soon it's ready; returns false if
+        /// already mature, unplanted, or Gems are insufficient.
+        public bool InstantGrow(int plotIndex)
+        {
+            if (plotIndex < 0 || plotIndex >= Plots.Count) return false;
+
+            GrowPlot plot = Plots[plotIndex];
+            if (!plot.IsPlanted || plot.IsMature) return false;
+
+            float remainingHours = plot.PlantedStrain.GrowTimeHours - plot.ElapsedHours;
+            float cost = (float)System.Math.Ceiling(remainingHours * EconomyConfig.InstantGrowGemsCostPerHour);
+            if (Gems < cost) return false;
+
+            Gems -= cost;
+            plot.Advance(remainingHours);
+            return true;
+        }
+
         public void AdvanceSeason(SeasonArchetype nextArchetype)
         {
             CurrentSeason = nextArchetype;
             CurrentDemand = MarketSystem.GetDemandMultipliers(nextArchetype, _rng);
         }
 
-        /// The Steam Leaderboard score. Counts strains both in inventory and
+        /// The cloud leaderboard score. Counts strains both in inventory and
         /// currently planted.
         public float ComputeEmpireValue()
         {

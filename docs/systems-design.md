@@ -123,6 +123,29 @@ not luck, drives the score.
 - Offline accrual cap: 8h base, extendable to 24h via the QoL MTX pass
   (rate unchanged — see `GAME_CONCEPT.md` monetization section)
 
+## Gems & Speedups
+
+Gems are the buyable currency (via IAP or rewarded ads). They only
+ever compress time — see `GAME_CONCEPT.md` "Competitive Layer" for why
+that boundary matters.
+
+- **Rewarded ad**: grants `20` Gems, capped at `5` ads per real day
+  (100 Gems/day max from ads alone)
+- **Instant Grow**: skips a plot's remaining grow time immediately.
+  Cost = `ceil(remaining hours × 5)` Gems — e.g. skipping 10 remaining
+  hours costs 50 Gems, i.e. exactly 2.5 rewarded ads' worth
+- IAP Gem packs (placeholder pricing — actual tiers are a storefront
+  business decision, set in the App Store Connect / Play Console
+  listings, not in code):
+  - Small: 100 Gems — $0.99
+  - Medium: 550 Gems (10% bonus) — $4.99
+  - Large: 1200 Gems (20% bonus) — $9.99
+
+No Gem spend ever changes GeneticsTier, Quality, or DemandScore — it
+only advances a plot's `ElapsedHours` to its `GrowTimeHours`, so the
+ceiling every player can reach is identical; Gems only change how fast
+they get there.
+
 ## Leaderboard Score
 
 ```
@@ -131,9 +154,10 @@ Empire Value = Cash on hand
              + Σ (strain genetics tier × 500)
 ```
 
-Submitted as the Steam Leaderboard score at season end (season ladder)
-and tracked as a running peak (all-time hall of fame), per
-`GAME_CONCEPT.md`.
+Submitted to the shared cloud leaderboard (Firebase-backed — see
+`GAME_CONCEPT.md` "Tech Stack" for why Steam Leaderboards' single-
+platform model doesn't carry over to iOS+Android) at season end
+(season ladder) and tracked as a running peak (all-time hall of fame).
 
 ## Tuning Notes
 

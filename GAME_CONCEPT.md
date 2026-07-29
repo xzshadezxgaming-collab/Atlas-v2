@@ -61,67 +61,101 @@ and the *seasonal demand table* (visible to the player) is what
 determines how well that profile sells that week. Skill = matching
 your mix to current demand, not luck.
 
+## Platform
+
+**Mobile (iOS + Android)**, not Steam. Idle games with short daily
+touchpoints, offline progress, and rewarded-ad speedups fit mobile
+play patterns much better than a PC storefront — that's the actual
+reason for the switch, not just monetization preference.
+
+Mobile has no single unified leaderboard service the way Steam does
+(Game Center and Google Play Games Services don't share data with
+each other), so the competitive layer moves to a lightweight cloud
+backend (Firebase) that both platforms write to — see "Competitive
+Layer" below.
+
 ## Competitive Layer
 
-Leaderboards via **Steam Leaderboards** (Steamworks.NET — native,
-free, no custom backend):
+Cloud leaderboard (Firebase-backed, one shared table across iOS +
+Android — see "Tech Stack"):
 
 - **Season ladder (resets weekly, matching the demand-shift cycle):**
-  ranks by Empire Value gained *this season*. Because demand resets
-  each week, players who read the new season's trends well can climb
-  regardless of how long they've played overall.
-- **All-time hall of fame:** lifetime peak Empire Value / total sales —
-  slower-moving, for long-term operations.
+  ranks by Empire Value gained *this season*.
+- **All-time hall of fame:** lifetime peak Empire Value / total sales.
 
-Anti-pay-to-win guardrail: nothing purchasable increases Cash,
-Genetics tier, or Empire Value directly. MTX is cosmetic/QoL only (see
-below), so climbing the ladder is always a function of breeding and
-market-reading skill.
+Anti-pay-to-win guardrail, adapted for mobile: nothing purchasable —
+ad-watch or Gems — ever increases Cash, Genetics tier, or a sale's
+price/quality directly. Every speedup is **time compression only**: it
+lets you reach the same outcome sooner, not a better outcome. Honest
+caveat, not papered over: because seasons are a fixed real-time
+window, compressing time still lets a spender or heavy ad-watcher fit
+more grow/sell cycles into that window than a patient F2P player —
+that's an inherent tension in any idle game with paid speedups plus a
+timed leaderboard, not something unique to this design, and not fully
+eliminable while keeping speedups meaningful. Ad-watching is free and
+equally available to every player regardless of spend, which keeps the
+paid path from being the *only* way to compress time.
 
-## Monetization (minimal, Steam-review-safe)
+## Monetization
 
-- Cosmetic packaging/branding, grow-room decor and themes (one-time
-  purchases, purely visual)
-- "Extended offline cap" QoL pass — raises the ceiling on offline
-  growth/earnings, doesn't change growth rate or market odds
-- Small supporter pack — cosmetic flair + name in in-game credits
-- No ads, no loot boxes, no player marketplace, no real-money currency
-  that touches another player's account in any way
+- **Rewarded ads (opt-in only, never forced):** watching a video grants
+  Gems, spendable on instant-grow speedups. Capped per day so it stays
+  "occasional boost," not "watch ads constantly."
+- **Gems (buyable currency):** same Gems ads grant, purchasable via IAP
+  for players who'd rather pay than watch. Spent on instant-grow
+  speedups and cosmetics — never on anything that raises the
+  Cash/Genetics/price ceiling.
+- Cosmetic packaging/branding, grow-room decor and themes
+- No loot boxes, no gacha, no player marketplace, no real-money
+  currency that touches another player's account
 
 ## Tech Stack
 
 - **Unity** (2022 LTS or newer), 2D — grow-room/plot views, simple UI-
-  driven mixing screen
-- **Steamworks.NET** for: Steam Leaderboards (season + all-time),
-  Steam Cloud (save sync), Steam Achievements (genetics milestones,
-  season ranks), Steam Stats
+  driven mixing screen; Android + iOS build targets
+- **Firebase** (or equivalent) for the shared cross-platform
+  leaderboard and achievements — chosen specifically because Game
+  Center/Google Play Games Services don't share data with each other
+- **Unity LevelPlay/Ads** for rewarded video ads, **Unity IAP** for
+  Gems purchases — both third-party/official packages, integrated
+  behind an interface with a safe local fallback so the project
+  builds without them present (same pattern used for the earlier Steam
+  integration)
 - Idle/offline-time math and the seasonal demand table are pure C#, no
-  server needed — fully offline-capable except leaderboard submission
-- Save format: local JSON + Steam Cloud sync; no external DB required
+  server needed for the core loop — fully offline-capable except
+  leaderboard submission and ad/IAP calls
+- Save format: local JSON, cloud-sync-compatible
 
 ## MVP Scope (first playable milestone)
 
 1. One grow room, 3 starter strains, manual mix + sell
 2. Cash → buy more plots / faster growth
-3. One breeding pair mechanic → produces a new strain with blended
-   genetics (proves the long-horizon hook)
+3. One breeding pair mechanic → produces 3 seeds with blended genetics
+   (proves the long-horizon hook)
 4. A single seasonal demand table that rotates once, so the "read the
    market" loop is provable
-5. Steam Leaderboard integration: submit Empire Value at season end,
+5. Gems + instant-grow speedup, with a local-fallback ad/IAP service so
+   the loop is testable before real ad/IAP SDKs are wired in
+6. Cloud leaderboard integration: submit Empire Value at season end,
    show top 10 + player's rank
-6. Offline growth calculation on relaunch
+7. Offline growth calculation on relaunch
 
 Everything past this (full ingredient tree, cosmetics, achievements,
 art pass, more seasons) layers on top once the loop is proven fun.
 
 ## Open Questions / Next Steps
 
-- Store-page/content rating considerations: fictional framing,
-  appropriate age rating and content warnings, per Steam's existing
-  precedent for this theme
+- **Content-policy risk (mobile-specific, real):** Apple and Google
+  are both stricter than Steam about drug-themed content — neither has
+  Steam's precedent (*Schedule I*, *Weedcraft Inc*). This needs an
+  actual read of the current App Store Review Guidelines and Google
+  Play Developer Policy before investing in a full art/marketing pass,
+  and may call for softening real-world framing further (fictional
+  substance names, avoid real-drug branding) specifically for the
+  mobile listing. See `docs/mobile-publishing-checklist.md`.
 - Pick a visual style (pixel art vs. flat vector/isometric) — affects
   art scope for grow rooms
 - Design the actual ingredient/effect-tag table and season-to-season
   demand rotation rules
-- Scaffold the actual Unity project structure and Steamworks.NET
+- Scaffold the actual Unity project structure and ad/IAP/leaderboard
   integration once the loop above is confirmed

@@ -135,12 +135,14 @@ namespace StrainEmpire.Core.Tests
             var restored = GameSession.Restore(
                 new FakeRandomSource(new[] { 0.99 }),
                 original.Cash,
+                gems: 42f,
                 original.Plots,
                 original.StrainInventory,
                 original.CurrentSeason,
                 nextStrainId: 99);
 
             Assert.Equal(original.Cash, restored.Cash);
+            Assert.Equal(42f, restored.Gems);
             Assert.Equal(original.Plots.Count, restored.Plots.Count);
             Assert.True(restored.Plots[0].IsPlanted);
             Assert.Equal(5f, restored.Plots[0].ElapsedHours);
@@ -150,6 +152,51 @@ namespace StrainEmpire.Core.Tests
             IReadOnlyList<Strain> nextSeeds = restored.Breed(planted, bench, "Next");
             Assert.Equal("strain-99", nextSeeds[0].Id);
             Assert.Equal("strain-101", nextSeeds[2].Id);
+        }
+
+        [Fact]
+        public void AddGems_IncreasesGemsBalance()
+        {
+            var session = new GameSession(new FakeRandomSource(new[] { 0.99 }), SeasonArchetype.HeavyHitterWeek);
+            Assert.Equal(0f, session.Gems);
+
+            session.AddGems(20f);
+            session.AddGems(20f);
+
+            Assert.Equal(40f, session.Gems);
+        }
+
+        [Fact]
+        public void InstantGrow_SkipsRemainingTimeAndChargesExpectedGems()
+        {
+            var session = new GameSession(new FakeRandomSource(new[] { 0.99 }), SeasonArchetype.HeavyHitterWeek);
+            Strain strain = session.CreateStarterStrain("Test", potency: 40, yield: 40, speed: 40, resilience: 40, relaxation: 0, energy: 0, focus: 0);
+            session.Plant(0, strain); // GrowTimeHours = 4 + (40/100)*20 = 12
+            session.AdvanceTime(2f); // 10 hours remaining
+
+            session.AddGems(49f); // one short of the 50 Gems needed (ceil(10*5))
+            Assert.False(session.InstantGrow(0));
+            Assert.False(session.Plots[0].IsMature);
+
+            session.AddGems(1f); // now exactly 50
+            Assert.True(session.InstantGrow(0));
+
+            Assert.True(session.Plots[0].IsMature);
+            Assert.Equal(0f, session.Gems);
+        }
+
+        [Fact]
+        public void InstantGrow_OnAlreadyMaturePlot_ReturnsFalseAndChargesNothing()
+        {
+            var session = new GameSession(new FakeRandomSource(new[] { 0.99 }), SeasonArchetype.HeavyHitterWeek);
+            Strain strain = session.CreateStarterStrain("Test", potency: 0, yield: 0, speed: 0, resilience: 0, relaxation: 0, energy: 0, focus: 0);
+            session.Plant(0, strain); // GrowTimeHours = 4
+            session.AdvanceTime(4f);
+            session.AddGems(1000f);
+
+            Assert.True(session.Plots[0].IsMature);
+            Assert.False(session.InstantGrow(0));
+            Assert.Equal(1000f, session.Gems);
         }
     }
 }
