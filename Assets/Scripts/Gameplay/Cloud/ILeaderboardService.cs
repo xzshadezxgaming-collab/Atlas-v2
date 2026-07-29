@@ -1,4 +1,4 @@
-namespace StrainEmpire.Gameplay.Steam
+namespace StrainEmpire.Gameplay.Cloud
 {
     /// Abstraction over Steam Leaderboards so GameManager never needs to
     /// know whether the Steamworks.NET plugin is actually installed.

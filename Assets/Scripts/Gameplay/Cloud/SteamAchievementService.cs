@@ -2,7 +2,7 @@
 using Steamworks;
 using UnityEngine;
 
-namespace StrainEmpire.Gameplay.Steam
+namespace StrainEmpire.Gameplay.Cloud
 {
     public class SteamAchievementService : IAchievementService
     {

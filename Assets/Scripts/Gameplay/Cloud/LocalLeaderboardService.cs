@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace StrainEmpire.Gameplay.Steam
+namespace StrainEmpire.Gameplay.Cloud
 {
     /// Fallback used until the Steamworks.NET plugin is imported and the
     /// STEAMWORKS_NET scripting define symbol is set (Project Settings >

@@ -1,10 +1,12 @@
-namespace StrainEmpire.Gameplay.Steam
+namespace StrainEmpire.Gameplay.Cloud
 {
     public static class AchievementServiceFactory
     {
         public static IAchievementService Create()
         {
-#if STEAMWORKS_NET
+#if FIREBASE_ENABLED
+            return new FirebaseAchievementService();
+#elif STEAMWORKS_NET
             return new SteamAchievementService();
 #else
             return new LocalAchievementService();

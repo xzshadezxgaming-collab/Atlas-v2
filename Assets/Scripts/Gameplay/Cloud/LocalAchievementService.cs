@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace StrainEmpire.Gameplay.Steam
+namespace StrainEmpire.Gameplay.Cloud
 {
     public class LocalAchievementService : IAchievementService
     {

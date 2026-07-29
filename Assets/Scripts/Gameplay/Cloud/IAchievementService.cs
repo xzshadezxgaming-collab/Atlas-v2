@@ -1,4 +1,4 @@
-namespace StrainEmpire.Gameplay.Steam
+namespace StrainEmpire.Gameplay.Cloud
 {
     public interface IAchievementService
     {
