@@ -23,8 +23,9 @@ publishing" has a concrete, checkable meaning instead of staying vague.
       `ProjectSettings/`), MVP scene creation via an Editor menu
       command (`Strain Empire > Create MVP Scene`)
 - [x] Gameplay wiring: `GameManager` ticking the session against real
-      time, a functional (placeholder-art) runtime UI, local save/load
-      with offline progress on relaunch
+      time, a functional (placeholder-art) runtime UI — including the
+      ingredient-mixing toggle row, not just plant/harvest/breed —
+      local save/load with offline progress on relaunch
 - [x] Steam integration code: leaderboard submission and achievement
       unlocking behind an interface, with a working local fallback and
       a `#if STEAMWORKS_NET`-guarded real implementation ready to
@@ -37,8 +38,10 @@ publishing" has a concrete, checkable meaning instead of staying vague.
    business transaction requiring your identity/payment info.
 2. **Get your App ID**, generate `steam_appid.txt` for local testing,
    and create the two leaderboards this code already calls
-   (`season_empire_value`, `alltime_empire_value`) plus any
-   achievement API names, under App Admin > Stats & Achievements.
+   (`season_empire_value`, `alltime_empire_value`) plus the three
+   achievement API names the code already unlocks at real milestones
+   (`first_harvest`, `first_breeding`, `first_tier4_strain`), under
+   App Admin > Stats & Achievements — the names must match exactly.
 3. **Import Steamworks.NET** into the Unity project (see
    `docs/unity-project-notes.md` "Steam integration" for the exact
    steps) and define `STEAMWORKS_NET` in Player Settings to switch
@@ -85,10 +88,9 @@ first thing to do on opening the project is:
 ## Not blocking a first release, but worth planning
 
 - Real UI/UX art pass (see above — actually required for the store
-  page, so this is more "next" than "later")
-- Ingredient-selection UI (harvesting currently auto-sells with no
-  ingredients — the mixing system is fully implemented and tested in
-  Core, it just has no UI hook yet)
+  page, so this is more "next" than "later"). The ingredient-mixing,
+  breeding, and plot loop are all functionally wired now (programmer
+  art), so this is a visual pass, not new gameplay wiring.
 - Sound/music
 - Steam Cloud explicit config (local save file is already
   Cloud-sync-compatible if you point Steam's folder-based sync at

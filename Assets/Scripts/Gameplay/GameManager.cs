@@ -37,8 +37,17 @@ namespace StrainEmpire.Gameplay
         private Text _empireValueText;
         private readonly List<Text> _plotTexts = new List<Text>();
         private readonly List<Button> _plotButtons = new List<Button>();
+        private readonly List<Button> _ingredientButtons = new List<Button>();
+        private readonly List<Ingredient> _selectedIngredients = new List<Ingredient>();
 
         private float _secondsSinceSeasonStart;
+
+        // One-shot achievement gates. Steam's own SetAchievement call is
+        // idempotent, but these avoid repeat local-fallback log spam and
+        // make "first X" semantics explicit.
+        private bool _firstHarvestUnlocked;
+        private bool _firstBreedUnlocked;
+        private bool _firstTier4Unlocked;
 
         private void Awake()
         {
@@ -65,8 +74,8 @@ namespace StrainEmpire.Gameplay
         private void CreateStarterStrains()
         {
             // 3 starter strains per docs/systems-design.md MVP scope, each
-            // leaning toward a different effect tag so market-matching has
-            // some texture even before the ingredient-mixing UI exists.
+            // leaning toward a different effect tag so market-matching (via
+            // the ingredient mix) has real texture from the start.
             _session.CreateStarterStrain("Emberleaf", potency: 35, yield: 25, speed: 25, resilience: 20, relaxation: 10, energy: 15, focus: 10);
             _session.CreateStarterStrain("Mossglow", potency: 20, yield: 25, speed: 25, resilience: 20, relaxation: 30, energy: 10, focus: 15);
             _session.CreateStarterStrain("Sunspire", potency: 20, yield: 25, speed: 25, resilience: 20, relaxation: 10, energy: 30, focus: 10);
@@ -128,6 +137,18 @@ namespace StrainEmpire.Gameplay
                 _plotTexts.Add(plotText);
                 _plotButtons.Add(plotButton);
             }
+
+            float ingredientsY = -190 - MaxDisplayedPlots * 45 - 20;
+            RuntimeUIBuilder.CreateText(root, "IngredientsLabel", $"Mix (up to {MixingSystem.MaxIngredientSlots}) — applies to the next sale:", new Vector2(20, ingredientsY), new Vector2(500, 25), fontSize: 16);
+
+            for (int i = 0; i < IngredientDatabase.All.Count; i++)
+            {
+                Ingredient ingredient = IngredientDatabase.All[i];
+                float x = 20 + (i % 5) * 145;
+                float y = ingredientsY - 35 - (i / 5) * 40;
+                Button button = RuntimeUIBuilder.CreateButton(root, ingredient.Name, new Vector2(x, y), new Vector2(140, 32), () => OnIngredientToggled(ingredient));
+                _ingredientButtons.Add(button);
+            }
         }
 
         private void RefreshUI()
@@ -161,6 +182,14 @@ namespace StrainEmpire.Gameplay
                     _plotButtons[i].GetComponentInChildren<Text>().text = "Sell";
                 }
             }
+
+            for (int i = 0; i < IngredientDatabase.All.Count; i++)
+            {
+                bool selected = _selectedIngredients.Contains(IngredientDatabase.All[i]);
+                _ingredientButtons[i].GetComponent<Image>().color = selected
+                    ? new Color(0.25f, 0.55f, 0.3f, 1f)
+                    : new Color(0.2f, 0.2f, 0.25f, 1f);
+            }
         }
 
         // ---- Actions ----
@@ -172,7 +201,26 @@ namespace StrainEmpire.Gameplay
             if (!_session.CanBreed || _session.StrainInventory.Count < 2) return;
             Strain a = _session.StrainInventory[0];
             Strain b = _session.StrainInventory[1];
-            _session.Breed(a, b, $"{a.Name}x{b.Name}");
+            IReadOnlyList<Strain> seeds = _session.Breed(a, b, $"{a.Name}x{b.Name}");
+            if (seeds == null) return;
+
+            if (!_firstBreedUnlocked)
+            {
+                _firstBreedUnlocked = true;
+                _achievements.Unlock("first_breeding");
+            }
+        }
+
+        private void OnIngredientToggled(Ingredient ingredient)
+        {
+            if (_selectedIngredients.Contains(ingredient))
+            {
+                _selectedIngredients.Remove(ingredient);
+                return;
+            }
+
+            if (_selectedIngredients.Count >= MixingSystem.MaxIngredientSlots) return; // full — deselect one first
+            _selectedIngredients.Add(ingredient);
         }
 
         private void OnPlotActionClicked(int plotIndex)
@@ -187,9 +235,21 @@ namespace StrainEmpire.Gameplay
             }
             else if (plot.IsMature)
             {
-                // MVP: sells with no ingredients. Mixing UI (ingredient
-                // selection) is a follow-up — see docs/systems-design.md.
-                _session.HarvestMixAndSell(plotIndex, new List<Ingredient>());
+                Strain harvestedTraits = plot.PlantedStrain; // read before HarvestMixAndSell clears the plot
+                float revenue = _session.HarvestMixAndSell(plotIndex, _selectedIngredients);
+                if (revenue <= 0f) return;
+
+                if (!_firstHarvestUnlocked)
+                {
+                    _firstHarvestUnlocked = true;
+                    _achievements.Unlock("first_harvest");
+                }
+
+                if (!_firstTier4Unlocked && harvestedTraits.GeneticsTier >= 4)
+                {
+                    _firstTier4Unlocked = true;
+                    _achievements.Unlock("first_tier4_strain");
+                }
             }
         }
     }
