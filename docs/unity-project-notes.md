@@ -149,10 +149,13 @@ compilation until you define that symbol.
 
 To turn on the real mobile stack:
 
-1. **Firebase**: create a Firebase project, add iOS + Android apps to
-   it, import the Firebase Unity SDK (Auth + Realtime Database),
-   drop in `GoogleService-Info.plist` / `google-services.json`, define
-   `FIREBASE_ENABLED` in Player Settings > Scripting Define Symbols.
+1. **Firebase**: create a Firebase project, add an Android app using
+   package name `com.strainempire.idlecultivator` (see
+   `docs/mobile-publishing-checklist.md` "Package name" — add an iOS
+   app too if/when that release happens), import the Firebase Unity
+   SDK (Auth + Realtime Database), drop in `google-services.json` /
+   `GoogleService-Info.plist`, define `FIREBASE_ENABLED` in Player
+   Settings > Scripting Define Symbols.
 2. **Ads**: import Unity LevelPlay/Ads (or swap in AdMob if preferred
    — `IAdService` is the abstraction point either way), register ad
    units, update the placeholder IDs in `UnityAdsRewardedService`

@@ -38,18 +38,38 @@ alongside mobile, but it's not the priority path.
       compile — see `docs/unity-project-notes.md` "What's compile-
       checked") instead of sitting completely unverified
 
-## Blocked on your developer accounts (I can't do these)
+## Package name
 
-1. **Apple Developer Program** ($99/year) and **Google Play Console**
-   developer account ($25 one-time) — real business transactions
-   requiring your identity/payment info.
-2. **Create the app listings**: bundle ID / package name registration,
-   App Store Connect and Play Console app records.
-3. **Firebase project setup**: create a Firebase project, add iOS and
-   Android apps to it, download `GoogleService-Info.plist` /
+**`com.strainempire.idlecultivator`** — picked now so it's fixed
+before it touches Play Console, Firebase, or Unity Player Settings,
+since changing it later means a new app record (Android package names
+are immutable once published). This is a naming convention, not a
+domain you need to own — completely standard for indie/solo
+publishing. If you'd rather use something else, swap it everywhere
+before creating the Play Console app record; nothing below depends on
+this exact string, just on it being consistent.
+
+## Status
+
+1. ~~Apple Developer Program ($99/year) and Google Play Console
+   developer account ($25 one-time)~~ — **Google Play Console: done.**
+   Apple Developer Program still needed if/when an iOS release happens
+   — not required to ship the Android version first.
+2. **Create the Play Console app record** (next concrete step, doable
+   now): Play Console > Create app — app name (e.g. "Strain Empire:
+   Idle Cultivator"), default language, Game category, Free. Use the
+   package name above when it's asked for (usually at first upload,
+   not app creation — Play Console derives it from the first AAB
+   you upload, so this is really "make sure Unity's Player Settings
+   package name matches the value above before your first build/
+   upload," not something to type into Play Console directly right
+   now).
+3. **Firebase project setup**: create a Firebase project, add an
+   Android app to it using the package name above, download
    `google-services.json`, import the Firebase Unity SDK (Auth +
    Realtime Database), and define `FIREBASE_ENABLED` in Player
    Settings — see `docs/unity-project-notes.md` "Mobile integration."
+   Can be done now with the Google account that's sorted.
 4. **Ad network setup**: create a Unity LevelPlay/Ads (or AdMob)
    account, register ad units matching the placeholder IDs in
    `UnityAdsRewardedService` (`Rewarded_Android`, `Rewarded_iOS`) or
@@ -137,8 +157,9 @@ first thing to do on opening the project is:
    — the project was scaffolded without picking one.
 2. Let Unity import and resolve `Packages/manifest.json`.
 3. Fix whatever compile errors surface in `Assets/Scripts/Gameplay`
-   and `Assets/Editor` — treat a clean first compile as unlikely, not
-   guaranteed (see `docs/unity-project-notes.md` "What's unverified").
+   and `Assets/Editor` — a stub compile-check already passes (see
+   `docs/unity-project-notes.md` "What's compile-checked"), but treat
+   a clean first *Unity* compile as still unproven, not guaranteed.
 4. Run **Strain Empire > Create MVP Scene**, press Play, and confirm
    the plant → grow → harvest → sell → breed → Gems/Instant Grow loop
    actually works end-to-end with real Editor timing.
