@@ -4,6 +4,20 @@ A 2D game engine inspired by the technology behind **Cortex Command**:
 fully destructible per-pixel terrain, pixel-level physics, and
 material-driven gameplay — rebuilt on modern C++ and SDL3.
 
+## Download and play (Windows)
+
+**[Download Atlas-Windows.zip](https://github.com/xzshadezxgaming-collab/atlas-v2/releases/latest/download/Atlas-Windows.zip)**,
+unzip it anywhere and double-click `Atlas.exe`. If Windows SmartScreen
+warns about it, click **More info → Run anyway** (the build isn't
+code-signed). For co-op, one player runs `Host co-op.bat` and the others
+run `Join co-op.bat` with the host's IP; `README.txt` in the zip covers
+LAN and internet play.
+
+Every push to the default branch builds a new zip and publishes it as
+a [release](https://github.com/xzshadezxgaming-collab/atlas-v2/releases)
+(`.github/workflows/release.yml`), so that link is always the newest
+build.
+
 ## Current features (v0.9.0)
 
 - **Art and sound packs** — every build now has its own hand-pixelled
