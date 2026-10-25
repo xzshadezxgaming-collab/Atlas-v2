@@ -1,0 +1,74 @@
+name: Release
+
+# Every push to the default branch publishes a ready-to-play Windows build
+# as a GitHub Release. The newest one is always at
+# https://github.com/<owner>/<repo>/releases/latest/download/Atlas-Windows.zip
+
+on:
+  push:
+    branches: [claude/new-session-eud0ot]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - Tools/release/**
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Windows package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Static MSVC runtime, so players don't need the VC++ redistributable.
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DATLAS_BUILD_TESTS=OFF
+          -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+
+      - name: Build
+        run: cmake --build build --config Release --target Atlas
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $out = "package/Atlas"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Copy-Item build/Game/Release/Atlas.exe $out
+          Copy-Item build/Game/Release/SDL3.dll $out
+          Copy-Item -Recurse build/Game/Release/Assets $out
+          Copy-Item Tools/release/*.txt, Tools/release/*.bat $out
+          Copy-Item ThirdParty/sdl3/LICENSE.txt "$out/SDL3-LICENSE.txt"
+          Compress-Archive -Path $out -DestinationPath Atlas-Windows.zip
+          Get-ChildItem -Recurse $out | Select-Object FullName, Length
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Atlas-Windows
+          path: package
+
+      - name: Publish release
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="build-${{ github.run_number }}"
+          sha="$(git rev-parse --short HEAD)"
+          subject="$(git log -1 --format=%s)"
+          gh release create "$tag" Atlas-Windows.zip \
+            --target "${{ github.sha }}" \
+            --title "Atlas build ${{ github.run_number }} ($sha)" \
+            --notes "Latest change: $subject
+
+          Download **Atlas-Windows.zip**, unzip it anywhere, and double-click **Atlas.exe**. See README.txt inside for co-op." \
+            --latest
