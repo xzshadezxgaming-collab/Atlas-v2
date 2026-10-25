@@ -38,7 +38,7 @@ namespace Atlas
 
         Volume = std::clamp(ini.GetFloat("Audio", "Volume", Volume), 0.0f, 1.0f);
         MusicVolume = std::clamp(ini.GetFloat("Audio", "Music", MusicVolume), 0.0f, 1.0f);
-        ScreenShake = ini.GetInt("Video", "ScreenShake", ScreenShake ? 1 : 0) != 0;
+        ScreenShake = std::clamp(ini.GetInt("Video", "ScreenShake", ScreenShake), 0, 2);
         Fullscreen = ini.GetInt("Video", "Fullscreen", Fullscreen ? 1 : 0) != 0;
         ShowFps = ini.GetInt("Video", "ShowFps", ShowFps ? 1 : 0) != 0;
         JoinAddress = ini.GetString("Network", "JoinAddress", JoinAddress);
@@ -60,7 +60,7 @@ namespace Atlas
             << "Volume = " << Volume << "\n"
             << "Music = " << MusicVolume << "\n\n"
             << "[Video]\n"
-            << "ScreenShake = " << (ScreenShake ? 1 : 0) << "\n"
+            << "ScreenShake = " << ScreenShake << "\n"
             << "Fullscreen = " << (Fullscreen ? 1 : 0) << "\n"
             << "ShowFps = " << (ShowFps ? 1 : 0) << "\n\n"
             << "[Network]\n"

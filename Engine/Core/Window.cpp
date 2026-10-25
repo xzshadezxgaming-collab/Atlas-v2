@@ -51,6 +51,12 @@ namespace Atlas
             return false;
         }
 
+        // Present in step with the display. Uncapped, frames land at
+        // uneven points between 120 Hz simulation ticks, so the player
+        // judders against the smoothly moving camera (and the image
+        // tears). Not every driver supports it; that's fine.
+        SDL_SetRenderVSync(m_Renderer, 1);
+
         return true;
     }
 
