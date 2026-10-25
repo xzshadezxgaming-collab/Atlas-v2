@@ -133,7 +133,8 @@ namespace Atlas
         float originX,
         float shipDir,
         float targetX,
-        const WeaponDef* weapon)
+        const WeaponDef* weapon,
+        int ownerPlayer)
     {
         Delivery delivery;
         delivery.Kind = kind;
@@ -141,6 +142,7 @@ namespace Atlas
         delivery.ShipDir = shipDir;
         delivery.TargetX = targetX;
         delivery.Weapon = weapon;
+        delivery.OwnerPlayer = ownerPlayer;
 
         m_Deliveries.push_back(delivery);
     }

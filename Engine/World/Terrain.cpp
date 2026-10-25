@@ -45,7 +45,6 @@ namespace Atlas
     }
 
     bool Terrain::Create(
-        SDL_Renderer* renderer,
         int width,
         int height,
         unsigned int seed)
@@ -67,12 +66,29 @@ namespace Atlas
             static_cast<std::size_t>(width) * height,
             255);
 
+        Generate(seed);
+        RebuildAllPixels();
+
+        m_DirtyAll = true;
+        ResetDirtyRegion();
+
+        return true;
+    }
+
+    bool Terrain::CreateTexture(SDL_Renderer* renderer)
+    {
+        if (m_Texture)
+        {
+            SDL_DestroyTexture(m_Texture);
+            m_Texture = nullptr;
+        }
+
         m_Texture = SDL_CreateTexture(
             renderer,
             SDL_PIXELFORMAT_RGBA32,
             SDL_TEXTUREACCESS_STREAMING,
-            width,
-            height);
+            m_Width,
+            m_Height);
 
         if (!m_Texture)
         {
@@ -84,13 +100,16 @@ namespace Atlas
         SDL_SetTextureBlendMode(m_Texture, SDL_BLENDMODE_BLEND);
         SDL_SetTextureScaleMode(m_Texture, SDL_SCALEMODE_NEAREST);
 
-        Generate(seed);
-        RebuildAllPixels();
-
+        // The whole color layer goes up on the next Update().
         m_DirtyAll = true;
         ResetDirtyRegion();
 
         return true;
+    }
+
+    const std::uint8_t* Terrain::GetMaterialData() const
+    {
+        return m_Materials.data();
     }
 
     void Terrain::Destroy()

@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.20)
 
 project(Atlas
     VERSION 0.0.1
@@ -12,5 +12,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
+option(ATLAS_BUILD_TESTS "Build the headless simulation tests" ON)
+
 add_subdirectory(Engine)
 add_subdirectory(Game)
+
+if(ATLAS_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(Tests)
+endif()

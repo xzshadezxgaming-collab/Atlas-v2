@@ -145,7 +145,10 @@ namespace Atlas
     }
 
     Actor::Actor()
-        : m_X(0.0f),
+        : m_BodyTexture(nullptr),
+        m_Id(0),
+        m_FxRandomState(0x6D2B79F5u),
+        m_X(0.0f),
         m_Y(0.0f),
         m_VelocityX(0.0f),
         m_VelocityY(0.0f),
@@ -183,17 +186,37 @@ namespace Atlas
         m_Legs[1].Configure(HipXFront, HipY, ThighLength, ShinLength);
     }
 
-    bool Actor::LoadBodySprite(
-        SDL_Renderer* renderer,
-        const std::string& filename)
+    void Actor::SetBodyTexture(SDL_Texture* texture)
     {
-        if (!m_BodyTexture.Load(renderer, filename))
-            return false;
+        m_BodyTexture = texture;
+    }
 
-        SDL_SetTextureColorMod(
-            m_BodyTexture.GetTexture(), m_TintR, m_TintG, m_TintB);
+    SDL_Texture* Actor::GetBodyTexture() const
+    {
+        return m_BodyTexture;
+    }
 
-        return true;
+    void Actor::SetId(std::uint32_t id)
+    {
+        m_Id = id;
+        m_FxRandomState = id * 2654435761u + 0x6D2B79F5u;
+
+        if (m_FxRandomState == 0u)
+            m_FxRandomState = 0x6D2B79F5u;
+    }
+
+    std::uint32_t Actor::GetId() const
+    {
+        return m_Id;
+    }
+
+    float Actor::FxRandomUnit()
+    {
+        m_FxRandomState ^= m_FxRandomState << 13;
+        m_FxRandomState ^= m_FxRandomState >> 17;
+        m_FxRandomState ^= m_FxRandomState << 5;
+
+        return static_cast<float>(m_FxRandomState & 0xFFFF) / 65536.0f;
     }
 
     void Actor::SetTint(Uint8 r, Uint8 g, Uint8 b)
@@ -201,9 +224,6 @@ namespace Atlas
         m_TintR = r;
         m_TintG = g;
         m_TintB = b;
-
-        if (m_BodyTexture.GetTexture())
-            SDL_SetTextureColorMod(m_BodyTexture.GetTexture(), r, g, b);
     }
 
     void Actor::Spawn(const Terrain& terrain, float centerX)
@@ -300,7 +320,7 @@ namespace Atlas
             if (particles)
             {
                 particles->SpawnSmoke(
-                    GetCenterX() - 4.0f + static_cast<float>(rand() % 8),
+                    GetCenterX() - 4.0f + std::floor(FxRandomUnit() * 8.0f),
                     m_Y + BodyHeight,
                     -m_VelocityX * 0.1f,
                     140.0f);
@@ -308,7 +328,7 @@ namespace Atlas
                 particles->SpawnSpark(
                     GetCenterX(),
                     m_Y + BodyHeight + 2.0f,
-                    m_VelocityX * -0.2f + static_cast<float>(rand() % 60 - 30),
+                    m_VelocityX * -0.2f + std::floor(FxRandomUnit() * 60.0f) - 30.0f,
                     170.0f);
             }
         }
@@ -493,8 +513,12 @@ namespace Atlas
                 m_TintR, m_TintG, m_TintB);
         }
 
-        if (m_BodyTexture.GetTexture())
+        if (m_BodyTexture)
         {
+            // The texture is shared between actors, so apply this one's
+            // tint every time it is drawn.
+            SDL_SetTextureColorMod(m_BodyTexture, m_TintR, m_TintG, m_TintB);
+
             // Bob while walking, breathe while standing still, lean into
             // the direction of travel, and hunch forward when crouching.
             float bob = m_Grounded
@@ -518,7 +542,7 @@ namespace Atlas
                     m_FacingDir * 2.0f;
 
             window.DrawTextureRotated(
-                m_BodyTexture.GetTexture(),
+                m_BodyTexture,
                 m_X - (SpriteWidth - BodyWidth) * 0.5f,
                 m_Y + bob,
                 SpriteWidth,
@@ -531,7 +555,7 @@ namespace Atlas
             // more clearly than a colored glow around it.
             if (m_HurtFlash > 0.0f)
             {
-                SDL_Texture* texture = m_BodyTexture.GetTexture();
+                SDL_Texture* texture = m_BodyTexture;
                 const float strength = std::min(1.0f, m_HurtFlash / 0.12f);
 
                 SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_ADD);

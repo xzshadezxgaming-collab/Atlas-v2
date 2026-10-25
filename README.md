@@ -141,6 +141,31 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
 | R | Reload |
 | Tab (hold) | Open the buy menu |
 
+## Architecture
+
+The game is split into a **simulation** and a **client**:
+
+- `Engine/Sim/World` owns all game state (terrain, actors, particles,
+  grenades, deliveries, pickups, waves) and advances it in fixed 120 Hz
+  ticks with `World::Step(inputs)`. It never touches a window, renderer,
+  audio device or the keyboard, so it runs unchanged in the game, in
+  headless tests, and later on a dedicated server.
+- Players drive their actors only through `PlayerInput` (move, jump,
+  jet, crouch, aim, fire, throw, reload, weapon slot) and buy through
+  `OrderRequest`, which the World prices itself. Up to four player slots
+  exist today; the local game uses slot 0.
+- What happened during a tick comes back as `SimEvent`s (sounds, hard
+  landings, explosions, kills, damage numbers, wave starts). The client
+  (`Core/Application`) turns those into audio, camera shake, hit-stop
+  and floating text.
+- Every actor has a stable id (`Actor::GetId`); bullets remember their shooter by
+  id and team rather than by pointer, so a shooter dying mid-flight is
+  safe.
+- All simulation randomness comes from the world seed (plus fixed
+  per-system seeds). Same seed + same inputs = bit-identical state,
+  which `World::ComputeStateHash()` checks. This is the groundwork for
+  networking (input replication, replays, desync detection).
+
 ## Building
 
 ### Windows (Visual Studio)
@@ -165,6 +190,20 @@ cmake --build build -j
 ./build/Game/Atlas
 ```
 
+### Tests
+
+`Tests/SimTests.cpp` runs the simulation headless: a determinism check
+(two worlds, same seed and scripted inputs, hashes compared every half
+second over a simulated minute), an order/ids check, and a five-minute
+four-player soak. Run them with:
+
+```
+ctest --test-dir build --output-on-failure
+```
+
+CI (`.github/workflows/ci.yml`) builds and tests on Linux (Release, and
+Debug with AddressSanitizer + UBSan) and on Windows with MSVC.
+
 ## Roadmap
 
 - [x] **Milestone 1 — pixel terrain**: material grid, digging, per-pixel
@@ -176,6 +215,11 @@ cmake --build build -j
   walking gait with real footholds, IK leg rendering
 - [x] **Milestone 3b — combat actors**: aim arm, weapons, grenades,
   gibbing, enemy AI, waves
+- [x] **Simulation core**: game state pulled out of the game loop into a
+  headless `World`, per-player input commands, stable actor ids, seeded
+  deterministic simulation, headless tests and CI
+- [ ] **Networking**: chunked terrain sync, server-authoritative netcode
+  with client prediction, 2-4 players
 - [ ] **Milestone 4 — game layer**: scenes and props from data files,
   inventory/pickups, objectives. The buy menu is now a real order cart
   (bodies, weapons/tools and supply crates, with weapons equippable to

@@ -24,11 +24,17 @@ namespace Atlas
         Terrain();
         ~Terrain();
 
+        // Builds the simulation side of the terrain (material and color
+        // layers). Needs no renderer, so a headless server or test can
+        // own a Terrain too.
         bool Create(
-            SDL_Renderer* renderer,
             int width,
             int height,
             unsigned int seed = 1337u);
+
+        // Creates the GPU texture the color layer streams into. Only a
+        // client that draws the terrain needs to call this.
+        bool CreateTexture(SDL_Renderer* renderer);
 
         void Destroy();
 
@@ -36,6 +42,10 @@ namespace Atlas
         int GetHeight() const;
 
         Material GetMaterial(int x, int y) const;
+
+        // Raw material layer, row-major, one Material id per pixel
+        // (state hashing, serialization).
+        const std::uint8_t* GetMaterialData() const;
         void SetMaterial(int x, int y, Material material);
 
         // World-space solidity query. Outside the world: the sides and the
@@ -89,7 +99,7 @@ namespace Atlas
         int PlaceCircle(float centerX, float centerY, float radius, Material material);
 
         // Uploads any edited region to the GPU texture. Call once per frame
-        // before drawing.
+        // before drawing. Does nothing without a texture.
         void Update();
 
         void Draw(Window& window);
