@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
-#include <random>
+#include <initializer_list>
 
 namespace Atlas
 {
@@ -31,6 +31,10 @@ namespace Atlas
         : m_Width(0),
         m_Height(0),
         m_Texture(nullptr),
+        m_ChunksX(0),
+        m_ChunksY(0),
+        m_Stamp(0),
+        m_SimTick(0),
         m_DirtyAll(false),
         m_DirtyMinX(0),
         m_DirtyMinY(0),
@@ -66,8 +70,28 @@ namespace Atlas
             static_cast<std::size_t>(width) * height,
             255);
 
+        m_Backwall.assign(
+            static_cast<std::size_t>(width) * height,
+            static_cast<std::uint8_t>(Material::Air));
+
+        m_ChunksX = (width + ChunkSize - 1) / ChunkSize;
+        m_ChunksY = (height + ChunkSize - 1) / ChunkSize;
+        m_ChunkAwake.assign(static_cast<std::size_t>(m_ChunksX) * m_ChunksY, 0);
+        m_ChunkAwakeNext.assign(m_ChunkAwake.size(), 0);
+        m_MoveStamp.assign(static_cast<std::size_t>(width) * height, 0);
+        m_Stamp = 0;
+        m_SimTick = 0;
+        m_Reactions.clear();
+
         Generate(seed);
         RebuildAllPixels();
+
+        // Let freshly generated sand and water find their rest before the
+        // match starts, so the first seconds aren't a landslide.
+        for (int i = 0; i < 900 && GetAwakeRegionCount() > 0; i++)
+            Simulate();
+
+        m_Reactions.clear();
 
         m_DirtyAll = true;
         ResetDirtyRegion();
@@ -110,6 +134,11 @@ namespace Atlas
     const std::uint8_t* Terrain::GetMaterialData() const
     {
         return m_Materials.data();
+    }
+
+    const std::uint8_t* Terrain::GetPixelData() const
+    {
+        return m_Pixels.data();
     }
 
     void Terrain::Destroy()
@@ -158,6 +187,8 @@ namespace Atlas
             return;
 
         slot = static_cast<std::uint8_t>(material);
+
+        Wake(x, y);
 
         // A change here also changes the edge lighting of the pixels
         // directly above and below.
@@ -237,7 +268,9 @@ namespace Atlas
                 if (dx * dx + dy * dy > radiusSquared)
                     continue;
 
-                if (!GetMaterialInfo(GetMaterial(x, y)).Solid)
+                const MaterialInfo& info = GetMaterialInfo(GetMaterial(x, y));
+
+                if (!info.Solid || info.Indestructible)
                     continue;
 
                 SetMaterial(x, y, Material::Air);
@@ -275,8 +308,9 @@ namespace Atlas
                     continue;
 
                 const Material material = GetMaterial(x, y);
+                const MaterialInfo& info = GetMaterialInfo(material);
 
-                if (!GetMaterialInfo(material).Solid)
+                if (!info.Solid || info.Indestructible)
                     continue;
 
                 SetMaterial(x, y, Material::Air);
@@ -300,8 +334,9 @@ namespace Atlas
     Material Terrain::DestroyPixel(int x, int y)
     {
         const Material material = GetMaterial(x, y);
+        const MaterialInfo& info = GetMaterialInfo(material);
 
-        if (!GetMaterialInfo(material).Solid)
+        if (!info.Solid || info.Indestructible)
             return Material::Air;
 
         SetMaterial(x, y, Material::Air);
@@ -424,19 +459,100 @@ namespace Atlas
             static_cast<float>(m_Height));
     }
 
+    namespace
+    {
+        // Portable generator for world building: std distributions are
+        // allowed to differ between standard libraries, and every peer
+        // in a match must build the exact same world from a seed.
+        class GenRandom
+        {
+        public:
+            explicit GenRandom(unsigned int seed)
+                : m_State(0x9E3779B97F4A7C15ull ^ (static_cast<std::uint64_t>(seed) * 0xD1B54A32D192ED03ull))
+            {
+                if (m_State == 0)
+                    m_State = 1;
+            }
+
+            std::uint32_t Next()
+            {
+                m_State ^= m_State << 13;
+                m_State ^= m_State >> 7;
+                m_State ^= m_State << 17;
+                return static_cast<std::uint32_t>(m_State >> 32);
+            }
+
+            // Inclusive range.
+            int Range(int lo, int hi)
+            {
+                if (hi <= lo)
+                    return lo;
+
+                return lo + static_cast<int>(Next() % static_cast<std::uint32_t>(hi - lo + 1));
+            }
+
+            float Unit() // [0, 1)
+            {
+                return static_cast<float>(Next() >> 8) * (1.0f / 16777216.0f);
+            }
+
+        private:
+            std::uint64_t m_State;
+        };
+    }
+
     void Terrain::Generate(unsigned int seed)
     {
-        std::mt19937 rng(seed);
+        GenRandom rng(seed);
+
+        auto at = [&](int x, int y) -> std::uint8_t&
+        {
+            return m_Materials[static_cast<std::size_t>(y) * m_Width + x];
+        };
+
+        auto inside = [&](int x, int y)
+        {
+            return x >= 0 && x < m_Width && y >= 0 && y < m_Height;
+        };
+
+        // Paints a filled circle, but only over the listed materials.
+        auto blob = [&](int cx, int cy, int radius, Material paint,
+            std::initializer_list<Material> over)
+        {
+            for (int y = cy - radius; y <= cy + radius; y++)
+            {
+                for (int x = cx - radius; x <= cx + radius; x++)
+                {
+                    if (!inside(x, y))
+                        continue;
+
+                    const int dx = x - cx;
+                    const int dy = y - cy;
+
+                    if (dx * dx + dy * dy > radius * radius)
+                        continue;
+
+                    for (Material m : over)
+                    {
+                        if (at(x, y) == static_cast<std::uint8_t>(m))
+                        {
+                            at(x, y) = static_cast<std::uint8_t>(paint);
+                            break;
+                        }
+                    }
+                }
+            }
+        };
+
+        const float tau = 6.28318f;
 
         // Rolling surface height built from a few octaves of sine waves,
         // each with a random phase so every seed produces a new landscape.
-        std::uniform_real_distribution<float> phase(0.0f, 6.28318f);
+        const float phase1 = rng.Unit() * tau;
+        const float phase2 = rng.Unit() * tau;
+        const float phase3 = rng.Unit() * tau;
 
-        const float phase1 = phase(rng);
-        const float phase2 = phase(rng);
-        const float phase3 = phase(rng);
-
-        const float baseHeight = static_cast<float>(m_Height) * 0.45f;
+        const float baseHeight = static_cast<float>(m_Height) * 0.40f;
 
         std::vector<int> surface(m_Width);
 
@@ -452,28 +568,81 @@ namespace Atlas
             surface[x] = std::clamp(
                 static_cast<int>(height),
                 32,
-                m_Height - 64);
+                m_Height - 160);
         }
 
-        // Grass on top, a band of dirt, then stone all the way down.
-        constexpr int GrassDepth = 5;
-        constexpr int DirtDepth = 90;
+        // Dirt depth and the bedrock floor wander a little.
+        const float dirtPhase = rng.Unit() * tau;
+        const float bedPhase = rng.Unit() * tau;
+
+        std::vector<int> dirtDepth(m_Width);
+        std::vector<int> bedrockTop(m_Width);
 
         for (int x = 0; x < m_Width; x++)
         {
+            const float fx = static_cast<float>(x);
+
+            dirtDepth[x] = 80 + static_cast<int>(
+                18.0f * std::sin(fx * 0.007f + dirtPhase) +
+                6.0f * std::sin(fx * 0.031f + dirtPhase * 2.0f));
+
+            bedrockTop[x] = m_Height - 22 - static_cast<int>(
+                6.0f + 6.0f * std::sin(fx * 0.013f + bedPhase) +
+                3.0f * std::sin(fx * 0.057f + bedPhase * 3.0f));
+        }
+
+        // Desert stretches: the top layers turn to loose sand. Kept away
+        // from the middle of the map, where players drop in.
+        std::vector<std::uint8_t> desert(m_Width, 0);
+        const int duneCount = 1 + rng.Range(0, 1) + m_Width / 3000;
+
+        for (int i = 0; i < duneCount; i++)
+        {
+            const int width = rng.Range(220, 420);
+            int start = rng.Range(0, std::max(0, m_Width - width));
+
+            const int center = m_Width / 2;
+
+            if (start < center + 260 && start + width > center - 260)
+                start = (start + width / 2 < center)
+                    ? std::max(0, center - 260 - width)
+                    : std::min(m_Width - width, center + 260);
+
+            for (int x = std::max(0, start); x < std::min(m_Width, start + width); x++)
+            {
+                // Ramp in and out so the dunes blend into the grassland.
+                const int edge = std::min(x - start, start + width - 1 - x);
+                desert[x] = static_cast<std::uint8_t>(std::min(255, edge * 6));
+            }
+        }
+
+        // Layers: grass (or sand), dirt, stone, bedrock.
+        constexpr int GrassDepth = 5;
+
+        for (int x = 0; x < m_Width; x++)
+        {
+            const int sandDepth = desert[x] > 0
+                ? 4 + (desert[x] * 22) / 255
+                : 0;
+
             for (int y = surface[x]; y < m_Height; y++)
             {
                 const int depth = y - surface[x];
 
                 Material material = Material::Stone;
 
-                if (depth < GrassDepth)
+                if (y >= bedrockTop[x])
+                    material = Material::Bedrock;
+                else if (depth < sandDepth)
+                    material = Material::Sand;
+                else if (depth < GrassDepth)
                     material = Material::Grass;
-                else if (depth < DirtDepth)
+                else if (depth < dirtDepth[x])
                     material = Material::Dirt;
 
-                m_Materials[static_cast<std::size_t>(y) * m_Width + x] =
-                    static_cast<std::uint8_t>(material);
+                at(x, y) = static_cast<std::uint8_t>(material);
+                m_Backwall[static_cast<std::size_t>(y) * m_Width + x] =
+                    static_cast<std::uint8_t>(material == Material::Grass ? Material::Dirt : material);
             }
         }
 
@@ -482,6 +651,9 @@ namespace Atlas
         // other terrain, purely to break up the razor-straight top edge.
         for (int x = 0; x < m_Width; x++)
         {
+            if (desert[x] > 0)
+                continue;
+
             const std::uint32_t h = HashPixel(
                 static_cast<std::uint32_t>(x), seed | 1u);
 
@@ -497,8 +669,7 @@ namespace Atlas
                 if (y < 1)
                     break;
 
-                m_Materials[static_cast<std::size_t>(y) * m_Width + x] =
-                    static_cast<std::uint8_t>(Material::Grass);
+                at(x, y) = static_cast<std::uint8_t>(Material::Grass);
             }
         }
 
@@ -511,54 +682,516 @@ namespace Atlas
                 const float depth = static_cast<float>(y - surface[x]);
 
                 const float factor =
-                    1.0f - std::min(0.42f, depth / 260.0f * 0.42f);
+                    1.0f - std::min(0.5f, depth / 300.0f * 0.5f);
 
                 m_DepthShade[static_cast<std::size_t>(y) * m_Width + x] =
                     static_cast<std::uint8_t>(factor * 255.0f);
             }
         }
 
-        // Gold veins: blobs of gold scattered through the stone layer.
-        std::uniform_int_distribution<int> veinX(0, m_Width - 1);
-        std::uniform_int_distribution<int> veinRadius(3, 9);
-
-        const int veinCount = m_Width / 12;
-
-        for (int i = 0; i < veinCount; i++)
+        // A random point at least minDepth below the surface (or below
+        // the dirt layer) and marginAboveBedrock above the floor.
+        auto randomDepthPoint = [&](int minDepth, int marginAboveBedrock,
+            bool belowDirt, int& outX, int& outY)
         {
-            const int x = veinX(rng);
+            outX = rng.Range(8, m_Width - 9);
+            const int top = surface[outX] + minDepth + (belowDirt ? dirtDepth[outX] : 0);
+            const int bottom = bedrockTop[outX] - marginAboveBedrock;
 
-            const int stoneTop = surface[x] + DirtDepth;
+            if (top >= bottom)
+                return false;
 
-            if (stoneTop >= m_Height - 8)
+            outY = rng.Range(top, bottom);
+            return true;
+        };
+
+        // Sand pockets in the dirt: dig into one and it pours out.
+        for (int i = 0; i < m_Width / 40; i++)
+        {
+            int x = 0;
+            int y = 0;
+
+            if (randomDepthPoint(12, 200, false, x, y))
+                blob(x, y, rng.Range(5, 13), Material::Sand, { Material::Dirt });
+        }
+
+        // Gravel pockets in the stone.
+        for (int i = 0; i < m_Width / 30; i++)
+        {
+            int x = 0;
+            int y = 0;
+
+            if (randomDepthPoint(10, 30, true, x, y))
+                blob(x, y, rng.Range(5, 12), Material::Gravel, { Material::Stone });
+        }
+
+        // Gold veins: blobs of gold scattered through the stone layer,
+        // richer the deeper you go.
+        for (int i = 0; i < m_Width / 10; i++)
+        {
+            int x = 0;
+            int y = 0;
+
+            if (!randomDepthPoint(8, 12, true, x, y))
                 continue;
 
-            std::uniform_int_distribution<int> veinY(stoneTop + 8, m_Height - 8);
+            const float depth01 = static_cast<float>(y - surface[x]) /
+                static_cast<float>(std::max(1, bedrockTop[x] - surface[x]));
 
-            const int y = veinY(rng);
-            const int radius = veinRadius(rng);
+            const int radius = rng.Range(3, 7) + static_cast<int>(depth01 * 5.0f);
+            blob(x, y, radius, Material::Gold, { Material::Stone });
+        }
 
-            for (int py = y - radius; py <= y + radius; py++)
+        // Caves: worms that wander through the rock, carving tunnels.
+        // Some get a pool of water; the deepest ones a pool of lava.
+        struct Chamber
+        {
+            int X;
+            int Y;
+            int RX;
+            int RY;
+            Material Fill;
+        };
+
+        std::vector<Chamber> chambers;
+
+        auto is = [&](int x, int y, Material m)
+        {
+            return inside(x, y) && at(x, y) == static_cast<std::uint8_t>(m);
+        };
+
+        const int caveCount = std::max(3, m_Width / 170);
+
+        for (int i = 0; i < caveCount; i++)
+        {
+            int x0 = 0;
+            int y0 = 0;
+
+            if (!randomDepthPoint(40, 40, false, x0, y0))
+                continue;
+
+            float x = static_cast<float>(x0);
+            float y = static_cast<float>(y0);
+            float angle = rng.Unit() * tau;
+            const int steps = rng.Range(120, 380);
+            float radius = static_cast<float>(rng.Range(6, 11));
+
+            for (int step = 0; step < steps; step++)
             {
-                for (int px = x - radius; px <= x + radius; px++)
+                // Mostly sideways, gently drifting up and down.
+                angle += (rng.Unit() - 0.5f) * 0.5f;
+                radius = std::clamp(radius + (rng.Unit() - 0.5f) * 1.2f, 4.0f, 15.0f);
+
+                x += std::cos(angle) * 2.0f;
+                y += std::sin(angle) * 1.2f;
+
+                const int ix = static_cast<int>(x);
+                const int iy = static_cast<int>(y);
+
+                if (ix < 6 || ix >= m_Width - 6)
+                    break;
+
+                // Stay underground and off the floor.
+                if (iy < surface[ix] + 30 || iy > bedrockTop[ix] - 10)
                 {
-                    if (px < 0 || px >= m_Width || py < 0 || py >= m_Height)
-                        continue;
+                    angle = -angle;
+                    continue;
+                }
 
-                    const int dx = px - x;
-                    const int dy = py - y;
+                blob(ix, iy, static_cast<int>(radius), Material::Air,
+                    { Material::Dirt, Material::Stone, Material::Gold, Material::Gravel });
 
-                    if (dx * dx + dy * dy > radius * radius)
-                        continue;
+                // Now and then the tunnel opens into a chamber.
+                if (rng.Unit() < 0.018f)
+                {
+                    const int rx = rng.Range(16, 32);
+                    const int ry = rng.Range(10, 18);
 
-                    std::size_t index =
-                        static_cast<std::size_t>(py) * m_Width + px;
-
-                    if (m_Materials[index] ==
-                        static_cast<std::uint8_t>(Material::Stone))
+                    if (iy - ry > surface[ix] + 24 && iy + ry < bedrockTop[ix] - 4)
                     {
-                        m_Materials[index] =
-                            static_cast<std::uint8_t>(Material::Gold);
+                        for (int py = iy - ry; py <= iy + ry; py++)
+                        {
+                            for (int px = ix - rx; px <= ix + rx; px++)
+                            {
+                                if (!inside(px, py))
+                                    continue;
+
+                                const float ex = static_cast<float>(px - ix) / static_cast<float>(rx);
+                                const float ey = static_cast<float>(py - iy) / static_cast<float>(ry);
+
+                                // Ragged walls instead of a perfect ellipse.
+                                const float wobble = static_cast<float>(
+                                    HashPixel(static_cast<std::uint32_t>(px / 3),
+                                        static_cast<std::uint32_t>(py / 3)) % 100u) * 0.002f;
+
+                                if (ex * ex + ey * ey > 1.0f - wobble)
+                                    continue;
+
+                                const Material here = static_cast<Material>(at(px, py));
+
+                                if (here != Material::Bedrock && here != Material::Air)
+                                    at(px, py) = static_cast<std::uint8_t>(Material::Air);
+                            }
+                        }
+
+                        chambers.push_back({ ix, iy, rx, ry, Material::Air });
+                    }
+                }
+            }
+        }
+
+        // Pools of water, and lava down deep. Each is filled as the basin
+        // under a waterline, raised from the floor until the pool holds
+        // its volume or would spill into the tunnels, so it starts level
+        // and at rest. Done after all caves exist so a later tunnel
+        // can't slice through a pool.
+        std::vector<int> basin;
+        std::vector<int> open;
+
+        // Fills the basin below waterline from (x, y) with fill, or leaves
+        // everything as it was and returns false if it holds more than
+        // maxCells.
+        auto fillBasin = [&](int x, int y, int waterline, Material fill, int maxCells)
+        {
+            basin.clear();
+            open.assign(1, y * m_Width + x);
+
+            while (!open.empty())
+            {
+                const int cell = open.back();
+                open.pop_back();
+
+                const int cx = cell % m_Width;
+                const int cy = cell / m_Width;
+
+                if (cy < waterline || !is(cx, cy, Material::Air))
+                    continue;
+
+                at(cx, cy) = static_cast<std::uint8_t>(fill);
+                basin.push_back(cell);
+
+                if (static_cast<int>(basin.size()) > maxCells)
+                {
+                    for (int filled : basin)
+                        m_Materials[static_cast<std::size_t>(filled)] =
+                            static_cast<std::uint8_t>(Material::Air);
+
+                    return false;
+                }
+
+                if (cx + 1 < m_Width) open.push_back(cell + 1);
+                if (cx > 0) open.push_back(cell - 1);
+                if (cy + 1 < m_Height) open.push_back(cell + m_Width);
+                if (cy > 0) open.push_back(cell - m_Width);
+            }
+
+            return true;
+        };
+
+        auto pour = [&](int x, int y, Material fill, int volume)
+        {
+            if (!is(x, y, Material::Air))
+                return;
+
+            while (is(x, y + 1, Material::Air))
+                y++;
+
+            if (fill == Material::Water)
+            {
+                // Pours meeting existing lava would just make obsidian.
+                for (int dy = 0; dy < 8; dy++)
+                {
+                    if (is(x, y + dy, Material::Lava))
+                        return;
+                }
+            }
+
+            // Highest waterline that doesn't overflow.
+            int best = -1;
+
+            for (int rise = 1; rise < 60; rise += 2)
+            {
+                if (!fillBasin(x, y, y - rise, fill, volume))
+                    break;
+
+                // Undo; only the final waterline is kept.
+                for (int filled : basin)
+                    m_Materials[static_cast<std::size_t>(filled)] =
+                        static_cast<std::uint8_t>(Material::Air);
+
+                best = rise;
+            }
+
+            if (best > 2)
+                fillBasin(x, y, y - best, fill, volume);
+        };
+
+        auto liquidFor = [&](int y)
+        {
+            const float depth01 = static_cast<float>(y) / static_cast<float>(m_Height);
+            return depth01 > 0.7f && rng.Unit() < 0.7f ? Material::Lava : Material::Water;
+        };
+
+        for (const Chamber& chamber : chambers)
+        {
+            if (rng.Unit() < 0.75f)
+                pour(chamber.X, chamber.Y, liquidFor(chamber.Y), rng.Range(1200, 2600));
+        }
+
+        // Low spots along the tunnels collect a little too.
+        const int puddles = m_Width / 20;
+
+        for (int i = 0; i < puddles; i++)
+        {
+            const int px = rng.Range(8, m_Width - 8);
+            const int py = rng.Range(surface[px] + 30, bedrockTop[px] - 6);
+            pour(px, py, liquidFor(py), rng.Range(300, 1400));
+        }
+
+        // Everything that can move starts awake.
+        for (int y = 0; y < m_Height; y++)
+        {
+            for (int x = 0; x < m_Width; x++)
+            {
+                const MaterialBehavior behavior =
+                    GetMaterialInfo(static_cast<Material>(at(x, y))).Behavior;
+
+                if (behavior == MaterialBehavior::Powder ||
+                    behavior == MaterialBehavior::Liquid)
+                {
+                    m_ChunkAwakeNext[static_cast<std::size_t>(y / ChunkSize) * m_ChunksX + x / ChunkSize] = 1;
+                }
+            }
+        }
+
+    }
+
+    // --- Falling-sand simulation ------------------------------------------
+
+    void Terrain::Wake(int x, int y)
+    {
+        if (m_ChunkAwakeNext.empty())
+            return;
+
+        const int cx = x / ChunkSize;
+        const int cy = y / ChunkSize;
+        const int lx = x % ChunkSize;
+        const int ly = y % ChunkSize;
+
+        // A change on a chunk's edge can unsettle its neighbor too.
+        const int minCX = std::max(0, lx == 0 ? cx - 1 : cx);
+        const int maxCX = std::min(m_ChunksX - 1, lx == ChunkSize - 1 ? cx + 1 : cx);
+        const int minCY = std::max(0, ly == 0 ? cy - 1 : cy);
+        const int maxCY = std::min(m_ChunksY - 1, ly == ChunkSize - 1 ? cy + 1 : cy);
+
+        for (int wy = minCY; wy <= maxCY; wy++)
+        {
+            for (int wx = minCX; wx <= maxCX; wx++)
+                m_ChunkAwakeNext[static_cast<std::size_t>(wy) * m_ChunksX + wx] = 1;
+        }
+    }
+
+    int Terrain::GetAwakeRegionCount() const
+    {
+        int count = 0;
+
+        for (std::uint8_t awake : m_ChunkAwakeNext)
+            count += awake;
+
+        return count;
+    }
+
+    std::vector<Terrain::DestroyedPixel> Terrain::TakeReactions()
+    {
+        std::vector<DestroyedPixel> out;
+        out.swap(m_Reactions);
+        return out;
+    }
+
+    bool Terrain::CanDisplace(int x, int y, Material mover) const
+    {
+        if (x < 0 || x >= m_Width || y < 0 || y >= m_Height)
+            return false;
+
+        const Material target = GetMaterial(x, y);
+
+        if (target == Material::Air)
+            return true;
+
+        // Heavier things sink through lighter liquids.
+        const MaterialInfo& targetInfo = GetMaterialInfo(target);
+
+        return targetInfo.Behavior == MaterialBehavior::Liquid &&
+            targetInfo.Density < GetMaterialInfo(mover).Density;
+    }
+
+    void Terrain::MoveCell(int fromX, int fromY, int toX, int toY)
+    {
+        const Material mover = GetMaterial(fromX, fromY);
+        const Material displaced = GetMaterial(toX, toY);
+
+        SetMaterial(toX, toY, mover);
+        SetMaterial(fromX, fromY, displaced);
+
+        m_MoveStamp[static_cast<std::size_t>(toY) * m_Width + toX] = m_Stamp;
+        m_MoveStamp[static_cast<std::size_t>(fromY) * m_Width + fromX] = m_Stamp;
+    }
+
+    void Terrain::UpdateCell(int x, int y)
+    {
+        const std::size_t index = static_cast<std::size_t>(y) * m_Width + x;
+
+        if (m_MoveStamp[index] == m_Stamp)
+            return;
+
+        const Material material = static_cast<Material>(m_Materials[index]);
+        const MaterialInfo& info = GetMaterialInfo(material);
+
+        if (info.Behavior != MaterialBehavior::Powder &&
+            info.Behavior != MaterialBehavior::Liquid)
+            return;
+
+        // Lava meeting water: the water flashes to steam, the lava
+        // hardens to obsidian.
+        if (material == Material::Lava)
+        {
+            static constexpr int Offsets[4][2] = { { 0, -1 }, { -1, 0 }, { 1, 0 }, { 0, 1 } };
+
+            for (const auto& offset : Offsets)
+            {
+                const int nx = x + offset[0];
+                const int ny = y + offset[1];
+
+                if (GetMaterial(nx, ny) == Material::Water)
+                {
+                    SetMaterial(nx, ny, Material::Air);
+                    SetMaterial(x, y, Material::Obsidian);
+                    m_Reactions.push_back({
+                        static_cast<float>(nx), static_cast<float>(ny), Material::Water });
+                    return;
+                }
+            }
+
+        }
+
+        // Which diagonal / side to try first alternates per cell and
+        // tick, so piles and pools spread evenly instead of leaning.
+        const int dir = ((HashPixel(static_cast<std::uint32_t>(x),
+            static_cast<std::uint32_t>(y)) ^ m_SimTick) & 1u) ? 1 : -1;
+
+        int toX = x;
+        int toY = y;
+
+        if (CanDisplace(x, y + 1, material))
+        {
+            toY = y + 1;
+        }
+        else if (CanDisplace(x + dir, y + 1, material) && CanDisplace(x + dir, y, material))
+        {
+            toX = x + dir;
+            toY = y + 1;
+        }
+        else if (CanDisplace(x - dir, y + 1, material) && CanDisplace(x - dir, y, material))
+        {
+            toX = x - dir;
+            toY = y + 1;
+        }
+        else if (info.Behavior == MaterialBehavior::Liquid)
+        {
+            // Liquids also flow sideways, a few pixels per tick, but only
+            // toward somewhere lower to fall into. A level surface is at
+            // rest, so a settled pool stops costing anything. Looking
+            // well past the per-tick step keeps long pools from resting
+            // on a visible slope.
+            const bool lava = material == Material::Lava;
+            const int step = lava ? 2 : 6;
+            const int search = lava ? 24 : 64;
+
+            for (int side = 0; side < 2 && toX == x; side++)
+            {
+                const int sign = side == 0 ? dir : -dir;
+
+                for (int d = 1; d <= search; d++)
+                {
+                    const int sx = x + sign * d;
+
+                    if (!CanDisplace(sx, y, material) || GetMaterial(sx, y) == material)
+                        break;
+
+                    if (CanDisplace(sx, y + 1, material))
+                    {
+                        toX = x + sign * std::min(d, step);
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (toX == x && toY == y)
+            return;
+
+        // Thick and slow: lava only flows every third tick.
+        if (material == Material::Lava && m_SimTick % 3u != 0u)
+        {
+            Wake(x, y);
+            return;
+        }
+
+        MoveCell(x, y, toX, toY);
+    }
+
+    void Terrain::Simulate()
+    {
+        if (m_ChunkAwake.empty())
+            return;
+
+        m_SimTick++;
+        m_Stamp = static_cast<std::uint8_t>(m_Stamp == 255 ? 1 : m_Stamp + 1);
+
+        m_ChunkAwake.swap(m_ChunkAwakeNext);
+        std::fill(m_ChunkAwakeNext.begin(), m_ChunkAwakeNext.end(), 0);
+
+        // Bottom-up so a falling column moves as one; the horizontal
+        // sweep direction alternates every tick to avoid drift.
+        const bool leftToRight = (m_SimTick & 1u) != 0u;
+
+        for (int cy = m_ChunksY - 1; cy >= 0; cy--)
+        {
+            const std::uint8_t* rowAwake =
+                &m_ChunkAwake[static_cast<std::size_t>(cy) * m_ChunksX];
+
+            bool any = false;
+
+            for (int cx = 0; cx < m_ChunksX && !any; cx++)
+                any = rowAwake[cx] != 0;
+
+            if (!any)
+                continue;
+
+            const int yTop = cy * ChunkSize;
+            const int yBottom = std::min(m_Height - 1, yTop + ChunkSize - 1);
+
+            for (int y = yBottom; y >= yTop; y--)
+            {
+                for (int i = 0; i < m_ChunksX; i++)
+                {
+                    const int cx = leftToRight ? i : m_ChunksX - 1 - i;
+
+                    if (!rowAwake[cx])
+                        continue;
+
+                    const int xStart = cx * ChunkSize;
+                    const int xEnd = std::min(m_Width, xStart + ChunkSize);
+
+                    if (leftToRight)
+                    {
+                        for (int x = xStart; x < xEnd; x++)
+                            UpdateCell(x, y);
+                    }
+                    else
+                    {
+                        for (int x = xEnd - 1; x >= xStart; x--)
+                            UpdateCell(x, y);
                     }
                 }
             }
@@ -586,18 +1219,98 @@ namespace Atlas
 
         const MaterialInfo& info = GetMaterialInfo(material);
 
-        if (!info.Solid)
-        {
-            m_Pixels[index + 0] = 0;
-            m_Pixels[index + 1] = 0;
-            m_Pixels[index + 2] = 0;
-            m_Pixels[index + 3] = 0;
-            return;
-        }
-
         const std::uint32_t hash = HashPixel(
             static_cast<std::uint32_t>(x),
             static_cast<std::uint32_t>(y));
+
+        const std::size_t cell = static_cast<std::size_t>(y) * m_Width + x;
+        const Material wall = static_cast<Material>(m_Backwall[cell]);
+
+        // The rock wall behind dug-out space: the same material, much
+        // darker, with a coarse texture so tunnels read as cut into the
+        // ground rather than holes onto the sky.
+        float wallR = 0.0f;
+        float wallG = 0.0f;
+        float wallB = 0.0f;
+
+        if (wall != Material::Air)
+        {
+            const MaterialInfo& wallInfo = GetMaterialInfo(wall);
+
+            float f = 0.30f + static_cast<float>(HashPixel(
+                static_cast<std::uint32_t>(x / 4),
+                static_cast<std::uint32_t>(y / 3)) % 100u) * 0.0012f;
+
+            f += static_cast<float>(hash % 100u) * 0.0004f;
+            f *= static_cast<float>(m_DepthShade[cell]) / 255.0f;
+
+            wallR = wallInfo.R * f;
+            wallG = wallInfo.G * f;
+            wallB = wallInfo.B * f * 1.08f;
+        }
+
+        if (info.Alpha == 0)
+        {
+            const bool hasWall = wall != Material::Air;
+
+            m_Pixels[index + 0] = static_cast<std::uint8_t>(std::min(255.0f, wallR));
+            m_Pixels[index + 1] = static_cast<std::uint8_t>(std::min(255.0f, wallG));
+            m_Pixels[index + 2] = static_cast<std::uint8_t>(std::min(255.0f, wallB));
+            m_Pixels[index + 3] = hasWall ? 255 : 0;
+            return;
+        }
+
+        if (info.Behavior == MaterialBehavior::Liquid)
+        {
+            // Liquids: translucent, with a bright skin where they meet
+            // the air. Lava ignores depth darkening - it glows.
+            const Material above = GetMaterial(x, y - 1);
+            const bool surfaceSkin = above != material && y > 0;
+
+            float factor = 0.9f + static_cast<float>(hash % 1000u) * 0.0002f;
+
+            if (material == Material::Lava)
+            {
+                factor = 0.8f + static_cast<float>(hash % 1000u) * 0.0004f;
+
+                if (surfaceSkin)
+                    factor *= 1.25f;
+            }
+            else
+            {
+                factor *= static_cast<float>(
+                    m_DepthShade[static_cast<std::size_t>(y) * m_Width + x]) / 255.0f;
+
+                if (surfaceSkin)
+                    factor *= 1.55f;
+            }
+
+            const std::uint8_t alpha = surfaceSkin
+                ? static_cast<std::uint8_t>(std::min(255, info.Alpha + 50))
+                : info.Alpha;
+
+            if (wall != Material::Air)
+            {
+                // Underground, blend over the rock wall ourselves so the
+                // pixel stays opaque.
+                const float a = static_cast<float>(alpha) / 255.0f;
+
+                m_Pixels[index + 0] = static_cast<std::uint8_t>(std::min(255.0f,
+                    Shade(info.R, factor) * a + wallR * (1.0f - a)));
+                m_Pixels[index + 1] = static_cast<std::uint8_t>(std::min(255.0f,
+                    Shade(info.G, factor) * a + wallG * (1.0f - a)));
+                m_Pixels[index + 2] = static_cast<std::uint8_t>(std::min(255.0f,
+                    Shade(info.B, factor) * a + wallB * (1.0f - a)));
+                m_Pixels[index + 3] = 255;
+                return;
+            }
+
+            m_Pixels[index + 0] = Shade(info.R, factor);
+            m_Pixels[index + 1] = Shade(info.G, factor);
+            m_Pixels[index + 2] = Shade(info.B, factor);
+            m_Pixels[index + 3] = alpha;
+            return;
+        }
 
         // Per-pixel grain plus baked depth darkening.
         float factor = 0.85f + static_cast<float>(hash % 1000u) * 0.0003f;
@@ -631,6 +1344,33 @@ namespace Atlas
                 factor *= 1.75f;
             break;
 
+        case Material::Sand:
+            // Fine speckle of darker and lighter grains.
+            if (hash % 7u == 0u)
+                factor *= 0.86f;
+            else if (hash % 13u == 0u)
+                factor *= 1.1f;
+            break;
+
+        case Material::Gravel:
+            // Pebbles: chunky 2x2 cells of varying tone.
+            factor *= 0.75f + static_cast<float>(HashPixel(
+                static_cast<std::uint32_t>(x / 2),
+                static_cast<std::uint32_t>(y / 2)) % 100u) * 0.005f;
+            break;
+
+        case Material::Obsidian:
+            // Glassy glints.
+            if (hash % 17u == 0u)
+                factor *= 1.9f;
+            break;
+
+        case Material::Bedrock:
+            factor *= 0.8f + static_cast<float>(HashPixel(
+                static_cast<std::uint32_t>(x / 5),
+                static_cast<std::uint32_t>(y / 4)) % 100u) * 0.003f;
+            break;
+
         default:
             break;
         }
@@ -655,6 +1395,7 @@ namespace Atlas
         case Material::Stone: chroma = 0.09f; break;
         case Material::Grass: chroma = 0.12f; break;
         case Material::Gold: chroma = 0.05f; break;
+        case Material::Sand: chroma = 0.08f; break;
         default: break;
         }
 

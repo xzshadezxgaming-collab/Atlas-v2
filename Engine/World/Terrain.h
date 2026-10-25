@@ -46,6 +46,9 @@ namespace Atlas
         // Raw material layer, row-major, one Material id per pixel
         // (state hashing, serialization).
         const std::uint8_t* GetMaterialData() const;
+
+        // Color layer, row-major RGBA (minimap, screenshots).
+        const std::uint8_t* GetPixelData() const;
         void SetMaterial(int x, int y, Material material);
 
         // World-space solidity query. Outside the world: the sides and the
@@ -98,6 +101,21 @@ namespace Atlas
         // Returns how many pixels were placed.
         int PlaceCircle(float centerX, float centerY, float radius, Material material);
 
+        // Advances the falling-sand simulation one tick: powders (sand,
+        // gravel) fall and pile, liquids (water, lava) flow and level
+        // out, and lava meeting water hardens into obsidian. Only regions
+        // where something changed recently are processed, so a settled
+        // world costs almost nothing. Fully deterministic.
+        void Simulate();
+
+        // Spots where lava met water since the last call (for steam
+        // effects). Cleared by the call.
+        std::vector<DestroyedPixel> TakeReactions();
+
+        // Number of 32x32 regions the simulation will visit next tick
+        // (0 = everything has settled).
+        int GetAwakeRegionCount() const;
+
         // Uploads any edited region to the GPU texture. Call once per frame
         // before drawing. Does nothing without a texture.
         void Update();
@@ -105,7 +123,13 @@ namespace Atlas
         void Draw(Window& window);
 
     private:
+        static constexpr int ChunkSize = 32;
+
         void Generate(unsigned int seed);
+        void Wake(int x, int y);
+        void UpdateCell(int x, int y);
+        bool CanDisplace(int x, int y, Material mover) const;
+        void MoveCell(int fromX, int fromY, int toX, int toY);
         void RebuildAllPixels();
         void WritePixelColor(int x, int y, Material material);
         void MarkDirty(int x, int y);
@@ -117,11 +141,26 @@ namespace Atlas
         std::vector<std::uint8_t> m_Materials;
         std::vector<std::uint8_t> m_Pixels;
 
+        // What each pixel was at generation (Air above the surface): the
+        // rock wall seen behind tunnels and caves once it's dug out.
+        std::vector<std::uint8_t> m_Backwall;
+
         // Per-pixel brightness factor (255 = full) baked at generation:
         // terrain gets darker with depth below the original surface.
         std::vector<std::uint8_t> m_DepthShade;
 
         SDL_Texture* m_Texture;
+
+        // Falling-sand bookkeeping: which chunks to visit this tick and
+        // next, and a per-pixel stamp so nothing moves twice in a tick.
+        int m_ChunksX;
+        int m_ChunksY;
+        std::vector<std::uint8_t> m_ChunkAwake;
+        std::vector<std::uint8_t> m_ChunkAwakeNext;
+        std::vector<std::uint8_t> m_MoveStamp;
+        std::uint8_t m_Stamp;
+        std::uint32_t m_SimTick;
+        std::vector<DestroyedPixel> m_Reactions;
 
         bool m_DirtyAll;
         int m_DirtyMinX;

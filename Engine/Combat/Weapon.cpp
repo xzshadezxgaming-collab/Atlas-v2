@@ -407,9 +407,7 @@ namespace Atlas
                             continue;
                         }
 
-                        const bool isHardMaterial =
-                            material == Material::Stone ||
-                            material == Material::Gold;
+                        const bool isHardMaterial = info.Hard;
 
                         const float effectiveStrength = info.Strength *
                             (isHardMaterial

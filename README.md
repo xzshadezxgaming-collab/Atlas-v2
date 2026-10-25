@@ -9,8 +9,18 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
 - **Per-pixel destructible terrain** — the world is a material grid
   (grass, dirt, stone, gold veins) paired with a streamed GPU texture.
   Every collision query, dig, and edit works on individual pixels.
-- **Procedural world generation** — rolling, seeded landscapes with
-  layered materials and scattered gold veins.
+- **Living terrain** — a falling-sand simulation runs on the material
+  grid. Sand and gravel slide and pile when undermined; water and lava
+  flow, pool and level out; lava meeting water flashes to steam and
+  hardens to obsidian. Only 32x32 regions where something can still
+  move are simulated, so a settled world costs almost nothing. Lava
+  burns, water slows you down, and an indestructible bedrock floor
+  keeps anyone from digging out of the map.
+- **Procedural world generation** — seeded landscapes with a dirt
+  crust over stone, desert dunes, sand and gravel pockets, gold veins
+  that get richer with depth, winding cave systems with chambers, and
+  level pools of water (lava further down). Dug-out space shows the
+  rock wall behind it.
 - **Limb-based actor physics** — Cortex Command-style walkers: the torso
   is one hitbox and each leg is a limb with its own foot hitbox. Feet
   find and hold real footholds in the pixel terrain, plant at different
@@ -256,6 +266,8 @@ Debug with AddressSanitizer + UBSan) and on Windows with MSVC.
   deterministic simulation, headless tests and CI
 - [x] **Networking**: deterministic lockstep co-op for 2-4 players over
   ENet, late join by replay, desync detection
+- [x] **Living terrain**: data-driven materials, falling sand, liquids,
+  lava/water reactions, caves and pools, bedrock
 - [ ] **Networking, next**: client-side prediction (or rollback) to hide
   input delay, snapshot-based join for long matches, reconnects,
   cross-platform float determinism
