@@ -89,6 +89,20 @@ namespace Atlas
         std::vector<WeaponDef> Weapons;
 
         GameMode Mode = GameMode::BrainAssault;
+
+        // 0 easy, 1 normal, 2 hard: how hard and how often the enemy
+        // drops come, and how much gold you start with.
+        int Difficulty = 1;
+    };
+
+    // Running totals for the end-of-match screen (the players' side).
+    struct MatchStats
+    {
+        int EnemiesKilled = 0;
+        int BodiesLost = 0;     // player bodies and AI units
+        int GoldMined = 0;
+        int BodiesOrdered = 0;
+        std::uint64_t EndTick = 0; // tick the match was decided, 0 = still on
     };
 
     // A player-controlled body plus the per-player bookkeeping that used
@@ -197,6 +211,12 @@ namespace Atlas
         // What the World would charge for an order.
         int PriceOrder(const OrderRequest& order) const;
 
+        // Lands an AI unit for the players' side at x (menu backdrops,
+        // scenarios). weapon null = the default rifleman.
+        void AddAlly(float x, const WeaponDef* weapon = nullptr);
+
+        void SetAllyOrder(AllyOrder order);
+
         // Turns new enemy waves on/off (existing enemies are unaffected).
         void SetBotsEnabled(bool enabled);
         bool IsBotsEnabled() const;
@@ -257,6 +277,8 @@ namespace Atlas
         void AddTeamGold(int team, int amount);
 
         AllyOrder GetAllyOrder() const;
+        const MatchStats& GetStats() const;
+        int GetDifficulty() const;
 
     private:
         // Uniform in [-1, 1). Hand-rolled on top of mt19937 (whose output
@@ -321,6 +343,9 @@ namespace Atlas
         TeamBase m_Bases[TeamCount];
         int m_TeamGold[TeamCount];
         float m_BrainAlarmTimer;
+
+        int m_Difficulty;
+        MatchStats m_Stats;
 
         AllyOrder m_AllyOrder;
         int m_AllyOrderPlayer; // who gave a Follow order

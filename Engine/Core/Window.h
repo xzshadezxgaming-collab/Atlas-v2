@@ -23,6 +23,11 @@ namespace Atlas
 
         void SetTitle(const std::string& title);
 
+        void SetFullscreen(bool fullscreen);
+
+        // Typed characters arrive as text events only while enabled.
+        void SetTextInput(bool enabled);
+
         void SetCamera(const Camera* camera);
 
         void DrawFilledRect(

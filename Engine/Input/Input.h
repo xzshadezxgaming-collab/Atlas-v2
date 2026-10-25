@@ -2,6 +2,8 @@
 
 #include <SDL3/SDL.h>
 
+#include <string>
+
 namespace Atlas
 {
     class Input
@@ -29,7 +31,13 @@ namespace Atlas
         static void AccumulateWheel(float amount);
         static int ConsumeWheelSteps();
 
+        // Typed text (from SDL text input events) since the last call.
+        static void AppendText(const char* text);
+        static std::string ConsumeText();
+
     private:
+        static std::string s_Text;
+
         static float s_WheelAccumulator;
 
         static const bool* s_KeyboardState;
