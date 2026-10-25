@@ -104,6 +104,15 @@ namespace Atlas
                 window.DrawFilledRect(x + 1.0f, y - 6.0f, 3.0f, 6.0f,
                     50, 54, 62, 255);
             }
+            else if (kind == DeliveryKind::Drone)
+            {
+                // Folded drone: steel case, rotor arms tucked, team light.
+                window.DrawFilledRect(x - 7.0f, y - 12.0f, 14.0f, 10.0f, 24, 22, 27, 255);
+                window.DrawFilledRect(x - 6.0f, y - 11.0f, 12.0f, 8.0f, 92, 98, 110, 255);
+                window.DrawFilledRect(x - 10.0f, y - 12.0f, 20.0f, 2.0f, 50, 52, 60, 255);
+                window.DrawFilledRect(x - 1.0f, y - 8.0f, 2.0f, 2.0f,
+                    team == 0 ? 90 : 255, team == 0 ? 170 : 80, team == 0 ? 255 : 60, 255);
+            }
             else if (kind == DeliveryKind::WeaponPickup)
             {
                 // Olive-drab weapon case, distinct from the wooden
@@ -141,10 +150,12 @@ namespace Atlas
         float targetX,
         const WeaponDef* weapon,
         int ownerPlayer,
-        int team)
+        int team,
+        int bodyClass)
     {
         Delivery delivery;
         delivery.Team = team;
+        delivery.BodyClass = bodyClass;
         delivery.Kind = kind;
         delivery.ShipX = originX;
         delivery.ShipDir = shipDir;

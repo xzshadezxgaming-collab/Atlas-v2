@@ -25,6 +25,7 @@ namespace Atlas
         Dust,      // soft tan puff (footsteps, landings), ignores terrain
         Shockwave, // expanding blast ring (explosions), ignores terrain
         Flash,     // brief bright light bloom at a point, ignores terrain
+        Flame,     // burning fuel: hurts and ignites actors, burns grass
     };
 
     struct Particle
@@ -66,6 +67,24 @@ namespace Atlas
         int Amount;
     };
 
+    // Something round that bullets and flames can hit besides actors
+    // (drones). Set before each Update; hits are reported, not applied.
+    struct HitCircle
+    {
+        float X;
+        float Y;
+        float Radius;
+        std::uint32_t Id;
+        int Team;
+    };
+
+    struct CircleHit
+    {
+        std::uint32_t Id;
+        int Damage;
+        bool Fire;
+    };
+
     // One pool for every moving pixel in the game: bullets, debris, blood,
     // sparks, smoke and gibs. Movement steps at most one pixel at a time
     // (DDA) so fast particles never tunnel through thin terrain.
@@ -82,6 +101,26 @@ namespace Atlas
             int damage,
             float power,
             Actor* owner);
+
+        // Same, for shooters that aren't actors (drones).
+        void SpawnBullet(
+            float x,
+            float y,
+            float velX,
+            float velY,
+            int damage,
+            float power,
+            std::uint32_t ownerId,
+            int ownerTeam);
+
+        void SpawnFlame(
+            float x,
+            float y,
+            float velX,
+            float velY,
+            int damage,
+            std::uint32_t ownerId,
+            int ownerTeam);
 
         void SpawnDebris(float x, float y, float velX, float velY, Material material);
         void SpawnBlood(float x, float y, float velX, float velY);
@@ -115,6 +154,9 @@ namespace Atlas
 
         void Draw(Window& window) const;
 
+        void SetHitCircles(const std::vector<HitCircle>& circles);
+        const std::vector<CircleHit>& GetCircleHits() const;
+
         int GetActiveCount() const;
         void Clear();
 
@@ -143,7 +185,12 @@ namespace Atlas
         // Deterministic-ish cheap RNG for spread/bursts.
         float RandomUnit();
 
+        // Tests p against the hit circles; records a hit and returns true.
+        bool HitTestCircles(const Particle& p);
+
         std::vector<Particle> m_Particles;
+        std::vector<HitCircle> m_Circles;
+        std::vector<CircleHit> m_CircleHits;
         std::uint32_t m_RandomState;
     };
 }

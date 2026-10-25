@@ -4,7 +4,24 @@ A 2D game engine inspired by the technology behind **Cortex Command**:
 fully destructible per-pixel terrain, pixel-level physics, and
 material-driven gameplay — rebuilt on modern C++ and SDL3.
 
-## Current features (v0.6.0)
+## Current features (v0.7.0)
+
+- **Arsenal and bodies** — three builds to order: the fast, fragile
+  **SCOUT** (70 health, quicker legs and jetpack), the **RIFLEMAN**
+  (100), and the armored **HEAVY** (200 health, takes 30% less from
+  every hit, slow and thirsty on jet fuel), each drawn with its own
+  gear. Every body carries its own inventory of up to six items, and
+  whoever drives a body uses what it carries: switch bodies with Q and
+  you get that body's kit, pick up a weapon crate and it joins your
+  items instead of replacing them. New weapons: a **sniper rifle**
+  with a laser sight that punches deep into rock, a **rocket
+  launcher** whose rockets accelerate and burst on contact, and a
+  **flamethrower** that sets bodies alight (water puts them out) and
+  burns grass away; lava sets you on fire too. **Drones** are small
+  flying gun platforms you can order: they hover over the ground,
+  follow your squad orders and shoot what they can see, and the enemy
+  starts sending its own from the third drop on, along with heavies
+  carrying rockets and scouts with shotguns and flamethrowers.
 
 - **Menus and screens** — a main menu over a live AI battle, skirmish
   and host setup (mode, map size, difficulty, seed, port), a join
@@ -60,7 +77,7 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
   blood stains it.
 - **Weapons on an IK aim arm** — SMG, shotgun, rifle, a terrain
   digger, and a shovel, aimed with the mouse, with recoil, spread,
-  clips and reloads; switch with 1-5 or the scroll wheel.
+  clips and reloads; switch with 1-6 or the scroll wheel.
   All stats data-driven from `Assets/weapons.ini` — tune or add weapons
   without recompiling.
 - **Specialized dig tools** — the digger is a rock/ore specialist:
@@ -87,8 +104,8 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
   and shown in the HUD.
 - **Buy menu: a real Cortex Command-style order cart** — hold Tab to
   open a floating wheel above the player; BUY opens an order panel with
-  a catalog (a RIFLEMAN body, all five weapons/tools, and a SUPPLY
-  CRATE) and a running cart. Buying a body makes it the active
+  a catalog (SCOUT, RIFLEMAN and HEAVY bodies, every weapon and tool,
+  DRONES and SUPPLY CRATES) and a running cart. Buying a body makes it the active
   assignment target: every weapon bought afterward equips onto that
   body (replacing whatever it had), instead of just always handing out
   a generic rifleman. An "EQUIP:" toggle lets you switch which cart
@@ -103,9 +120,9 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
   Command-style drop-ship delivery per line: reinforcement bodies land
   and fight already equipped with whatever you assigned; loose weapons
   parachute down as a distinct olive weapon case that sits on the
-  ground until you walk over it, instantly equipping (and fully
-  reloading) that weapon; supply crates still heal and refill your
-  current weapon on landing. Each delivery ship flies in from off to
+  ground until you walk over it, adding (fully loaded) that weapon to
+  your body's items; supply crates heal and refill everything you
+  carry; drones unfold and take off. Each delivery ship flies in from off to
   one side and out the other while its payload parachutes down
   independently. The world keeps running while the menu is open, but
   it captures clicks so you don't fire through it.
@@ -168,7 +185,7 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
 | Mouse | Aim |
 | Left mouse | Fire |
 | Right mouse | Throw grenade |
-| 1-5 / scroll wheel | SMG / Shotgun / Rifle / Digger / Shovel |
+| 1-6 / scroll wheel | Switch between the items your body carries |
 | R | Reload |
 | Tab (hold) | Open the buy menu |
 | Q | Switch to the next friendly body |

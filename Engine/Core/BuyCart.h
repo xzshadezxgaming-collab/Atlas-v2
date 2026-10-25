@@ -14,6 +14,7 @@ namespace Atlas
         const WeaponDef* Weapon;
         int BodyCost;
         int WeaponCost; // cost of the currently-assigned weapon (0 = bundled default)
+        int Class = 1;  // its build (a BodyClass value)
     };
 
     struct CartLooseWeapon
@@ -36,7 +37,7 @@ namespace Atlas
         // Adds a reinforcement with a bundled default weapon (no extra
         // charge for it - only the body's own cost is added) and makes
         // it the active assignment target.
-        void AddBody(const WeaponDef* defaultWeapon, int bodyCost);
+        void AddBody(const WeaponDef* defaultWeapon, int bodyCost, int bodyClass = 1);
 
         // Assigns to the active body if one is selected (replacing
         // whatever weapon it had and adjusting the total by the cost
@@ -48,6 +49,10 @@ namespace Atlas
 
         // Removes one supply crate from the order, if any are queued.
         void RemoveSupplyCrate();
+
+        void AddDrone(int cost);
+        void RemoveDrone();
+        int GetDroneCount() const;
 
         // -1 deselects (subsequent weapons go loose). Out-of-range
         // indices are ignored.
@@ -72,6 +77,8 @@ namespace Atlas
         std::vector<CartLooseWeapon> m_LooseWeapons;
         int m_SupplyCrateCount = 0;
         int m_SupplyCrateCostEach = 0;
+        int m_DroneCount = 0;
+        int m_DroneCostEach = 0;
         int m_Total = 0;
         int m_ActiveBody = -1;
     };

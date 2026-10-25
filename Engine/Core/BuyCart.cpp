@@ -2,9 +2,9 @@
 
 namespace Atlas
 {
-    void BuyCart::AddBody(const WeaponDef* defaultWeapon, int bodyCost)
+    void BuyCart::AddBody(const WeaponDef* defaultWeapon, int bodyCost, int bodyClass)
     {
-        m_Bodies.push_back({ defaultWeapon, bodyCost, 0 });
+        m_Bodies.push_back({ defaultWeapon, bodyCost, 0, bodyClass });
         m_ActiveBody = static_cast<int>(m_Bodies.size()) - 1;
         m_Total += bodyCost;
     }
@@ -41,6 +41,27 @@ namespace Atlas
 
         m_SupplyCrateCount--;
         m_Total -= m_SupplyCrateCostEach;
+    }
+
+    void BuyCart::AddDrone(int cost)
+    {
+        m_DroneCount++;
+        m_DroneCostEach = cost;
+        m_Total += cost;
+    }
+
+    void BuyCart::RemoveDrone()
+    {
+        if (m_DroneCount <= 0)
+            return;
+
+        m_DroneCount--;
+        m_Total -= m_DroneCostEach;
+    }
+
+    int BuyCart::GetDroneCount() const
+    {
+        return m_DroneCount;
     }
 
     void BuyCart::SelectBody(int index)
@@ -85,6 +106,8 @@ namespace Atlas
         m_LooseWeapons.clear();
         m_SupplyCrateCount = 0;
         m_SupplyCrateCostEach = 0;
+        m_DroneCount = 0;
+        m_DroneCostEach = 0;
         m_Total = 0;
         m_ActiveBody = -1;
     }
@@ -102,7 +125,7 @@ namespace Atlas
     bool BuyCart::IsEmpty() const
     {
         return m_Bodies.empty() && m_LooseWeapons.empty() &&
-            m_SupplyCrateCount == 0;
+            m_SupplyCrateCount == 0 && m_DroneCount == 0;
     }
 
     const std::vector<CartBody>& BuyCart::GetBodies() const

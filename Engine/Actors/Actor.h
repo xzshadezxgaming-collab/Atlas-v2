@@ -29,6 +29,30 @@ namespace Atlas
         None,
     };
 
+    // Body builds you can order. Light bodies are fast and fragile,
+    // heavies are slow, armored and hard to kill.
+    enum class BodyClass : std::uint8_t
+    {
+        Light,
+        Medium,
+        Heavy,
+
+        Count
+    };
+
+    struct BodyClassInfo
+    {
+        const char* Name;
+        int MaxHealth;
+        float Speed;   // walk speed multiplier
+        float Jet;     // jetpack thrust multiplier
+        float Burn;    // jet fuel burn multiplier
+        float Armor;   // damage taken multiplier
+        int Cost;      // gold to order one
+    };
+
+    const BodyClassInfo& GetBodyClassInfo(BodyClass bodyClass);
+
     // A walking character, Cortex Command style: the torso is one hitbox
     // and each leg is a Limb with its own foot hitbox. Feet find and hold
     // real footholds in the pixel terrain. Carries a weapon on an IK aim
@@ -94,8 +118,29 @@ namespace Atlas
         void SetAim(float targetX, float targetY);
         void ClearAim();
 
+        // --- Inventory ---
+        // Each body carries its own items; whoever drives it uses them.
+
+        static constexpr int MaxItems = 6;
+
+        // Replaces the whole inventory with this one item.
         void SetWeaponDef(const WeaponDef* def);
+
+        // Adds an item (a duplicate just refills the one carried; with
+        // no room, it replaces the held item) and switches to it.
+        void AddItem(const WeaponDef* def);
+        void SelectItem(int index);
+        int GetSelectedItem() const;
+        int GetItemCount() const;
+        const Weapon& GetItem(int index) const;
+        void RefillAll();
+
+        // For the AI: hold the first real weapon, not a dig tool.
+        void SelectBestWeapon();
+
+        // The held item.
         Weapon& GetWeapon();
+        const Weapon& GetWeapon() const;
 
         float GetAimDirX() const;
         float GetAimDirY() const;
@@ -118,6 +163,15 @@ namespace Atlas
 
         bool IsAlive() const;
         int GetHealth() const;
+        int GetMaxHealth() const;
+
+        void SetBodyClass(BodyClass bodyClass);
+        BodyClass GetBodyClass() const;
+
+        // On fire: burns for a while unless put out by water.
+        void Ignite(float seconds);
+        void Extinguish();
+        bool IsBurning() const;
         void TakeDamage(int damage, float impulseX, float impulseY);
         void Heal(int amount);
 
@@ -214,6 +268,7 @@ namespace Atlas
         void TryLand(const Terrain& terrain);
 
         void DrawArmAndWeapon(Window& window) const;
+        void DrawBuildDetails(Window& window, float spriteX, float spriteY) const;
         void DrawDigBeam(Window& window) const;
 
         float HipWorldX(int leg) const;
@@ -261,10 +316,14 @@ namespace Atlas
         bool m_HasAim;
         float m_AimDirX;
         float m_AimDirY;
-        Weapon m_Weapon;
+        Weapon m_Items[MaxItems];
+        int m_ItemCount;
+        int m_Selected;
         float m_MuzzleFlash;
 
         // Vitals
+        BodyClass m_Class;
+        float m_BurnTimer;
         int m_Health;
         int m_Team;
         float m_Fuel;

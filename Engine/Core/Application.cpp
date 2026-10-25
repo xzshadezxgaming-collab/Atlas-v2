@@ -61,7 +61,6 @@ namespace Atlas
             WheelButtonW * 3.0f + WheelGap * 2.0f;
 
         constexpr float BuyPanelW = 260.0f;
-        constexpr float BuyPanelH = 328.0f;
         constexpr float CloseButtonSize = 18.0f;
 
         // Order-panel catalog row layout.
@@ -142,6 +141,8 @@ namespace Atlas
             std::string Name;
             int Cost;
             const WeaponDef* Weapon; // Body: default loadout; Weapon: itself; Item: null
+            int Class = 1;           // Body: its build
+            bool Drone = false;      // Item: a drone rather than a supply crate
         };
 
         // One line in the cart summary display: a purchased body (with
@@ -150,7 +151,7 @@ namespace Atlas
         struct CartLine
         {
             std::string Text;
-            int Kind; // 0 = body, 1 = loose weapon group, 2 = supply crates
+            int Kind; // 0 = body, 1 = loose weapon group, 2 = supply crates, 3 = drones
             int RefIndex; // body index, or the loose weapon's first index
         };
 
@@ -236,7 +237,7 @@ namespace Atlas
     {
         std::cout << "=================================\n";
         std::cout << "        ATLAS ENGINE\n";
-        std::cout << "           v0.6.0\n";
+        std::cout << "           v0.7.0\n";
         std::cout << "=================================\n\n";
 
         if (!m_Window.Create("Atlas", ViewWidth, ViewHeight))
@@ -709,7 +710,7 @@ namespace Atlas
                     { "MOUSE", "AIM" },
                     { "LEFT MOUSE", "FIRE" },
                     { "RIGHT MOUSE", "THROW GRENADE" },
-                    { "1-5 / WHEEL", "SMG, SHOTGUN, RIFLE, DIGGER, SHOVEL" },
+                    { "1-6 / WHEEL", "SWITCH BETWEEN THE ITEMS THIS BODY CARRIES" },
                     { "R", "RELOAD" },
                     { "TAB (HOLD)", "BUY MENU: ORDER BODIES, WEAPONS, SUPPLIES" },
                     { "Q", "SWITCH TO THE NEXT FRIENDLY BODY" },
@@ -894,11 +895,6 @@ namespace Atlas
         constexpr int MaxAllies = World::MaxAllies;
         constexpr float RespawnTime = 3.0f;
 
-        const WeaponDef* loadout[LoadoutSize];
-
-        for (int i = 0; i < LoadoutSize; i++)
-            loadout[i] = world.GetLoadoutWeapon(i);
-
         const WeaponDef* allyWeapon = world.GetAllyWeapon();
 
         // One body sprite, shared by every actor (tinted per team).
@@ -928,25 +924,36 @@ namespace Atlas
 
         BuyCart cart;
 
-        // Catalog is fixed for the whole run (built from the same
-        // WeaponDefs the player's own loadout uses), so it - and the
+        // Catalog is fixed for the whole run (built from the match's
+        // WeaponDefs), so it - and the
         // vertical offset of each row within the panel - are computed
         // once rather than every frame.
         std::vector<CatalogEntry> catalog;
-        catalog.push_back(
-            { CatalogKind::Body, "RIFLEMAN", World::ReinforcementCost, allyWeapon });
 
-        for (int i = 0; i < LoadoutSize; i++)
+        for (int c = 0; c < static_cast<int>(BodyClass::Count); c++)
         {
-            std::string name = loadout[i]->Name;
+            const BodyClassInfo& info = GetBodyClassInfo(static_cast<BodyClass>(c));
+
+            catalog.push_back(
+                { CatalogKind::Body, info.Name, info.Cost, allyWeapon, c });
+        }
+
+        // Everything for sale (the enemy's own gun isn't).
+        for (const WeaponDef& def : world.GetWeaponDefs())
+        {
+            if (def.Cost <= 0)
+                continue;
+
+            std::string name = def.Name;
 
             for (char& c : name)
                 c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
 
-            catalog.push_back(
-                { CatalogKind::Weapon, name, loadout[i]->Cost, loadout[i] });
+            catalog.push_back({ CatalogKind::Weapon, name, def.Cost, &def });
         }
 
+        catalog.push_back(
+            { CatalogKind::Item, "DRONE", World::DroneCost, nullptr, 1, true });
         catalog.push_back(
             { CatalogKind::Item, "SUPPLY CRATE", World::SupplyCrateCost, nullptr });
 
@@ -986,6 +993,7 @@ namespace Atlas
         const float sendButtonOffset = totalLineOffset + 14.0f;
         const float clearButtonOffset =
             sendButtonOffset + SendButtonH + 6.0f;
+        const float BuyPanelH = clearButtonOffset + ClearButtonH + 8.0f;
 
         // Builds the (up to) one-line-per-order-item cart summary,
         // grouping identical loose weapons together. Recomputed on
@@ -1005,8 +1013,11 @@ namespace Atlas
                     c = static_cast<char>(
                         std::toupper(static_cast<unsigned char>(c)));
 
+                const std::string build =
+                    GetBodyClassInfo(static_cast<BodyClass>(bodies[i].Class)).Name;
+
                 lines.push_back(
-                    { "RIFLEMAN + " + weaponName, 0, static_cast<int>(i) });
+                    { build + " + " + weaponName, 0, static_cast<int>(i) });
             }
 
             const std::vector<CartLooseWeapon>& loose = cart.GetLooseWeapons();
@@ -1051,6 +1062,17 @@ namespace Atlas
                     "SUPPLY CRATE";
 
                 lines.push_back({ text, 2, 0 });
+            }
+
+            if (cart.GetDroneCount() > 0)
+            {
+                const std::string text =
+                    (cart.GetDroneCount() > 1
+                        ? std::to_string(cart.GetDroneCount()) + "x "
+                        : std::string()) +
+                    "DRONE";
+
+                lines.push_back({ text, 3, 0 });
             }
 
             return lines;
@@ -1328,12 +1350,13 @@ namespace Atlas
             // A menu is up: the game gets no input (and offline, no time).
             const bool modal = paused || resultsShown;
 
-            // Weapon switching (1-5 or scroll wheel) and reload are
+            // Item switching (1-6 or scroll wheel) and reload are
             // edge-triggered per frame and latched for the next tick.
             if (player.IsAlive())
             {
                 const int shownSlot =
-                    slotQueued >= 0 ? slotQueued : localSlot().CurrentSlot;
+                    slotQueued >= 0 ? slotQueued : player.GetSelectedItem();
+                const int itemCount = std::max(1, player.GetItemCount());
                 int slot = shownSlot;
 
                 if (Input::WasKeyPressed(SDL_SCANCODE_1)) slot = 0;
@@ -1341,13 +1364,17 @@ namespace Atlas
                 if (Input::WasKeyPressed(SDL_SCANCODE_3)) slot = 2;
                 if (Input::WasKeyPressed(SDL_SCANCODE_4)) slot = 3;
                 if (Input::WasKeyPressed(SDL_SCANCODE_5)) slot = 4;
+                if (Input::WasKeyPressed(SDL_SCANCODE_6)) slot = 5;
+
+                if (slot >= itemCount)
+                    slot = shownSlot;
 
                 const int wheel = Input::ConsumeWheelSteps();
 
                 if (wheel != 0)
                 {
-                    slot = (slot - wheel % LoadoutSize + LoadoutSize) %
-                        LoadoutSize;
+                    slot = (slot - wheel % itemCount + itemCount) %
+                        itemCount;
                 }
 
                 if (slot != shownSlot)
@@ -1418,10 +1445,12 @@ namespace Atlas
             const float wheelScreenY =
                 menuAnchorY - WheelButtonH * 0.5f - uiCameraY;
 
-            const float panelScreenX =
-                menuAnchorX - BuyPanelW * 0.5f - uiCameraX;
-            const float panelScreenY =
-                menuAnchorY - BuyPanelH * 0.5f - uiCameraY;
+            const float panelScreenX = std::clamp(
+                menuAnchorX - BuyPanelW * 0.5f - uiCameraX,
+                8.0f, static_cast<float>(ViewWidth) - BuyPanelW - 8.0f);
+            const float panelScreenY = std::clamp(
+                menuAnchorY - BuyPanelH * 0.5f - uiCameraY,
+                66.0f, static_cast<float>(ViewHeight) - BuyPanelH - 8.0f); // below the top HUD
 
             const float closeScreenX =
                 panelScreenX + BuyPanelW - CloseButtonSize - 6.0f;
@@ -1489,13 +1518,16 @@ namespace Atlas
                         switch (entry.Kind)
                         {
                         case CatalogKind::Body:
-                            cart.AddBody(entry.Weapon, entry.Cost);
+                            cart.AddBody(entry.Weapon, entry.Cost, entry.Class);
                             break;
                         case CatalogKind::Weapon:
                             cart.AddWeapon(entry.Weapon, entry.Cost);
                             break;
                         case CatalogKind::Item:
-                            cart.AddSupplyCrate(entry.Cost);
+                            if (entry.Drone)
+                                cart.AddDrone(entry.Cost);
+                            else
+                                cart.AddSupplyCrate(entry.Cost);
                             break;
                         }
 
@@ -1565,7 +1597,12 @@ namespace Atlas
                             OrderRequest order;
 
                             for (const CartBody& body : cart.GetBodies())
-                                order.Bodies.push_back(body.Weapon);
+                            {
+                                order.Bodies.push_back(
+                                    { body.Weapon, static_cast<std::uint8_t>(body.Class) });
+                            }
+
+                            order.Drones = cart.GetDroneCount();
 
                             for (const CartLooseWeapon& loose :
                                 cart.GetLooseWeapons())
@@ -1624,6 +1661,8 @@ namespace Atlas
                         cart.RemoveBody(lines[i].RefIndex);
                     else if (lines[i].Kind == 1)
                         cart.RemoveLooseWeapon(lines[i].RefIndex);
+                    else if (lines[i].Kind == 3)
+                        cart.RemoveDrone();
                     else
                         cart.RemoveSupplyCrate();
 
@@ -1828,7 +1867,8 @@ namespace Atlas
 
             {
                 const float healthFill =
-                    std::max(0, player.GetHealth()) / 100.0f;
+                    std::max(0, player.GetHealth()) /
+                        static_cast<float>(player.GetMaxHealth());
 
                 if (healthFill >= healthGhost)
                     healthGhost = healthFill;
@@ -1947,6 +1987,106 @@ namespace Atlas
 
             for (Ally& ally : allies)
                 ally.Body->Draw(m_Window);
+
+            // Drones: a little gun pod under two rotors, a team light.
+            for (const Drone& drone : world.GetDrones())
+            {
+                const float x = std::floor(drone.X);
+                const float y = std::floor(drone.Y + std::sin(drone.Phase * 9.0f) * 0.5f);
+                const bool hurt = drone.HurtFlash > 0.0f;
+                const Uint8 shell = hurt ? 230 : 84;
+
+                // Rotor arms and spinning blades (two blur widths).
+                m_Window.DrawFilledRect(x - 11.0f, y - 5.0f, 22.0f, 2.0f, 34, 34, 40, 255);
+
+                const float blade = 4.0f + std::fabs(std::sin(drone.Phase * 40.0f)) * 5.0f;
+
+                for (int side = -1; side <= 1; side += 2)
+                {
+                    const float rx = x + static_cast<float>(side) * 10.0f;
+                    m_Window.DrawFilledRect(rx - 1.0f, y - 8.0f, 2.0f, 3.0f, 40, 40, 46, 255);
+                    m_Window.DrawFilledRect(rx - blade, y - 9.0f, blade * 2.0f, 1.0f, 200, 205, 215, 140);
+                }
+
+                // Body.
+                m_Window.DrawFilledRect(x - 7.0f, y - 4.0f, 14.0f, 9.0f, 24, 22, 27, 255);
+                m_Window.DrawFilledRect(x - 6.0f, y - 3.0f, 12.0f, 7.0f, shell,
+                    static_cast<Uint8>(hurt ? 230 : 90), static_cast<Uint8>(hurt ? 230 : 102), 255);
+                m_Window.DrawFilledRect(x - 6.0f, y - 3.0f, 12.0f, 2.0f,
+                    static_cast<Uint8>(hurt ? 255 : 118), static_cast<Uint8>(hurt ? 255 : 124),
+                    static_cast<Uint8>(hurt ? 255 : 138), 255);
+
+                // Team stripe and eye.
+                const Uint8 teamR = drone.Team == 0 ? 90 : 230;
+                const Uint8 teamG = drone.Team == 0 ? 150 : 70;
+                const Uint8 teamB = drone.Team == 0 ? 240 : 60;
+
+                m_Window.DrawFilledRect(x - 6.0f, y + 2.0f, 12.0f, 1.0f, teamR, teamG, teamB, 255);
+                m_Window.DrawFilledRect(x + (drone.AimX < 0.0f ? -5.0f : 2.0f), y - 1.0f, 3.0f, 2.0f,
+                    teamR, teamG, teamB, 255);
+                m_Window.DrawGlow(x, y, 9.0f, teamR, teamG, teamB, 40);
+
+                // Gun under the belly, along the aim.
+                for (int seg = 0; seg < 4; seg++)
+                {
+                    const float t = 3.0f + static_cast<float>(seg) * 2.0f;
+                    m_Window.DrawFilledRect(
+                        x + drone.AimX * t - 1.0f, y + 4.0f + drone.AimY * t - 1.0f,
+                        2.0f, 2.0f, 40, 40, 48, 255);
+                }
+
+                if (drone.Firing && drone.Cooldown > 1.0f / 6.0f - 0.04f)
+                {
+                    m_Window.DrawGlow(x + drone.AimX * 12.0f, y + 4.0f + drone.AimY * 12.0f,
+                        10.0f, 255, 200, 100, 80);
+                }
+            }
+
+            // Laser sights on player-held sniper rifles.
+            for (int slot = 0; slot < world.GetPlayerCount(); slot++)
+            {
+                Actor& body = *world.GetPlayer(slot).Body;
+                const WeaponDef* def = body.GetWeapon().GetDef();
+
+                if (!body.IsAlive() || body.IsArmDestroyed() || !def || !def->LaserSight)
+                    continue;
+
+                const float startX = body.GetMuzzleX();
+                const float startY = body.GetMuzzleY();
+                const float range = 1400.0f;
+
+                float endX = startX + body.GetAimDirX() * range;
+                float endY = startY + body.GetAimDirY() * range;
+                float hitX = 0.0f;
+                float hitY = 0.0f;
+                const bool hit = terrain.RaycastSolid(
+                    startX, startY, body.GetAimDirX(), body.GetAimDirY(), range, hitX, hitY);
+
+                if (hit)
+                {
+                    endX = hitX;
+                    endY = hitY;
+                }
+
+                const float length = std::sqrt(
+                    (endX - startX) * (endX - startX) + (endY - startY) * (endY - startY));
+                const int dots = static_cast<int>(length / 2.0f);
+
+                for (int d = 1; d < dots; d++)
+                {
+                    const float t = static_cast<float>(d) / static_cast<float>(dots);
+
+                    m_Window.DrawFilledRect(
+                        startX + (endX - startX) * t, startY + (endY - startY) * t,
+                        1.0f, 1.0f, 255, 60, 50, static_cast<Uint8>(230.0f * (1.0f - t * 0.5f)));
+                }
+
+                if (hit)
+                {
+                    m_Window.DrawGlow(endX, endY, 6.0f, 255, 60, 40, 140);
+                    m_Window.DrawFilledRect(endX - 1.0f, endY - 1.0f, 2.0f, 2.0f, 255, 140, 120, 255);
+                }
+            }
 
             // Every player, the local one last so it stays on top.
             for (int slot = 0; slot < world.GetPlayerCount(); slot++)
@@ -2233,8 +2373,10 @@ namespace Atlas
                         if (activeBody >= 0 &&
                             activeBody < static_cast<int>(cart.GetBodies().size()))
                         {
-                            assignLabel = "EQUIP: RIFLEMAN #" +
-                                std::to_string(activeBody + 1);
+                            assignLabel = std::string("EQUIP: ") +
+                                GetBodyClassInfo(static_cast<BodyClass>(
+                                    cart.GetBodies()[static_cast<std::size_t>(activeBody)].Class)).Name +
+                                " #" + std::to_string(activeBody + 1);
                         }
 
                         m_Window.DrawScreenRect(
@@ -2393,7 +2535,7 @@ namespace Atlas
                 float redPulse = hurtVignette / 0.6f;
 
                 // Low health: constant heartbeat pulse.
-                if (player.IsAlive() && player.GetHealth() < 30)
+                if (player.IsAlive() && player.GetHealth() * 10 < player.GetMaxHealth() * 3)
                 {
                     redPulse = std::max(
                         redPulse,
@@ -2502,11 +2644,25 @@ namespace Atlas
             }
 
             drawBar(14.0f,
-                std::max(0, player.GetHealth()) / 100.0f,
+                std::max(0, player.GetHealth()) /
+                    static_cast<float>(player.GetMaxHealth()),
                 205, 60, 50,
                 healthGhost);
 
             drawBar(27.0f, player.GetFuel(), 90, 150, 230);
+
+            // Which build this body is, and its health in numbers, inside
+            // the health bar.
+            {
+                const std::string build =
+                    std::string(GetBodyClassInfo(player.GetBodyClass()).Name) + " " +
+                    std::to_string(std::max(0, player.GetHealth())) + "/" +
+                    std::to_string(player.GetMaxHealth());
+
+                PixelFont::Draw(m_Window,
+                    barX + barWidth - PixelFont::Measure(build, 1.0f) - 3.0f, 15.0f,
+                    1.0f, build, 240, 236, 236, 220);
+            }
 
             const Weapon& weapon = player.GetWeapon();
 
@@ -2529,8 +2685,6 @@ namespace Atlas
                     c = static_cast<char>(std::toupper(
                         static_cast<unsigned char>(c)));
 
-                drawText(barX, 55.0f, 2.0f, info, 235, 235, 240);
-
                 std::string ammoText;
 
                 if (weapon.IsReloading())
@@ -2538,10 +2692,16 @@ namespace Atlas
                 else if (weapon.GetClipSize() > 0)
                     ammoText = std::to_string(weapon.GetAmmo()) + "/" +
                         std::to_string(weapon.GetClipSize());
-                else if (weapon.GetDef()->Kind == WeaponKind::Gun)
+                else if (!weapon.IsTool())
                     ammoText = "INF";
                 else
                     ammoText = "TOOL";
+
+                // Long names shrink to stay clear of the ammo count.
+                const float room = barWidth - PixelFont::Measure(ammoText, 2.0f) - 8.0f;
+                const float infoScale = PixelFont::Measure(info, 2.0f) <= room ? 2.0f : 1.5f;
+
+                drawText(barX, infoScale < 2.0f ? 56.0f : 55.0f, infoScale, info, 235, 235, 240);
 
                 drawText(
                     barX + barWidth - PixelFont::Measure(ammoText, 2.0f),
@@ -2553,10 +2713,12 @@ namespace Atlas
                     weapon.IsReloading() ? 60 : 215);
             }
 
-            // Weapon slots with numbers.
-            for (int i = 0; i < LoadoutSize; i++)
+            // The body's items, with their number keys.
+            const int shownItems = std::max(LoadoutSize, player.GetItemCount());
+
+            for (int i = 0; i < player.GetItemCount(); i++)
             {
-                const bool selected = i == localSlot().CurrentSlot;
+                const bool selected = i == player.GetSelectedItem();
                 const float slotX = barX + static_cast<float>(i) * 22.0f;
 
                 m_Window.DrawScreenRect(slotX, 70.0f, 18.0f, 16.0f,
@@ -2585,7 +2747,7 @@ namespace Atlas
             // to the right of the weapon slots in the same row.
             {
                 const float goldX =
-                    barX + static_cast<float>(LoadoutSize) * 22.0f + 6.0f;
+                    barX + static_cast<float>(shownItems) * 22.0f + 6.0f;
 
                 m_Window.DrawScreenRect(goldX, 73.0f, 8.0f, 8.0f,
                     24, 22, 27, 255);

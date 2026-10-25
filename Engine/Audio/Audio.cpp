@@ -272,6 +272,46 @@ namespace Atlas
                 Normalize(b, 0.2f);
                 g_Buffers[static_cast<int>(Sfx::JetBurst)] = b;
             }
+
+            // Sniper: hard supersonic crack and a long rolling echo.
+            {
+                std::vector<float> b = Synth(0.8f);
+                AddNoiseBurst(b, 0.0f, 0.06f, 1.0f, 1.6f, 0, 0.001f);
+                AddTone(b, 0.0f, 0.05f, 1400.0f, 300.0f, 0.4f, false);
+                AddNoiseBurst(b, 0.04f, 0.7f, 0.45f, 2.2f, 10);
+                AddTone(b, 0.0f, 0.25f, 110.0f, 45.0f, 0.6f, false);
+                Normalize(b, 0.7f);
+                g_Buffers[static_cast<int>(Sfx::Sniper)] = b;
+            }
+
+            // Rocket: a thump and a rising motor whoosh.
+            {
+                std::vector<float> b = Synth(0.55f);
+                AddNoiseBurst(b, 0.0f, 0.08f, 1.0f, 2.0f, 4, 0.002f);
+                AddTone(b, 0.0f, 0.08f, 160.0f, 60.0f, 0.8f, false);
+                AddNoiseBurst(b, 0.03f, 0.5f, 0.6f, 0.6f, 3, 0.05f);
+                AddTone(b, 0.03f, 0.5f, 140.0f, 260.0f, 0.15f, true);
+                Normalize(b, 0.55f);
+                g_Buffers[static_cast<int>(Sfx::Rocket)] = b;
+            }
+
+            // Flame: a soft roaring hiss (retriggered while held).
+            {
+                std::vector<float> b = Synth(0.22f);
+                AddNoiseBurst(b, 0.0f, 0.22f, 0.8f, 0.7f, 6, 0.03f);
+                AddTone(b, 0.0f, 0.22f, 70.0f, 60.0f, 0.25f, false);
+                Normalize(b, 0.22f);
+                g_Buffers[static_cast<int>(Sfx::Flame)] = b;
+            }
+
+            // Drone down: falling whine into a crunch.
+            {
+                std::vector<float> b = Synth(0.45f);
+                AddTone(b, 0.0f, 0.25f, 900.0f, 200.0f, 0.4f, true);
+                AddNoiseBurst(b, 0.2f, 0.25f, 1.0f, 2.0f, 3);
+                Normalize(b, 0.45f);
+                g_Buffers[static_cast<int>(Sfx::DroneDown)] = b;
+            }
         }
     }
 

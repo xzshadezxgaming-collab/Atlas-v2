@@ -50,6 +50,21 @@ namespace Atlas
         float power,
         Actor* owner)
     {
+        SpawnBullet(x, y, velX, velY, damage, power,
+            owner ? owner->GetId() : 0u,
+            owner ? owner->GetTeam() : -1);
+    }
+
+    void ParticleSystem::SpawnBullet(
+        float x,
+        float y,
+        float velX,
+        float velY,
+        int damage,
+        float power,
+        std::uint32_t ownerId,
+        int ownerTeam)
+    {
         Particle p{};
         p.X = x;
         p.Y = y;
@@ -66,10 +81,70 @@ namespace Atlas
         p.Size = 2;
         p.Type = ParticleType::Bullet;
         p.SettleMaterial = Material::Air;
-        p.OwnerId = owner ? owner->GetId() : 0u;
-        p.OwnerTeam = owner ? static_cast<std::int8_t>(owner->GetTeam()) : -1;
+        p.OwnerId = ownerId;
+        p.OwnerTeam = static_cast<std::int8_t>(ownerTeam);
 
         Push(p);
+    }
+
+    void ParticleSystem::SpawnFlame(
+        float x,
+        float y,
+        float velX,
+        float velY,
+        int damage,
+        std::uint32_t ownerId,
+        int ownerTeam)
+    {
+        Particle p{};
+        p.X = x;
+        p.Y = y;
+        p.VelX = velX;
+        p.VelY = velY;
+        p.Life = 0.5f + RandomUnit() * 0.1f;
+        p.MaxLife = p.Life;
+        p.Gravity = -110.0f; // hot: rises
+        p.Damage = static_cast<std::int16_t>(damage);
+        p.R = 255;
+        p.G = 150;
+        p.B = 50;
+        p.Size = 2;
+        p.Type = ParticleType::Flame;
+        p.SettleMaterial = Material::Air;
+        p.OwnerId = ownerId;
+        p.OwnerTeam = static_cast<std::int8_t>(ownerTeam);
+
+        Push(p);
+    }
+
+    void ParticleSystem::SetHitCircles(const std::vector<HitCircle>& circles)
+    {
+        m_Circles = circles;
+    }
+
+    const std::vector<CircleHit>& ParticleSystem::GetCircleHits() const
+    {
+        return m_CircleHits;
+    }
+
+    bool ParticleSystem::HitTestCircles(const Particle& p)
+    {
+        for (const HitCircle& circle : m_Circles)
+        {
+            if (circle.Id == p.OwnerId || (p.OwnerTeam >= 0 && circle.Team == p.OwnerTeam))
+                continue;
+
+            const float dx = p.X - circle.X;
+            const float dy = p.Y - circle.Y;
+
+            if (dx * dx + dy * dy > circle.Radius * circle.Radius)
+                continue;
+
+            m_CircleHits.push_back({ circle.Id, p.Damage, p.Type == ParticleType::Flame });
+            return true;
+        }
+
+        return false;
     }
 
     void ParticleSystem::SetFriendlyBrainBox(int team, int minX, int minY, int maxX, int maxY)
@@ -377,12 +452,22 @@ namespace Atlas
         const float worldWidth = static_cast<float>(terrain.GetWidth());
         const float worldHeight = static_cast<float>(terrain.GetHeight());
 
+        m_CircleHits.clear();
+
         for (std::size_t i = 0; i < m_Particles.size(); )
         {
             Particle& p = m_Particles[i];
 
             p.Life -= deltaTime;
             p.VelY += p.Gravity * deltaTime;
+
+            // Fuel sprays out fast and slows to a lick of flame.
+            if (p.Type == ParticleType::Flame)
+            {
+                const float drag = std::max(0.0f, 1.0f - 3.2f * deltaTime);
+                p.VelX *= drag;
+                p.VelY *= drag;
+            }
 
             bool alive = p.Life > 0.0f;
 
@@ -419,6 +504,45 @@ namespace Atlas
                     // Actor hits (bullets only), tested against each
                     // actor's independent limb hitboxes rather than one
                     // whole-body box.
+                    if ((p.Type == ParticleType::Bullet || p.Type == ParticleType::Flame) &&
+                        !m_Circles.empty() && HitTestCircles(p))
+                    {
+                        if (p.Type == ParticleType::Bullet)
+                        {
+                            SpawnSpark(p.X, p.Y, -p.VelX * 0.05f + RandomUnit() * 80.0f, -60.0f);
+                            SpawnSpark(p.X, p.Y, RandomUnit() * 90.0f, -40.0f + RandomUnit() * 40.0f);
+                        }
+
+                        alive = false;
+                        break;
+                    }
+
+                    if (p.Type == ParticleType::Flame && actors && (s % 2) == 0)
+                    {
+                        for (int a = 0; a < actorCount && alive; a++)
+                        {
+                            Actor* actor = actors[a];
+
+                            if (!actor || !actor->IsAlive() ||
+                                (p.OwnerId != 0u && actor->GetId() == p.OwnerId) ||
+                                (p.OwnerTeam >= 0 && actor->GetTeam() == p.OwnerTeam))
+                                continue;
+
+                            if (p.X < actor->GetX() - 2.0f ||
+                                p.X > actor->GetX() + actor->GetWidth() + 2.0f ||
+                                p.Y < actor->GetY() ||
+                                p.Y > actor->GetY() + actor->GetHeight() + 20.0f)
+                                continue;
+
+                            actor->TakeDamage(p.Damage, p.VelX * 0.01f, 0.0f);
+                            actor->Ignite(2.5f);
+                            alive = false;
+                        }
+
+                        if (!alive)
+                            break;
+                    }
+
                     if (p.Type == ParticleType::Bullet && actors)
                     {
                         for (int a = 0; a < actorCount && alive; a++)
@@ -466,6 +590,34 @@ namespace Atlas
                         p.Type == ParticleType::Shockwave ||
                         p.Type == ParticleType::Flash)
                         continue;
+
+                    if (p.Type == ParticleType::Flame)
+                    {
+                        const int fx = static_cast<int>(std::floor(p.X));
+                        const int fy = static_cast<int>(std::floor(p.Y));
+                        const Material material = terrain.GetMaterial(fx, fy);
+
+                        // Doused.
+                        if (IsFluid(material) && material != Material::Lava)
+                        {
+                            SpawnSmoke(prevX, prevY, RandomUnit() * 10.0f, -30.0f);
+                            alive = false;
+                            break;
+                        }
+
+                        if (!terrain.IsSolid(p.X, p.Y))
+                            continue;
+
+                        // Grass burns away; everything else gets scorched.
+                        if (material == Material::Grass && (m_RandomState & 3u) == 0u)
+                            terrain.DestroyPixel(fx, fy);
+                        else if ((m_RandomState & 7u) == 0u)
+                            terrain.StainPixel(fx, fy, 40, 32, 28);
+
+                        RandomUnit();
+                        alive = false;
+                        break;
+                    }
 
                     if (!terrain.IsSolid(p.X, p.Y))
                         continue;
@@ -732,6 +884,32 @@ namespace Atlas
                     window.DrawFilledRect(
                         p.X - core * 0.5f, p.Y - core * 0.5f, core, core,
                         255, 232, 160, 255);
+                }
+                break;
+            }
+
+            case ParticleType::Flame:
+            {
+                // Yellow core near the nozzle, swelling into an orange,
+                // then red, lick of flame.
+                const float radius = 3.0f + age * 9.0f;
+                const Uint8 alpha = static_cast<Uint8>(110.0f * (1.0f - age));
+
+                window.DrawGlow(
+                    p.X, p.Y, radius,
+                    255,
+                    static_cast<Uint8>(200.0f * (1.0f - age * 0.75f)),
+                    static_cast<Uint8>(70.0f * (1.0f - age)),
+                    alpha);
+
+                if (age < 0.6f)
+                {
+                    const float core = 2.0f + age * 3.0f;
+
+                    window.DrawFilledRect(
+                        p.X - core * 0.5f, p.Y - core * 0.5f, core, core,
+                        255, static_cast<Uint8>(230 - age * 140.0f), 120,
+                        static_cast<Uint8>(230.0f * (1.0f - age)));
                 }
                 break;
             }

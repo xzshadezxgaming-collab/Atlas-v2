@@ -1,5 +1,7 @@
 #include "World.h"
 
+#include "../Combat/Explosion.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -45,6 +47,15 @@ namespace Atlas
             if (def.Name == "Rifle")
                 return Sfx::Rifle;
 
+            if (def.Kind == WeaponKind::Launcher)
+                return Sfx::Rocket;
+
+            if (def.Kind == WeaponKind::Flamer)
+                return Sfx::Flame;
+
+            if (def.LaserSight)
+                return Sfx::Sniper;
+
             return Sfx::Shot;
         }
 
@@ -84,6 +95,11 @@ namespace Atlas
                 Float(actor.GetVelocityX());
                 Float(actor.GetVelocityY());
                 Float(actor.GetFuel());
+                Int(static_cast<std::int64_t>(actor.GetBodyClass()));
+                Int(actor.GetItemCount());
+                Int(actor.GetSelectedItem());
+                Int(actor.GetWeapon().GetAmmo());
+                Int(actor.IsBurning() ? 1 : 0);
             }
         };
     }
@@ -92,6 +108,10 @@ namespace Atlas
         : m_Loadout{},
         m_EnemyWeapon(nullptr),
         m_AllyWeapon(nullptr),
+        m_Shovel(nullptr),
+        m_Rocket(nullptr),
+        m_Flamer(nullptr),
+        m_Shotgun(nullptr),
         m_Rng(1337u),
         m_NextActorId(1),
         m_Tick(0),
@@ -142,6 +162,10 @@ namespace Atlas
 
         m_EnemyWeapon = FindWeapon("EnemyGun");
         m_AllyWeapon = FindWeapon("SMG");
+        m_Shovel = FindWeapon("Shovel");
+        m_Rocket = FindWeapon("Rocket Launcher");
+        m_Flamer = FindWeapon("Flamethrower");
+        m_Shotgun = FindWeapon("Shotgun");
 
         m_Mode = config.Mode;
         m_Difficulty = std::clamp(config.Difficulty, 0, 2);
@@ -456,7 +480,10 @@ namespace Atlas
     {
         PlayerSlot& player = m_Players[slot];
 
+        // A fresh standard body with the standard kit.
+        player.Body->SetBodyClass(BodyClass::Medium);
         player.Body->ResetVitals();
+        GiveStarterKit(*player.Body);
 
         // Inside the bunker when there is one (search from below its
         // roof, not from the sky). The ground there may have been blown
@@ -547,6 +574,7 @@ namespace Atlas
             Ally left = std::move(ally);
             left.Brain = AIController();
             left.Brain.Seed(left.Body->GetId());
+            left.Body->SelectBestWeapon();
 
             m_Allies.erase(m_Allies.begin() + index);
             m_Allies.push_back(std::move(left));
@@ -558,18 +586,6 @@ namespace Atlas
         player.PrevFallSpeed = 0.0f;
         player.PrevLegPlanted[0] = true;
         player.PrevLegPlanted[1] = true;
-
-        // Keep the loadout selection pointing at what this body holds.
-        player.CurrentSlot = 0;
-
-        for (int i = 0; i < LoadoutSize; i++)
-        {
-            if (m_Loadout[i] == body.GetWeapon().GetDef())
-            {
-                player.CurrentSlot = i;
-                break;
-            }
-        }
 
         SimEvent switched;
         switched.Type = SimEventType::BodySwitched;
@@ -603,14 +619,23 @@ namespace Atlas
         };
 
         player.Body->SetTint(Tints[slot][0], Tints[slot][1], Tints[slot][2]);
-        player.Body->SetWeaponDef(m_Loadout[0]);
 
         m_Players.push_back(std::move(player));
         RespawnPlayer(slot);
         return slot;
     }
 
-    void World::SpawnEnemy(float x, bool attacker)
+    void World::GiveStarterKit(Actor& body)
+    {
+        body.SetWeaponDef(m_Loadout[0]);
+
+        for (int i = 1; i < LoadoutSize; i++)
+            body.AddItem(m_Loadout[i]);
+
+        body.SelectItem(0);
+    }
+
+    void World::SpawnEnemy(float x, bool attacker, BodyClass bodyClass, const WeaponDef* weapon)
     {
         if (static_cast<int>(m_Enemies.size()) >= MaxEnemies)
             return;
@@ -619,7 +644,9 @@ namespace Atlas
         enemy.Body = std::make_unique<Actor>();
         InitActor(*enemy.Body, 1);
         enemy.Body->SetTint(255, 118, 106);
-        enemy.Body->SetWeaponDef(m_EnemyWeapon);
+        enemy.Body->SetBodyClass(bodyClass);
+        enemy.Body->SetWeaponDef(weapon ? weapon : m_EnemyWeapon);
+        enemy.LastHealth = enemy.Body->GetHealth();
 
         // Inside the enemy bunker counts as "from below its roof".
         const TeamBase& base = m_Bases[1];
@@ -646,11 +673,45 @@ namespace Atlas
                 base.X - 220.0f - static_cast<float>(i) * 36.0f + RandomUnit() * 14.0f,
                 40.0f, width - 40.0f);
 
+            // Later drops bring heavies with rockets and fast scouts
+            // with shotguns or flamethrowers.
+            BodyClass build = BodyClass::Medium;
+            const WeaponDef* weapon = nullptr;
+
+            if (m_Wave >= 2 && i % 3 == 2)
+            {
+                build = BodyClass::Heavy;
+
+                if (m_Wave >= 3 + (m_Difficulty == 0 ? 2 : 0))
+                    weapon = m_Rocket;
+            }
+            else if (m_Wave >= 2 && i % 4 == 1)
+            {
+                build = BodyClass::Light;
+                weapon = (m_Wave >= 4 && (m_Wave + i) % 2 == 0) ? m_Flamer : m_Shotgun;
+            }
+
             m_Deliveries.Order(
                 DeliveryKind::Reinforcement,
                 width + 160.0f + static_cast<float>(i) * 90.0f,
                 -1.0f,
                 targetX,
+                weapon,
+                -1,
+                1,
+                static_cast<int>(build));
+        }
+
+        // Air support from the middle of the match on.
+        const int drones = m_Wave >= 3 ? std::min(1 + (m_Wave - 3) / 3 + (m_Difficulty == 2 ? 1 : 0), 3) : 0;
+
+        for (int i = 0; i < drones; i++)
+        {
+            m_Deliveries.Order(
+                DeliveryKind::Drone,
+                width + 240.0f + static_cast<float>(count + i) * 90.0f,
+                -1.0f,
+                std::clamp(base.X - 160.0f - static_cast<float>(i) * 50.0f, 40.0f, width - 40.0f),
                 nullptr,
                 -1,
                 1);
@@ -693,7 +754,8 @@ namespace Atlas
     }
 
     // weapon: null falls back to the default rifleman loadout (SMG).
-    void World::SpawnAlly(float x, const WeaponDef* weapon)
+    // Every ordered body also packs a shovel, for whoever drives it.
+    void World::SpawnAlly(float x, const WeaponDef* weapon, BodyClass bodyClass)
     {
         if (static_cast<int>(m_Allies.size()) >= MaxAllies)
             return;
@@ -702,7 +764,10 @@ namespace Atlas
         ally.Body = std::make_unique<Actor>();
         InitActor(*ally.Body, 0);
         ally.Body->SetTint(120, 170, 255);
+        ally.Body->SetBodyClass(bodyClass);
         ally.Body->SetWeaponDef(weapon ? weapon : m_AllyWeapon);
+        ally.Body->AddItem(m_Shovel);
+        ally.Body->SelectBestWeapon();
         ally.Body->Spawn(m_Terrain, x);
         ally.Brain.Seed(ally.Body->GetId());
         m_Allies.push_back(std::move(ally));
@@ -764,13 +829,15 @@ namespace Atlas
 
         // A body lands with the default rifleman weapon at no extra
         // charge; any other weapon assigned to it is paid for.
-        for (const WeaponDef* weapon : order.Bodies)
+        for (const OrderBody& body : order.Bodies)
         {
-            total += ReinforcementCost;
+            total += GetBodyClassInfo(static_cast<BodyClass>(body.Class)).Cost;
 
-            if (weapon && weapon != m_AllyWeapon)
-                total += weapon->Cost;
+            if (body.Weapon && body.Weapon != m_AllyWeapon)
+                total += body.Weapon->Cost;
         }
+
+        total += std::max(0, order.Drones) * DroneCost;
 
         for (const WeaponDef* weapon : order.LooseWeapons)
         {
@@ -792,7 +859,23 @@ namespace Atlas
 
         if (order.Bodies.empty() &&
             order.LooseWeapons.empty() &&
-            order.SupplyCrates <= 0)
+            order.SupplyCrates <= 0 &&
+            order.Drones <= 0)
+            return false;
+
+        for (const OrderBody& body : order.Bodies)
+        {
+            if (body.Class >= static_cast<std::uint8_t>(BodyClass::Count))
+                return false;
+        }
+
+        // No paying for drones there's no room to fly.
+        int ownDrones = 0;
+
+        for (const Drone& drone : m_Drones)
+            ownDrones += drone.Team == 0 ? 1 : 0;
+
+        if (order.Drones < 0 || ownDrones + order.Drones > MaxDronesPerTeam)
             return false;
 
         const int cost = PriceOrder(order);
@@ -807,7 +890,7 @@ namespace Atlas
             ? buyer.GetCenterX()
             : m_Bases[0].X + 150.0f;
 
-        auto queueDelivery = [&](DeliveryKind kind, const WeaponDef* weapon)
+        auto queueDelivery = [&](DeliveryKind kind, const WeaponDef* weapon, int bodyClass = 1)
         {
             const bool fromLeft = (m_Rng() % 2u) == 0u;
             const float shipDir = fromLeft ? 1.0f : -1.0f;
@@ -816,11 +899,14 @@ namespace Atlas
                 : dropX + ShipSpawnDistance;
 
             m_Deliveries.Order(
-                kind, shipOrigin, shipDir, dropX, weapon, player);
+                kind, shipOrigin, shipDir, dropX, weapon, player, 0, bodyClass);
         };
 
-        for (const WeaponDef* weapon : order.Bodies)
-            queueDelivery(DeliveryKind::Reinforcement, weapon);
+        for (const OrderBody& body : order.Bodies)
+            queueDelivery(DeliveryKind::Reinforcement, body.Weapon, body.Class);
+
+        for (int i = 0; i < order.Drones; i++)
+            queueDelivery(DeliveryKind::Drone, nullptr);
 
         m_Stats.BodiesOrdered += static_cast<int>(order.Bodies.size());
 
@@ -928,13 +1014,12 @@ namespace Atlas
         if (input.SwitchBodyPressed)
             SwitchBody(slot, false);
 
-        // Weapon switching and reload.
-        if (input.SelectSlot >= 0 && input.SelectSlot < LoadoutSize)
-            state.CurrentSlot = input.SelectSlot;
-
-        if (player.GetWeapon().GetDef() != m_Loadout[state.CurrentSlot])
+        // Switching between the items this body carries, and reload.
+        if (input.SelectSlot >= 0 &&
+            input.SelectSlot < player.GetItemCount() &&
+            input.SelectSlot != player.GetSelectedItem())
         {
-            player.SetWeaponDef(m_Loadout[state.CurrentSlot]);
+            player.SelectItem(input.SelectSlot);
             EmitSound(Sfx::Reload, 0.7f);
         }
 
@@ -1073,7 +1158,9 @@ namespace Atlas
 
                 const WeaponDef& def = *player.GetWeapon().GetDef();
 
-                if (def.Kind == WeaponKind::Gun)
+                FlushLaunch(player);
+
+                if (def.Kind == WeaponKind::Gun || def.Kind == WeaponKind::Launcher)
                 {
                     SimEvent fired;
                     fired.Type = SimEventType::GunFired;
@@ -1084,9 +1171,10 @@ namespace Atlas
                 }
                 else if (state.ToolSfxTimer <= 0.0f)
                 {
-                    // Dig tools tick fast; don't machine-gun the sound.
+                    // Dig tools and flamers tick fast; don't machine-gun
+                    // the sound.
                     EmitSound(FireSfxFor(def), 0.7f);
-                    state.ToolSfxTimer = 0.1f;
+                    state.ToolSfxTimer = def.Kind == WeaponKind::Flamer ? 0.18f : 0.1f;
                 }
 
                 if (def.Kind == WeaponKind::Digger && def.LimbDamage > 0)
@@ -1148,6 +1236,43 @@ namespace Atlas
 
         if (wet > 0)
             actor.ApplySubmersion(wet >= 2 ? 0.93f : 0.97f, wet >= 2 ? 70.0f : 400.0f);
+
+        // Lava sets you alight; water puts you out.
+        if (atFeet == Material::Lava || atCenter == Material::Lava)
+            actor.Ignite(2.0f);
+
+        const bool doused =
+            (IsFluid(atCenter) && atCenter != Material::Lava) ||
+            (IsFluid(atFeet) && atFeet != Material::Lava);
+
+        if (doused && actor.IsBurning())
+        {
+            actor.Extinguish();
+            m_Particles.SpawnSmoke(cx, actor.GetCenterY(), RandomUnit() * 20.0f, -50.0f);
+        }
+
+        if (actor.IsBurning())
+        {
+            if (m_Tick % 8u == 0u)
+                actor.TakeDamage(1, 0.0f, 0.0f);
+
+            if (m_Tick % 6u == 0u)
+                m_Particles.SpawnSmoke(cx + RandomUnit() * 6.0f, actor.GetY(), RandomUnit() * 10.0f, -45.0f);
+        }
+    }
+
+    void World::FlushLaunch(Actor& actor)
+    {
+        PendingLaunch launch;
+
+        if (!actor.GetWeapon().TakeLaunch(launch))
+            return;
+
+        m_Grenades.Launch(
+            launch.X, launch.Y, launch.VelX, launch.VelY,
+            actor.GetTeam(), actor.GetId(), launch.Radius, launch.Damage);
+
+        EmitSound(Sfx::Rocket, 0.8f);
     }
 
     void World::Step(const PlayerInput* inputs, int inputCount)
@@ -1217,6 +1342,7 @@ namespace Atlas
 
             enemy.Brain.Update(
                 *enemy.Body, orders, m_Terrain, m_Particles, m_Terrain, FixedTimeStep);
+            FlushLaunch(*enemy.Body);
         }
 
         // --- Allies: fight the nearest enemy, otherwise follow the
@@ -1274,13 +1400,27 @@ namespace Atlas
 
             ally.Brain.Update(
                 *ally.Body, orders, m_Terrain, m_Particles, m_Terrain, FixedTimeStep);
+            FlushLaunch(*ally.Body);
         }
+
+        // --- Drones ---
+        UpdateDrones();
 
         // --- Lava and water ---
         for (int i = 0; i < actorCount; i++)
             ApplyTerrainHazards(*actorPtrs[i]);
 
         // --- Grenades and particles ---
+        {
+            // Rockets go off near drones too (team rides in Damage).
+            std::vector<Blast> proximity;
+
+            for (const Drone& drone : m_Drones)
+                proximity.push_back({ drone.X, drone.Y, 9.0f, drone.Team });
+
+            m_Grenades.SetProximityTargets(proximity);
+        }
+
         m_Grenades.Update(
             m_Terrain, m_Particles, actorPtrs, actorCount, FixedTimeStep);
 
@@ -1293,9 +1433,20 @@ namespace Atlas
             Emit(blast);
         }
 
+        {
+            std::vector<HitCircle> circles;
+
+            for (const Drone& drone : m_Drones)
+                circles.push_back({ drone.X, drone.Y, 8.0f, drone.Id, drone.Team });
+
+            m_Particles.SetHitCircles(circles);
+        }
+
         m_GoldCredits.clear();
         m_Particles.Update(
             m_Terrain, FixedTimeStep, actorPtrs, actorCount, &m_GoldCredits);
+
+        DamageDrones(actorPtrs, actorCount);
 
         // Gold mined by bullets goes to whoever fired them - if they
         // still exist.
@@ -1530,16 +1681,26 @@ namespace Atlas
                         if (owner.IsAlive())
                         {
                             owner.Heal(50);
-                            owner.GetWeapon().Refill();
+                            owner.RefillAll();
                         }
                     }
                     break;
 
                 case DeliveryKind::Reinforcement:
                     if (delivery->Team == 1)
-                        SpawnEnemy(delivery->PayloadX, true);
+                    {
+                        SpawnEnemy(delivery->PayloadX, true,
+                            static_cast<BodyClass>(delivery->BodyClass), delivery->Weapon);
+                    }
                     else
-                        SpawnAlly(delivery->PayloadX, delivery->Weapon);
+                    {
+                        SpawnAlly(delivery->PayloadX, delivery->Weapon,
+                            static_cast<BodyClass>(delivery->BodyClass));
+                    }
+                    break;
+
+                case DeliveryKind::Drone:
+                    SpawnDrone(delivery->PayloadX, delivery->PayloadY - 24.0f, delivery->Team);
                     break;
 
                 case DeliveryKind::WeaponPickup:
@@ -1563,18 +1724,7 @@ namespace Atlas
 
             if (taker >= 0 && pickup.Weapon)
             {
-                PlayerSlot& player = m_Players[taker];
-                player.Body->SetWeaponDef(pickup.Weapon);
-
-                // Keep the loadout slot in sync with what got equipped.
-                for (int slot = 0; slot < LoadoutSize; slot++)
-                {
-                    if (m_Loadout[slot] == pickup.Weapon)
-                    {
-                        player.CurrentSlot = slot;
-                        break;
-                    }
-                }
+                m_Players[taker].Body->AddItem(pickup.Weapon);
 
                 EmitSound(Sfx::Reload, 0.8f);
 
@@ -1606,9 +1756,348 @@ namespace Atlas
         m_Tick++;
     }
 
-    void World::AddAlly(float x, const WeaponDef* weapon)
+    void World::SpawnDrone(float x, float y, int team)
     {
-        SpawnAlly(x, weapon);
+        int ofTeam = 0;
+
+        for (const Drone& other : m_Drones)
+            ofTeam += other.Team == team ? 1 : 0;
+
+        if (static_cast<int>(m_Drones.size()) >= MaxDrones || ofTeam >= MaxDronesPerTeam)
+            return;
+
+        Drone drone;
+        drone.Id = m_NextActorId++;
+        drone.Team = team;
+        drone.X = x;
+        drone.Y = y;
+        drone.Health = DroneHealth;
+        drone.PauseTimer = 0.4f;
+        drone.Phase = static_cast<float>(drone.Id % 17u) * 0.37f;
+        m_Drones.push_back(drone);
+    }
+
+    void World::UpdateDrones()
+    {
+        constexpr float HoverHeight = 85.0f;
+        constexpr float SightRange = 480.0f;
+        constexpr float MaxSpeedX = 190.0f;
+        constexpr float MaxSpeedY = 160.0f;
+        constexpr float GunVelocity = 820.0f;
+
+        const float dt = FixedTimeStep;
+        const float width = static_cast<float>(m_Terrain.GetWidth());
+        const TeamBase& home = m_Bases[0];
+        const TeamBase& enemyBase = m_Bases[1];
+
+        auto clearLine = [&](float x0, float y0, float x1, float y1)
+        {
+            const float dx = x1 - x0;
+            const float dy = y1 - y0;
+            const int steps = static_cast<int>(std::sqrt(dx * dx + dy * dy) / 4.0f) + 1;
+
+            for (int i = 1; i < steps; i++)
+            {
+                const float t = static_cast<float>(i) / static_cast<float>(steps);
+
+                if (m_Terrain.IsSolid(x0 + dx * t, y0 + dy * t))
+                    return false;
+            }
+
+            return true;
+        };
+
+        for (std::size_t i = 0; i < m_Drones.size(); i++)
+        {
+            Drone& drone = m_Drones[i];
+
+            drone.Phase += dt;
+            drone.Cooldown -= dt;
+            drone.HurtFlash = std::max(0.0f, drone.HurtFlash - dt);
+            drone.Firing = false;
+
+            const int foe = 1 - drone.Team;
+
+            // --- Where it wants to be ---
+            float goalX = drone.X;
+
+            if (drone.Team == 1)
+            {
+                if (home.BrainAlive)
+                    goalX = home.GetBrainCenterX() + 140.0f + static_cast<float>(i % 3) * 30.0f;
+                else if (Actor* prey = NearestOfTeam(0, drone.X, drone.Y))
+                    goalX = prey->GetCenterX();
+            }
+            else
+            {
+                const float spread = static_cast<float>(i % 4) * 30.0f;
+
+                switch (m_AllyOrder)
+                {
+                case AllyOrder::Attack:
+                    goalX = enemyBase.BrainAlive
+                        ? enemyBase.GetBrainCenterX() - 160.0f - spread
+                        : home.X + 120.0f + spread;
+                    break;
+
+                case AllyOrder::Follow:
+                {
+                    const int leader = std::clamp(m_AllyOrderPlayer, 0, std::max(0, GetPlayerCount() - 1));
+
+                    if (GetPlayerCount() > 0 && m_Players[static_cast<std::size_t>(leader)].Body->IsAlive())
+                        goalX = m_Players[static_cast<std::size_t>(leader)].Body->GetCenterX() - 30.0f + spread;
+                    break;
+                }
+
+                default:
+                    goalX = home.Exists ? home.X + 120.0f + spread : drone.X;
+                    break;
+                }
+            }
+
+            // --- What it's shooting at: the nearest visible hostile ---
+            float targetX = 0.0f;
+            float targetY = 0.0f;
+            bool hasTarget = false;
+            float bestDistSquared = SightRange * SightRange;
+
+            if (Actor* body = NearestOfTeam(foe, drone.X, drone.Y))
+            {
+                const float dx = body->GetCenterX() - drone.X;
+                const float dy = body->GetCenterY() - drone.Y;
+                const float distSquared = dx * dx + dy * dy;
+
+                if (distSquared < bestDistSquared &&
+                    clearLine(drone.X, drone.Y, body->GetCenterX(), body->GetCenterY()))
+                {
+                    hasTarget = true;
+                    targetX = body->GetCenterX();
+                    targetY = body->GetCenterY() - 4.0f;
+                    bestDistSquared = distSquared;
+                }
+            }
+
+            for (const Drone& other : m_Drones)
+            {
+                if (other.Team == drone.Team || other.Health <= 0)
+                    continue;
+
+                const float dx = other.X - drone.X;
+                const float dy = other.Y - drone.Y;
+                const float distSquared = dx * dx + dy * dy;
+
+                if (distSquared < bestDistSquared && clearLine(drone.X, drone.Y, other.X, other.Y))
+                {
+                    hasTarget = true;
+                    targetX = other.X;
+                    targetY = other.Y;
+                    bestDistSquared = distSquared;
+                }
+            }
+
+            if (hasTarget)
+            {
+                // Hold a firing distance off the target.
+                const float dx = targetX - drone.X;
+
+                if (std::fabs(dx) > 230.0f)
+                    goalX = targetX - (dx > 0.0f ? 200.0f : -200.0f);
+                else if (std::fabs(dx) < 110.0f)
+                    goalX = drone.X - (dx > 0.0f ? 60.0f : -60.0f);
+                else
+                    goalX = drone.X;
+            }
+
+            goalX += std::sin(drone.Phase * 0.7f) * 30.0f;
+            goalX = std::clamp(goalX, 30.0f, width - 30.0f);
+
+            // Hover a set height over whatever is below.
+            float groundY = drone.Y + 400.0f;
+
+            for (float probe = drone.Y + 6.0f; probe < drone.Y + 400.0f; probe += 3.0f)
+            {
+                if (m_Terrain.IsSolid(drone.X, probe))
+                {
+                    groundY = probe;
+                    break;
+                }
+            }
+
+            const float goalY = groundY - HoverHeight + std::sin(drone.Phase * 2.1f) * 6.0f;
+
+            const float accelX = std::clamp((goalX - drone.X) * 2.5f, -420.0f, 420.0f);
+            const float accelY = std::clamp((goalY - drone.Y) * 4.0f, -520.0f, 520.0f);
+
+            const float damping = std::max(0.0f, 1.0f - 1.8f * dt);
+
+            drone.VelX = std::clamp((drone.VelX + accelX * dt) * damping, -MaxSpeedX, MaxSpeedX);
+            drone.VelY = std::clamp((drone.VelY + accelY * dt) * damping, -MaxSpeedY, MaxSpeedY);
+
+            // Move a pixel at a time, sliding along terrain.
+            const int steps = std::max(1, static_cast<int>(std::ceil(std::max(
+                std::fabs(drone.VelX * dt), std::fabs(drone.VelY * dt)))));
+
+            const float stepX = drone.VelX * dt / static_cast<float>(steps);
+            const float stepY = drone.VelY * dt / static_cast<float>(steps);
+
+            for (int step = 0; step < steps; step++)
+            {
+                if (!m_Terrain.IsSolid(drone.X + stepX + (stepX > 0.0f ? 6.0f : -6.0f), drone.Y))
+                    drone.X += stepX;
+                else
+                    drone.VelX *= -0.3f;
+
+                if (!m_Terrain.IsSolid(drone.X, drone.Y + stepY + (stepY > 0.0f ? 5.0f : -5.0f)))
+                    drone.Y += stepY;
+                else
+                    drone.VelY *= -0.3f;
+            }
+
+            // Buried by falling sand: climb out.
+            if (m_Terrain.IsSolid(drone.X, drone.Y))
+                drone.Y -= 1.0f;
+
+            drone.X = std::clamp(drone.X, 10.0f, width - 10.0f);
+            drone.Y = std::max(drone.Y, -300.0f);
+
+            // --- Shooting: aimed bursts ---
+            if (!hasTarget)
+            {
+                drone.BurstTimer = 0.0f;
+                continue;
+            }
+
+            const float aimDx = targetX - drone.X;
+            const float aimDy = targetY - drone.Y;
+            const float aimLength = std::sqrt(aimDx * aimDx + aimDy * aimDy) + 0.001f;
+
+            drone.AimX = aimDx / aimLength;
+            drone.AimY = aimDy / aimLength;
+
+            if (drone.BurstTimer > 0.0f)
+            {
+                drone.BurstTimer -= dt;
+                drone.Firing = true;
+
+                if (drone.Cooldown <= 0.0f)
+                {
+                    drone.Cooldown = 1.0f / 6.0f;
+
+                    const float spread = RandomUnit() * 0.06f;
+                    const float dirX = drone.AimX - drone.AimY * spread;
+                    const float dirY = drone.AimY + drone.AimX * spread;
+
+                    m_Particles.SpawnBullet(
+                        drone.X + dirX * 9.0f, drone.Y + 3.0f + dirY * 9.0f,
+                        dirX * GunVelocity, dirY * GunVelocity,
+                        6, 6.0f, drone.Id, drone.Team);
+                }
+
+                if (drone.BurstTimer <= 0.0f)
+                    drone.PauseTimer = 0.6f + (RandomUnit() + 1.0f) * 0.3f;
+            }
+            else
+            {
+                drone.PauseTimer -= dt;
+
+                if (drone.PauseTimer <= 0.0f)
+                    drone.BurstTimer = 0.45f;
+            }
+        }
+    }
+
+    void World::DamageDrones(Actor* const* actors, int actorCount)
+    {
+        auto find = [&](std::uint32_t id) -> Drone*
+        {
+            for (Drone& drone : m_Drones)
+            {
+                if (drone.Id == id)
+                    return &drone;
+            }
+
+            return nullptr;
+        };
+
+        for (const CircleHit& hit : m_Particles.GetCircleHits())
+        {
+            if (Drone* drone = find(hit.Id))
+            {
+                drone->Health -= hit.Damage + (hit.Fire ? 2 : 0);
+                drone->HurtFlash = 0.1f;
+            }
+        }
+
+        for (const Blast& blast : m_Grenades.GetBlasts())
+        {
+            for (Drone& drone : m_Drones)
+            {
+                float dx = drone.X - blast.X;
+                float dy = drone.Y - blast.Y;
+                const float distance = std::sqrt(dx * dx + dy * dy);
+                const float reach = blast.Radius * 2.2f;
+
+                if (distance > reach)
+                    continue;
+
+                const float falloff = 1.0f - distance / reach;
+                dx /= distance + 0.001f;
+                dy /= distance + 0.001f;
+
+                drone.Health -= static_cast<int>(static_cast<float>(blast.Damage) * falloff);
+                drone.VelX += dx * 300.0f * falloff;
+                drone.VelY += dy * 300.0f * falloff;
+                drone.HurtFlash = 0.1f;
+            }
+        }
+
+        for (std::size_t i = 0; i < m_Drones.size(); )
+        {
+            const Drone drone = m_Drones[i];
+
+            if (drone.Health > 0)
+            {
+                i++;
+                continue;
+            }
+
+            m_Drones.erase(m_Drones.begin() + static_cast<std::ptrdiff_t>(i));
+
+            // A small pop: it was carrying a battery, not a warhead.
+            Explode(m_Terrain, m_Particles, actors, actorCount,
+                drone.X, drone.Y, 10.0f, 20, drone.Team);
+
+            for (int k = 0; k < 6; k++)
+            {
+                m_Particles.SpawnGib(drone.X, drone.Y,
+                    RandomUnit() * 160.0f, -120.0f + RandomUnit() * 80.0f,
+                    70, 74, 84, 2);
+            }
+
+            EmitSound(Sfx::DroneDown, 0.8f);
+
+            if (drone.Team == 1)
+            {
+                m_TeamGold[0] += KillBounty;
+                m_Stats.EnemiesKilled++;
+
+                SimEvent kill;
+                kill.Type = SimEventType::EnemyKilled;
+                kill.X = drone.X;
+                kill.Y = drone.Y;
+                Emit(kill);
+            }
+        }
+    }
+
+    void World::AddAlly(float x, const WeaponDef* weapon, BodyClass bodyClass)
+    {
+        SpawnAlly(x, weapon, bodyClass);
+    }
+
+    void World::AddDrone(float x, float y, int team)
+    {
+        SpawnDrone(x, y, team);
     }
 
     void World::SetAllyOrder(AllyOrder order)
@@ -1658,9 +2147,16 @@ namespace Atlas
                 static_cast<std::size_t>(m_Terrain.GetHeight()));
 
         for (const PlayerSlot& player : m_Players)
-        {
             h.ActorState(*player.Body);
-            h.Int(player.CurrentSlot);
+
+        h.Int(static_cast<std::int64_t>(m_Drones.size()));
+
+        for (const Drone& drone : m_Drones)
+        {
+            h.Int(drone.Id);
+            h.Int(drone.Health);
+            h.Float(drone.X);
+            h.Float(drone.Y);
         }
 
         h.Int(static_cast<std::int64_t>(m_Enemies.size()));
@@ -1709,6 +2205,7 @@ namespace Atlas
     const std::vector<Enemy>& World::GetEnemies() const { return m_Enemies; }
     std::vector<Enemy>& World::GetEnemies() { return m_Enemies; }
     const std::vector<Ally>& World::GetAllies() const { return m_Allies; }
+    const std::vector<Drone>& World::GetDrones() const { return m_Drones; }
     std::vector<Ally>& World::GetAllies() { return m_Allies; }
 
     const std::vector<HealthPickup>& World::GetHealthPickups() const

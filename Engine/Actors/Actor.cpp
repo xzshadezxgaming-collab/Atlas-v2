@@ -142,6 +142,20 @@ namespace Atlas
         {
             return leg == 0 ? BodyPartId::LegBack : BodyPartId::LegFront;
         }
+
+        constexpr BodyClassInfo BodyClasses[] =
+        {
+            //  name       hp   speed  jet   burn  armor cost
+            { "SCOUT",     70,  1.30f, 1.25f, 0.75f, 1.0f,  70 },
+            { "RIFLEMAN", 100,  1.00f, 1.00f, 1.00f, 1.0f, 100 },
+            { "HEAVY",    200,  0.78f, 0.85f, 1.25f, 0.7f, 170 },
+        };
+    }
+
+    const BodyClassInfo& GetBodyClassInfo(BodyClass bodyClass)
+    {
+        const int index = static_cast<int>(bodyClass);
+        return BodyClasses[index >= 0 && index < static_cast<int>(BodyClass::Count) ? index : 1];
     }
 
     Actor::Actor()
@@ -160,7 +174,11 @@ namespace Atlas
         m_HasAim(false),
         m_AimDirX(1.0f),
         m_AimDirY(0.0f),
+        m_ItemCount(0),
+        m_Selected(0),
         m_MuzzleFlash(0.0f),
+        m_Class(BodyClass::Medium),
+        m_BurnTimer(0.0f),
         m_Health(100),
         m_Team(0),
         m_Fuel(1.0f),
@@ -279,9 +297,13 @@ namespace Atlas
         // Knockback decays; walking is layered on top of it.
         m_KnockVelX -= m_KnockVelX * std::min(1.0f, KnockbackDamping * deltaTime);
 
-        const float speedScale = m_Crouching ? 0.5f : 1.0f;
+        const BodyClassInfo& build = GetBodyClassInfo(m_Class);
+        const float speedScale = (m_Crouching ? 0.5f : 1.0f) * build.Speed;
 
         m_VelocityX = moveInput * WalkSpeed * speedScale + m_KnockVelX;
+
+        if (m_BurnTimer > 0.0f)
+            m_BurnTimer -= deltaTime;
 
         if (moveInput < 0.0f)
             m_MoveDir = -1.0f;
@@ -314,11 +336,11 @@ namespace Atlas
         if (jetpack && m_Fuel > 0.0f)
         {
             m_Jetting = true;
-            m_Fuel = std::max(0.0f, m_Fuel - JetBurnPerSecond * deltaTime);
+            m_Fuel = std::max(0.0f, m_Fuel - JetBurnPerSecond * build.Burn * deltaTime);
 
             m_VelocityY = std::max(
-                JetMaxRise,
-                m_VelocityY - JetAcceleration * deltaTime);
+                JetMaxRise * build.Jet,
+                m_VelocityY - JetAcceleration * build.Jet * deltaTime);
 
             m_Legs[0].Unplant();
             m_Legs[1].Unplant();
@@ -583,6 +605,8 @@ namespace Atlas
                 SDL_SetTextureAlphaMod(texture, 255);
                 SDL_SetTextureColorMod(texture, m_TintR, m_TintG, m_TintB);
             }
+
+            DrawBuildDetails(window, m_X - (SpriteWidth - BodyWidth) * 0.5f, m_Y + bob);
         }
 
         if (IsPartDestroyed(LegPart(nearLeg)))
@@ -625,6 +649,27 @@ namespace Atlas
                 255, 150, 60, 200);
         }
 
+        if (m_BurnTimer > 0.0f && IsAlive())
+        {
+            // Licks of flame climbing the body.
+            const float cx = GetCenterX();
+
+            window.DrawGlow(cx, GetCenterY(), 26.0f, 255, 120, 30, 70);
+
+            for (int i = 0; i < 5; i++)
+            {
+                const float phase = m_BeamPhase * 9.0f + static_cast<float>(i) * 1.7f;
+                const float rise = std::fmod(phase, 3.0f) / 3.0f;
+                const float x = cx + std::sin(phase * 1.3f) * 8.0f;
+                const float y = m_Y + BodyHeight - rise * (BodyHeight + 6.0f);
+                const float size = 5.0f * (1.0f - rise) + 1.0f;
+
+                window.DrawFilledRect(x - size * 0.5f, y - size * 0.5f, size, size,
+                    255, static_cast<Uint8>(220 - rise * 150.0f), 60,
+                    static_cast<Uint8>(230.0f * (1.0f - rise * 0.6f)));
+            }
+        }
+
         // A faint red spill still accompanies the white sprite flash.
         if (m_HurtFlash > 0.0f)
         {
@@ -636,6 +681,50 @@ namespace Atlas
                 30.0f,
                 255, 90, 60,
                 static_cast<Uint8>(38.0f * strength));
+        }
+    }
+
+    void Actor::DrawBuildDetails(Window& window, float spriteX, float spriteY) const
+    {
+        if (m_Class == BodyClass::Medium)
+            return;
+
+        // Sprite-space rect (facing right), mirrored when facing left.
+        auto plate = [&](float x, float y, float w, float h, Uint8 r, Uint8 g, Uint8 b)
+        {
+            const float fx = m_FacingDir < 0.0f ? SpriteWidth - x - w : x;
+
+            window.DrawFilledRect(spriteX + fx, spriteY + y, w, h,
+                static_cast<Uint8>(r * (155 + m_TintR * 100 / 255) / 255),
+                static_cast<Uint8>(g * (155 + m_TintG * 100 / 255) / 255),
+                static_cast<Uint8>(b * (155 + m_TintB * 100 / 255) / 255),
+                255);
+        };
+
+        if (m_Class == BodyClass::Heavy)
+        {
+            // Steel helmet shell and visor slit.
+            plate(8.0f, 1.0f, 20.0f, 1.0f, 24, 22, 27);
+            plate(8.0f, 2.0f, 20.0f, 4.0f, 104, 110, 122);
+            plate(9.0f, 2.0f, 18.0f, 1.0f, 140, 146, 158);
+            plate(17.0f, 11.0f, 11.0f, 3.0f, 30, 32, 38);
+            plate(19.0f, 12.0f, 7.0f, 1.0f, 230, 120, 60);
+
+            // Chest plate.
+            plate(10.0f, 20.0f, 16.0f, 12.0f, 24, 22, 27);
+            plate(11.0f, 21.0f, 14.0f, 10.0f, 92, 98, 110);
+            plate(11.0f, 21.0f, 14.0f, 2.0f, 128, 134, 146);
+            plate(13.0f, 25.0f, 10.0f, 1.0f, 70, 74, 84);
+            plate(13.0f, 28.0f, 10.0f, 1.0f, 70, 74, 84);
+        }
+        else
+        {
+            // Scout: goggles and a radio whip on the pack.
+            plate(9.0f, 9.0f, 19.0f, 2.0f, 40, 36, 30);
+            plate(20.0f, 8.0f, 6.0f, 3.0f, 30, 32, 38);
+            plate(21.0f, 9.0f, 4.0f, 1.0f, 120, 210, 230);
+            plate(6.0f, 2.0f, 1.0f, 15.0f, 40, 40, 46);
+            plate(5.0f, 1.0f, 3.0f, 2.0f, 200, 60, 50);
         }
     }
 
@@ -651,10 +740,10 @@ namespace Atlas
             return;
         }
 
-        if (!m_Weapon.GetDef())
+        if (!GetWeapon().GetDef())
             return;
 
-        const WeaponDef& def = *m_Weapon.GetDef();
+        const WeaponDef& def = *GetWeapon().GetDef();
 
         const float sx = ShoulderX();
         const float sy = ShoulderY();
@@ -769,6 +858,49 @@ namespace Atlas
                     130 - i * 20, 130 - i * 20, 140 - i * 20, 255);
             }
         }
+        else if (def.Kind == WeaponKind::Launcher)
+        {
+            // Shoulder tube: fat olive barrel sticking out both ends.
+            const float tailX = handX - m_AimDirX * 12.0f;
+            const float tailY = handY - m_AimDirY * 12.0f;
+
+            DrawArmSegmentPass(window, tailX, tailY, muzzleX, muzzleY, 7.0f, 24, 22, 27);
+            DrawArmSegmentPass(window, tailX, tailY, muzzleX, muzzleY, 5.0f, 82, 92, 64);
+            DrawArmSegmentPass(window, tailX - 1.0f, tailY - 1.0f, muzzleX - 1.0f, muzzleY - 1.0f,
+                1.0f, 116, 128, 90);
+
+            // Sight box and grip.
+            DrawPart(window, handX + m_AimDirX * 4.0f - 2.0f, handY - 7.0f, 4.0f, 3.0f, 50, 50, 58);
+            DrawPart(window, handX - 1.5f, handY + 2.0f, 3.0f, 5.0f, 48, 48, 56);
+
+            // Warhead peeking out when loaded.
+            if (GetWeapon().GetAmmo() > 0 && !GetWeapon().IsReloading())
+            {
+                window.DrawFilledRect(muzzleX - 2.0f, muzzleY - 2.0f, 4.0f, 4.0f,
+                    170, 52, 40, 255);
+            }
+        }
+        else if (def.Kind == WeaponKind::Flamer)
+        {
+            // Fuel tank under the arm, hose, nozzle with a pilot light.
+            DrawPart(window, handX - m_AimDirX * 3.0f - 3.0f, handY + 1.0f, 6.0f, 7.0f,
+                160, 60, 40);
+            window.DrawFilledRect(handX - m_AimDirX * 3.0f - 3.0f, handY + 1.0f, 6.0f, 2.0f,
+                200, 90, 60, 255);
+
+            DrawArmSegmentPass(window, handX, handY, muzzleX, muzzleY, 5.0f, 24, 22, 27);
+            DrawArmSegmentPass(window, handX, handY, muzzleX, muzzleY, 3.0f, 96, 98, 108);
+
+            DrawPart(window, muzzleX - 2.0f, muzzleY - 2.0f, 4.0f, 4.0f, 60, 60, 66);
+
+            const float flicker = 2.0f + std::sin(m_BeamPhase * 37.0f) * 0.8f;
+            window.DrawGlow(muzzleX + m_AimDirX * 3.0f, muzzleY + m_AimDirY * 3.0f,
+                5.0f, 120, 170, 255, 110);
+            window.DrawFilledRect(
+                muzzleX + m_AimDirX * 3.0f - flicker * 0.5f,
+                muzzleY + m_AimDirY * 3.0f - flicker * 0.5f,
+                flicker, flicker, 160, 210, 255, 255);
+        }
         else
         {
             // Rifle-style gun built from parts along the aim.
@@ -811,6 +943,16 @@ namespace Atlas
             window.DrawFilledRect(
                 muzzleX - 1.5f, muzzleY - 1.5f, 3.0f, 3.0f,
                 36, 36, 42, 255);
+
+            if (def.LaserSight)
+            {
+                // Scope on top of the receiver.
+                DrawPart(window, handX + m_AimDirX * 4.0f - 4.0f, handY - 7.0f, 8.0f, 3.0f,
+                    40, 42, 50);
+                window.DrawFilledRect(
+                    handX + m_AimDirX * 4.0f + m_FacingDir * 4.0f - 1.0f, handY - 7.0f,
+                    2.0f, 3.0f, 120, 200, 230, 255);
+            }
         }
 
         // Glove over the grip.
@@ -845,7 +987,7 @@ namespace Atlas
         if (!m_DigBeamActive)
             return;
 
-        const WeaponDef* def = m_Weapon.GetDef();
+        const WeaponDef* def = GetWeapon().GetDef();
 
         if (!def || def->Kind != WeaponKind::Digger)
             return;
@@ -952,12 +1094,119 @@ namespace Atlas
 
     void Actor::SetWeaponDef(const WeaponDef* def)
     {
-        m_Weapon.SetDef(def);
+        for (Weapon& item : m_Items)
+            item.SetDef(nullptr);
+
+        m_Items[0].SetDef(def);
+        m_ItemCount = def ? 1 : 0;
+        m_Selected = 0;
+    }
+
+    void Actor::AddItem(const WeaponDef* def)
+    {
+        if (!def)
+            return;
+
+        for (int i = 0; i < m_ItemCount; i++)
+        {
+            if (m_Items[i].GetDef() == def)
+            {
+                m_Items[i].Refill();
+                m_Selected = i;
+                return;
+            }
+        }
+
+        if (m_ItemCount < MaxItems)
+        {
+            m_Items[m_ItemCount].SetDef(def);
+            m_Selected = m_ItemCount;
+            m_ItemCount++;
+            return;
+        }
+
+        m_Items[m_Selected].SetDef(def);
+    }
+
+    void Actor::SelectItem(int index)
+    {
+        if (index >= 0 && index < m_ItemCount)
+            m_Selected = index;
+    }
+
+    int Actor::GetSelectedItem() const
+    {
+        return m_Selected;
+    }
+
+    int Actor::GetItemCount() const
+    {
+        return m_ItemCount;
+    }
+
+    const Weapon& Actor::GetItem(int index) const
+    {
+        return m_Items[std::clamp(index, 0, MaxItems - 1)];
+    }
+
+    void Actor::RefillAll()
+    {
+        for (int i = 0; i < m_ItemCount; i++)
+            m_Items[i].Refill();
+    }
+
+    void Actor::SelectBestWeapon()
+    {
+        for (int i = 0; i < m_ItemCount; i++)
+        {
+            if (!m_Items[i].IsTool())
+            {
+                m_Selected = i;
+                return;
+            }
+        }
     }
 
     Weapon& Actor::GetWeapon()
     {
-        return m_Weapon;
+        return m_Items[m_Selected];
+    }
+
+    const Weapon& Actor::GetWeapon() const
+    {
+        return m_Items[m_Selected];
+    }
+
+    int Actor::GetMaxHealth() const
+    {
+        return GetBodyClassInfo(m_Class).MaxHealth;
+    }
+
+    void Actor::SetBodyClass(BodyClass bodyClass)
+    {
+        m_Class = bodyClass;
+        m_Health = GetMaxHealth();
+    }
+
+    BodyClass Actor::GetBodyClass() const
+    {
+        return m_Class;
+    }
+
+    void Actor::Ignite(float seconds)
+    {
+        if (IsAlive())
+            m_BurnTimer = std::max(m_BurnTimer, seconds);
+    }
+
+    void Actor::Extinguish()
+    {
+        m_BurnTimer = 0.0f;
+    }
+
+    bool Actor::IsBurning() const
+    {
+        return m_BurnTimer > 0.0f;
     }
 
     float Actor::GetAimDirX() const { return m_AimDirX; }
@@ -976,7 +1225,7 @@ namespace Atlas
     float Actor::GetMuzzleX() const
     {
         const float barrel =
-            m_Weapon.GetDef() ? m_Weapon.GetDef()->BarrelLength : 12.0f;
+            GetWeapon().GetDef() ? GetWeapon().GetDef()->BarrelLength : 12.0f;
 
         return GetHandX() + m_AimDirX * (barrel + 2.0f);
     }
@@ -984,21 +1233,23 @@ namespace Atlas
     float Actor::GetMuzzleY() const
     {
         const float barrel =
-            m_Weapon.GetDef() ? m_Weapon.GetDef()->BarrelLength : 12.0f;
+            GetWeapon().GetDef() ? GetWeapon().GetDef()->BarrelLength : 12.0f;
 
         return GetHandY() + m_AimDirY * (barrel + 2.0f);
     }
 
     void Actor::NotifyFired()
     {
-        const WeaponDef* def = m_Weapon.GetDef();
+        const WeaponDef* def = GetWeapon().GetDef();
 
         // Muzzle flash and recoil are gun things; dig tools don't kick
         // or flash.
-        if (!def || def->Kind != WeaponKind::Gun)
+        if (!def || def->Kind == WeaponKind::Digger || def->Kind == WeaponKind::Shovel)
             return;
 
-        m_MuzzleFlash = 0.05f;
+        // A flamethrower pushes back gently and doesn't flash.
+        if (def->Kind != WeaponKind::Flamer)
+            m_MuzzleFlash = 0.05f;
 
         m_KnockVelX -= m_AimDirX * def->Recoil;
         m_VelocityY -= m_AimDirY * def->Recoil * 0.3f;
@@ -1026,6 +1277,12 @@ namespace Atlas
         if (!IsAlive())
             return;
 
+        // Armor soaks part of every hit (never all of it).
+        const float armor = GetBodyClassInfo(m_Class).Armor;
+
+        if (armor < 1.0f && damage > 0)
+            damage = std::max(1, static_cast<int>(std::lround(static_cast<float>(damage) * armor)));
+
         m_Health -= damage;
         m_HurtFlash = 0.12f;
 
@@ -1046,7 +1303,7 @@ namespace Atlas
         if (!IsAlive())
             return;
 
-        m_Health = std::min(100, m_Health + amount);
+        m_Health = std::min(GetMaxHealth(), m_Health + amount);
     }
 
     void Actor::GetPartBox(
@@ -1303,7 +1560,8 @@ namespace Atlas
 
     void Actor::ResetVitals()
     {
-        m_Health = 100;
+        m_Health = GetMaxHealth();
+        m_BurnTimer = 0.0f;
         m_Fuel = 1.0f;
         m_KnockVelX = 0.0f;
         m_VelocityY = 0.0f;

@@ -16,6 +16,10 @@ namespace Atlas
         Throw,
         Reload,
         JetBurst,
+        Sniper,
+        Rocket,
+        Flame,
+        DroneDown,
 
         Count
     };

@@ -13,6 +13,7 @@ namespace Atlas
         SupplyCrate,
         Reinforcement,
         WeaponPickup, // a loose weapon crate that becomes a field pickup
+        Drone,        // a packed drone that unfolds and flies off
     };
 
     enum class DeliveryPhase
@@ -49,6 +50,9 @@ namespace Atlas
         int OwnerPlayer = 0;
 
         int Team = 0; // whose ship it is
+
+        // Reinforcement: its build (a BodyClass value).
+        int BodyClass = 1;
     };
 
     // Cortex Command-style order delivery: a drop ship flies in from off
@@ -77,7 +81,8 @@ namespace Atlas
             float targetX,
             const WeaponDef* weapon = nullptr,
             int ownerPlayer = 0,
-            int team = 0);
+            int team = 0,
+            int bodyClass = 1);
 
         // outLanded: deliveries whose payload touched down this tick (for
         // a landing thud). outDelivered: deliveries that reached their
