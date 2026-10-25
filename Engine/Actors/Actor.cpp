@@ -1,6 +1,7 @@
 #include "Actor.h"
 
 #include "../Core/Window.h"
+#include "../Graphics/Camera.h"
 #include "../Graphics/SpriteBank.h"
 #include "../Particles/ParticleSystem.h"
 #include "../World/Terrain.h"
@@ -21,38 +22,62 @@ namespace Atlas
         constexpr float SpriteWidth = 32.0f;
         constexpr float SpriteHeight = 40.0f;
 
-        // Hip joints, relative to the body's top-left corner.
+        // Hip joints, relative to the body's top-left corner: close
+        // together, side-on, under the waist of the body art.
         constexpr float HipY = 38.0f;
-        constexpr float HipXBack = 8.0f;
-        constexpr float HipXFront = 16.0f;
+        constexpr float HipXBack = 9.5f;
+        constexpr float HipXFront = 14.5f;
 
-        constexpr float ThighLength = 17.0f;
-        constexpr float ShinLength = 16.0f;
-        constexpr float LegReach = ThighLength + ShinLength;
+        constexpr float ThighLength = 15.0f;
+        constexpr float ShinLength = 14.0f;
+        constexpr float LegReach = ThighLength + ShinLength + Limb::AnkleHeight;
 
         // Body-bottom height above the supporting feet when standing.
-        constexpr float StandHeight = 24.0f;
+        // Hip to sole is then ~90% of the leg's reach: knees softly bent
+        // in a ready stance, not a permanent squat.
+        constexpr float StandHeight = 28.0f;
+        constexpr float RunDip = 3.0f;
 
         // How far a foot may reach for the next foothold.
         constexpr float MaxStepUp = 18.0f;
         constexpr float MaxStepDown = 36.0f;
-        constexpr float StepAhead = 16.0f;
-        constexpr float FootLift = 10.0f;
+        constexpr float StepAhead = 14.0f;
+        constexpr float FootLift = 7.0f;
 
         // A foot may only be planted within this hip distance...
-        constexpr float PlantReach = LegReach + 3.0f;
+        constexpr float PlantReach = LegReach + 4.0f;
 
         // ...and loses grip beyond this one. The gap is hysteresis: a
         // fresh plant at full stretch doesn't immediately let go again.
-        constexpr float MaxFootDistance = LegReach + 8.0f;
+        constexpr float MaxFootDistance = LegReach + 9.0f;
 
         // Stance stretch at which the swinging leg plants on the nearest
         // foothold instead of finishing its full step.
-        constexpr float StanceStrain = LegReach + 1.0f;
+        constexpr float StanceStrain = LegReach + 2.0f;
+
+        // Shortest and longest time one step's swing takes.
+        constexpr float MinSwingTime = 0.09f;
+        constexpr float StrideTiming = 1.7f;
+        constexpr float MaxSwingTime = 0.36f;
 
         constexpr float WalkSpeed = 170.0f;
         constexpr float Gravity = 1000.0f;
         constexpr float JumpVelocity = -460.0f;
+
+        // Controller feel. On the ground the body gets up to speed in
+        // about a tenth of a second and stops in less; in the air it
+        // keeps its momentum and steers more gently (the jetpack helps).
+        constexpr float GroundAccel = 1500.0f;
+        constexpr float GroundDecel = 2600.0f;
+        constexpr float AirAccel = 760.0f;
+        constexpr float JetAirAccel = 1150.0f;
+        constexpr float AirDrag = 90.0f;
+
+        // Grace period after walking off a ledge in which a jump still
+        // works, and how much upward speed is kept when the jump button
+        // is released early (short hop vs full jump).
+        constexpr float CoyoteTime = 0.1f;
+        constexpr float JumpCut = 0.45f;
 
         // Vertical body speed limit while the legs push it up or let it
         // down (climbing is slower than free fall).
@@ -151,6 +176,20 @@ namespace Atlas
             { "RIFLEMAN", 100,  1.00f, 1.00f, 1.00f, 1.0f, 100 },
             { "HEAVY",    200,  0.78f, 0.85f, 1.25f, 0.7f, 170 },
         };
+
+        // Legs per build, matched to the waist of each body's art.
+        constexpr LegStyle LegStyles[] =
+        {
+            // Scout: light trousers, tan boots, bare knees, slim legs.
+            { 94, 98, 110,   78, 62, 44,   0, 0, 0,          0.0f,
+              5.0f, 4.0f, 0.95f, false },
+            // Rifleman: fatigues, combat boots, olive knee pads.
+            { 84, 88, 102,   60, 50, 42,   84, 96, 64,       3.0f,
+              6.0f, 5.0f, 1.0f, false },
+            // Heavy: armoured legs with steel knee guards and greaves.
+            { 64, 68, 80,    96, 102, 116, 150, 156, 170,    5.0f,
+              7.0f, 6.0f, 1.2f, true },
+        };
     }
 
     const BodyClassInfo& GetBodyClassInfo(BodyClass bodyClass)
@@ -168,6 +207,9 @@ namespace Atlas
         m_VelocityX(0.0f),
         m_VelocityY(0.0f),
         m_KnockVelX(0.0f),
+        m_WalkVel(0.0f),
+        m_CoyoteTimer(0.0f),
+        m_JumpRising(false),
         m_SwingLeg(0),
         m_FacingDir(1.0f),
         m_MoveDir(1.0f),
@@ -191,6 +233,9 @@ namespace Atlas
         m_TintB(255),
         m_BobPhase(0.0f),
         m_HurtFlash(0.0f),
+        m_VisualFacing(1.0f),
+        m_HipShift(0.0f),
+        m_LandSquash(0.0f),
         m_Crouching(false),
         m_DigBeamActive(false),
         m_DigBeamTargetX(0.0f),
@@ -271,6 +316,9 @@ namespace Atlas
         m_VelocityX = 0.0f;
         m_VelocityY = 0.0f;
         m_KnockVelX = 0.0f;
+        m_WalkVel = 0.0f;
+        m_JumpRising = false;
+        m_CoyoteTimer = 0.0f;
 
         for (int i = 0; i < 2; i++)
         {
@@ -302,7 +350,38 @@ namespace Atlas
         const BodyClassInfo& build = GetBodyClassInfo(m_Class);
         const float speedScale = (m_Crouching ? 0.5f : 1.0f) * build.Speed;
 
-        m_VelocityX = moveInput * WalkSpeed * speedScale + m_KnockVelX;
+        // Walking accelerates toward the wanted speed rather than
+        // snapping to it: firm on the ground, floatier in the air.
+        {
+            const float target = moveInput * WalkSpeed * speedScale;
+            float rate = 0.0f;
+
+            if (m_Grounded)
+            {
+                const bool braking =
+                    target == 0.0f || target * m_WalkVel < 0.0f ||
+                    std::fabs(target) < std::fabs(m_WalkVel);
+
+                rate = braking ? GroundDecel : GroundAccel;
+            }
+            else if (moveInput != 0.0f)
+            {
+                rate = jetpack ? JetAirAccel : AirAccel;
+            }
+            else
+            {
+                rate = AirDrag;
+            }
+
+            const float step = rate * deltaTime;
+
+            if (m_WalkVel < target)
+                m_WalkVel = std::min(target, m_WalkVel + step);
+            else
+                m_WalkVel = std::max(target, m_WalkVel - step);
+        }
+
+        m_VelocityX = m_WalkVel + m_KnockVelX;
 
         if (m_BurnTimer > 0.0f)
             m_BurnTimer -= deltaTime;
@@ -318,15 +397,29 @@ namespace Atlas
         else if (moveInput != 0.0f)
             m_FacingDir = m_MoveDir;
 
+        // Visual-only easing: the knees swivel through a turn instead of
+        // snapping, the hips slide to match the mirrored waist art, and a
+        // landing dip springs back.
+        {
+            const float turn = std::min(1.0f, 16.0f * deltaTime);
+            m_VisualFacing += (m_FacingDir - m_VisualFacing) * turn;
+
+            // The body art's waist sits 1.5px right of the hitbox centre
+            // facing right, and 2.5px left of it once mirrored.
+            const float shiftTarget = m_FacingDir > 0.0f ? 1.5f : -2.5f;
+            m_HipShift += (shiftTarget - m_HipShift) * turn;
+
+            m_LandSquash -= m_LandSquash * std::min(1.0f, 11.0f * deltaTime);
+        }
+
         if (m_MuzzleFlash > 0.0f)
             m_MuzzleFlash -= deltaTime;
 
         if (m_HurtFlash > 0.0f)
             m_HurtFlash -= deltaTime;
 
-        // Walk-cycle bob for the body sprite.
-        if (m_Grounded)
-            m_BobPhase += std::fabs(m_VelocityX) * deltaTime * 0.09f;
+        // Idle breathing.
+        m_BobPhase += deltaTime;
 
         m_BeamPhase += deltaTime;
 
@@ -338,6 +431,7 @@ namespace Atlas
         if (jetpack && m_Fuel > 0.0f)
         {
             m_Jetting = true;
+            m_JumpRising = false;
             m_Fuel = std::max(0.0f, m_Fuel - JetBurnPerSecond * build.Burn * deltaTime);
 
             m_VelocityY = std::max(
@@ -392,12 +486,33 @@ namespace Atlas
 
         m_Grounded = m_Legs[0].IsPlanted() || m_Legs[1].IsPlanted();
 
-        if (m_Grounded && jump)
+        if (m_Grounded)
+            m_CoyoteTimer = CoyoteTime;
+        else
+            m_CoyoteTimer = std::max(0.0f, m_CoyoteTimer - deltaTime);
+
+        // Jumps work from the ground or just after stepping off it.
+        if (jump && (m_Grounded || m_CoyoteTimer > 0.0f) && !m_JumpRising)
         {
             m_VelocityY = JumpVelocity;
             m_Legs[0].Unplant();
             m_Legs[1].Unplant();
             m_Grounded = false;
+            m_CoyoteTimer = 0.0f;
+            m_JumpRising = true;
+        }
+        else if (m_JumpRising)
+        {
+            // Let go early for a short hop.
+            if (!jump && m_VelocityY < 0.0f)
+            {
+                m_VelocityY *= JumpCut;
+                m_JumpRising = false;
+            }
+            else if (m_VelocityY >= 0.0f)
+            {
+                m_JumpRising = false;
+            }
         }
 
         if (m_Grounded)
@@ -453,8 +568,23 @@ namespace Atlas
         if (!m_Grounded)
         {
             const float fallSpeed = m_VelocityY;
+            const float fromX = m_X;
+            const float fromY = m_Y;
 
             MoveAirborne(terrain, deltaTime);
+
+            // Free feet travel with the body; the dangle pose is then
+            // eased relative to the hips, not chased through the air.
+            for (int i = 0; i < 2; i++)
+            {
+                if (!m_Legs[i].IsPlanted())
+                {
+                    m_Legs[i].SetFootPosition(
+                        m_Legs[i].GetFootX() + (m_X - fromX),
+                        m_Legs[i].GetFootY() + (m_Y - fromY));
+                }
+            }
+
             UpdateDanglingFeet(deltaTime);
 
             if (m_VelocityY >= 0.0f && !m_Jetting)
@@ -465,6 +595,11 @@ namespace Atlas
             if (m_Grounded)
             {
                 m_VelocityY = 0.0f;
+                m_JumpRising = false;
+
+                // The body dips into the landing and springs back up.
+                m_LandSquash = std::min(
+                    9.0f, std::max(m_LandSquash, (fallSpeed - 120.0f) * 0.014f));
 
                 // Fall damage on hard landings.
                 if (fallSpeed > FallDamageSpeed)
@@ -488,6 +623,64 @@ namespace Atlas
 
         m_Legs[0].EaseVisual(deltaTime);
         m_Legs[1].EaseVisual(deltaTime);
+    }
+
+    float Actor::VisualBodyOffsetY() const
+    {
+        float offset = m_LandSquash;
+
+        if (m_Grounded && std::fabs(m_VelocityX) > 20.0f)
+        {
+            // Running bob: the body rises while a leg swings through and
+            // drops back as the foot strikes.
+            const float swingT = std::max(
+                m_Legs[0].GetSwingProgress(),
+                m_Legs[1].GetSwingProgress());
+
+            offset -= std::sin(swingT * 3.14159265f) *
+                (m_Crouching ? 0.7f : 1.6f);
+        }
+        else if (m_Grounded)
+        {
+            // Breathing.
+            offset += std::sin(m_BobPhase * 2.2f) * 0.6f;
+        }
+
+        return std::round(offset);
+    }
+
+    float Actor::VisualLean() const
+    {
+        // Lean into the direction of travel, and hunch forward when
+        // crouching.
+        float lean = std::clamp(m_VelocityX * 0.02f, -6.0f, 6.0f);
+
+        if (m_Crouching)
+            lean += m_FacingDir * 11.0f;
+
+        // Thrusting tips the body into the flight direction.
+        if (m_Jetting)
+            lean += std::clamp(m_VelocityX * 0.015f, -4.0f, 4.0f) +
+                m_FacingDir * 2.0f;
+
+        return lean;
+    }
+
+    void Actor::VisualHip(int leg, float& outX, float& outY) const
+    {
+        // The sprite turns about its centre; carry the hip with it.
+        const float centerX = m_X + BodyWidth * 0.5f;
+        const float centerY = m_Y + SpriteHeight * 0.5f;
+
+        const float localX = m_Legs[leg].GetHipOffsetX() + m_HipShift - BodyWidth * 0.5f;
+        const float localY = m_Legs[leg].GetHipOffsetY() - SpriteHeight * 0.5f;
+
+        const float angle = VisualLean() * 3.14159265f / 180.0f;
+        const float c = std::cos(angle);
+        const float sn = std::sin(angle);
+
+        outX = centerX + localX * c - localY * sn;
+        outY = centerY + localX * sn + localY * c + VisualBodyOffsetY();
     }
 
     void Actor::Draw(Window& window)
@@ -518,31 +711,49 @@ namespace Atlas
             window.DrawFilledRect(cx - 7.0f, shadowY + 2.0f, 14.0f, 1.0f, 0, 0, 6, 30);
         }
 
-        // Leg 1 is always the near (brighter) leg so shading doesn't
-        // flicker when the actor turns around.
-        const int nearLeg = 1;
-        const int farLeg = 0;
+        const LegStyle& legStyle = LegStyles[
+            std::clamp(static_cast<int>(m_Class), 0, static_cast<int>(BodyClass::Count) - 1)];
 
-        if (IsPartDestroyed(LegPart(farLeg)))
+        // The leg on the far side of the body (away from the viewer) is
+        // drawn behind the torso and in shadow; which hip that is
+        // follows the facing, like the body art's mirroring.
+        const int nearLeg = m_FacingDir > 0.0f ? 0 : 1;
+        const int farLeg = 1 - nearLeg;
+
+        const float bodyOffsetY = VisualBodyOffsetY();
+        const float lean = VisualLean();
+
+        auto drawLeg = [&](int leg, bool nearSide)
         {
-            window.DrawFilledRect(
-                HipWorldX(farLeg) - 3.0f, HipWorldY(farLeg) - 2.0f,
-                6.0f, 6.0f,
-                static_cast<Uint8>(70 * m_TintR / 255),
-                static_cast<Uint8>(30 * m_TintG / 255),
-                static_cast<Uint8>(28 * m_TintB / 255),
-                255);
-        }
-        else
-        {
-            m_Legs[farLeg].Draw(
+            float hipX = 0.0f;
+            float hipY = 0.0f;
+            VisualHip(leg, hipX, hipY);
+
+            if (IsPartDestroyed(LegPart(leg)))
+            {
+                const int shade = nearSide ? 90 : 70;
+
+                window.DrawFilledRect(
+                    hipX - 3.0f, hipY - 2.0f,
+                    6.0f, 6.0f,
+                    static_cast<Uint8>(shade * m_TintR / 255),
+                    static_cast<Uint8>(shade * 4 / 10 * m_TintG / 255),
+                    static_cast<Uint8>(shade * 4 / 10 * m_TintB / 255),
+                    255);
+                return;
+            }
+
+            m_Legs[leg].Draw(
                 window,
-                HipWorldX(farLeg),
-                HipWorldY(farLeg),
-                m_FacingDir,
-                false,
+                hipX,
+                hipY,
+                m_VisualFacing,
+                nearSide,
+                legStyle,
                 m_TintR, m_TintG, m_TintB);
-        }
+        };
+
+        drawLeg(farLeg, false);
 
         // Each build has its own art in the sprite pack; without one,
         // every build shares the client's body sprite plus drawn-on gear.
@@ -560,32 +771,10 @@ namespace Atlas
             // tint every time it is drawn.
             SDL_SetTextureColorMod(bodyTexture, m_TintR, m_TintG, m_TintB);
 
-            // Bob while walking, breathe while standing still, lean into
-            // the direction of travel, and hunch forward when crouching.
-            float bob = m_Grounded
-                ? std::sin(m_BobPhase) * (m_Crouching ? 0.8f : 1.4f)
-                : 0.0f;
-
-            if (m_Grounded && std::fabs(m_VelocityX) < 5.0f)
-                bob += std::sin(m_BeamPhase * 2.2f) * 0.7f;
-
-            float lean = std::clamp(
-                m_VelocityX * 0.02f,
-                -6.0f,
-                6.0f);
-
-            if (m_Crouching)
-                lean += m_FacingDir * 11.0f;
-
-            // Thrusting tips the body into the flight direction.
-            if (m_Jetting)
-                lean += std::clamp(m_VelocityX * 0.015f, -4.0f, 4.0f) +
-                    m_FacingDir * 2.0f;
-
             window.DrawTextureRotated(
                 bodyTexture,
                 m_X - (SpriteWidth - BodyWidth) * 0.5f,
-                m_Y + bob,
+                m_Y + bodyOffsetY,
                 SpriteWidth,
                 SpriteHeight,
                 lean,
@@ -607,7 +796,7 @@ namespace Atlas
                 window.DrawTextureRotated(
                     texture,
                     m_X - (SpriteWidth - BodyWidth) * 0.5f,
-                    m_Y + bob,
+                    m_Y + bodyOffsetY,
                     SpriteWidth,
                     SpriteHeight,
                     lean,
@@ -619,31 +808,28 @@ namespace Atlas
             }
 
             if (!buildSprite)
-                DrawBuildDetails(window, m_X - (SpriteWidth - BodyWidth) * 0.5f, m_Y + bob);
+                DrawBuildDetails(window, m_X - (SpriteWidth - BodyWidth) * 0.5f, m_Y + bodyOffsetY);
         }
 
-        if (IsPartDestroyed(LegPart(nearLeg)))
+        drawLeg(nearLeg, true);
+
+        // The arm rides with the body's bob and landing dip (drawn
+        // through a nudged camera; the simulated muzzle doesn't move).
         {
-            window.DrawFilledRect(
-                HipWorldX(nearLeg) - 3.0f, HipWorldY(nearLeg) - 2.0f,
-                6.0f, 6.0f,
-                static_cast<Uint8>(90 * m_TintR / 255),
-                static_cast<Uint8>(38 * m_TintG / 255),
-                static_cast<Uint8>(34 * m_TintB / 255),
-                255);
-        }
-        else
-        {
-            m_Legs[nearLeg].Draw(
-                window,
-                HipWorldX(nearLeg),
-                HipWorldY(nearLeg),
-                m_FacingDir,
-                true,
-                m_TintR, m_TintG, m_TintB);
+            const Camera* camera = window.GetCamera();
+            Camera nudged;
+
+            if (camera && bodyOffsetY != 0.0f)
+            {
+                nudged.SetPosition(camera->GetX(), camera->GetY() - bodyOffsetY);
+                window.SetCamera(&nudged);
+            }
+
+            DrawArmAndWeapon(window);
+
+            window.SetCamera(camera);
         }
 
-        DrawArmAndWeapon(window);
         DrawDigBeam(window);
 
         // Jetpack flame under the body while thrusting.
@@ -1812,6 +1998,7 @@ namespace Atlas
             {
                 m_VelocityX = 0.0f;
                 m_KnockVelX = 0.0f;
+                m_WalkVel = 0.0f;
                 break;
             }
         }
@@ -1856,6 +2043,7 @@ namespace Atlas
                 {
                     m_VelocityX = 0.0f;
                     m_KnockVelX = 0.0f;
+                    m_WalkVel = 0.0f;
                     break;
                 }
 
@@ -1896,8 +2084,16 @@ namespace Atlas
     float Actor::CurrentStandHeight() const
     {
         // Crouching folds the legs almost flat, dropping the whole
-        // figure from ~64px to ~48px so it fits into tight tunnels.
-        return m_Crouching ? 8.0f : StandHeight;
+        // figure from ~68px to ~48px so it fits into tight tunnels.
+        if (m_Crouching)
+            return 8.0f;
+
+        // On the move the body rides a little lower, knees working, so
+        // the legs have the reach for a full stride; standing still they
+        // straighten up.
+        const float pace = std::min(1.0f, std::fabs(m_VelocityX) / 150.0f);
+
+        return StandHeight - RunDip * pace;
     }
 
     bool Actor::IsCrouching() const
@@ -1965,6 +2161,7 @@ namespace Atlas
         // The gait works in the direction of travel, which is not always
         // the facing direction (aiming backwards while walking).
         const float gaitDir = m_VelocityX < 0.0f ? -1.0f : 1.0f;
+        const float speed = std::fabs(m_VelocityX);
 
         // If the stance leg is close to full stretch (fast on downhill
         // slopes), put the swinging foot down under its hip now rather
@@ -1981,19 +2178,38 @@ namespace Atlas
 
             if (stretch > StanceStrain)
             {
+                // Wherever the swinging foot has got to, if there's
+                // ground under it; else straight under the hip.
                 const float hipX = HipWorldX(m_SwingLeg);
 
-                float emergencyY = 0.0f;
-
-                if (FindReachableFoothold(
-                    terrain, m_SwingLeg, hipX, emergencyY))
+                for (float plantX : { swing.GetFootX(), hipX })
                 {
-                    swing.Plant(hipX, emergencyY);
-                    m_SwingLeg = 1 - m_SwingLeg;
-                    return;
+                    float emergencyY = 0.0f;
+
+                    if (FindReachableFoothold(
+                        terrain, m_SwingLeg, plantX, emergencyY))
+                    {
+                        swing.Plant(plantX, emergencyY);
+                        m_SwingLeg = 1 - m_SwingLeg;
+                        return;
+                    }
                 }
             }
         }
+
+        // Stride: how far ahead of its hip the swinging foot lands. Each
+        // step's swing lasts a little less than the body takes to carry
+        // the stance foot from that far ahead to as far behind, so the
+        // feet keep up with the body at any speed instead of dragging,
+        // and push off before the trailing leg is at full stretch.
+        const float stride = std::clamp(4.0f + speed * 0.06f, 6.0f, StepAhead);
+        const float duration = std::clamp(
+            StrideTiming * stride / std::max(1.0f, speed), MinSwingTime, MaxSwingTime);
+
+        // Faster steps lift higher; a crouched shuffle barely clears.
+        const float lift =
+            FootLift * std::clamp(speed / WalkSpeed, 0.45f, 1.3f) *
+            (m_Crouching ? 0.5f : 1.0f);
 
         // Reach for a foothold ahead of the swinging leg's hip; if the
         // ground there is out of reach, try progressively closer.
@@ -2005,7 +2221,7 @@ namespace Atlas
 
         for (float fraction = 1.0f; fraction >= 0.0f; fraction -= 0.5f)
         {
-            probeX = hipX + gaitDir * StepAhead * fraction;
+            probeX = hipX + gaitDir * stride * fraction;
 
             if (FindReachableFoothold(terrain, m_SwingLeg, probeX, footholdY))
             {
@@ -2016,16 +2232,7 @@ namespace Atlas
 
         if (found)
         {
-            const float swingSpeed = std::max(
-                140.0f,
-                std::fabs(m_VelocityX) * 2.6f);
-
-            if (swing.SwingToward(
-                probeX,
-                footholdY,
-                swingSpeed,
-                FootLift,
-                deltaTime))
+            if (swing.AdvanceSwing(probeX, footholdY, duration, lift, deltaTime))
             {
                 swing.Plant(probeX, footholdY);
                 m_SwingLeg = 1 - m_SwingLeg;
@@ -2037,14 +2244,56 @@ namespace Atlas
             // keeps reaching forward and down until the stance leg gives
             // out and the actor falls.
             swing.DangleToward(
-                hipX + gaitDir * StepAhead,
-                HipWorldY(m_SwingLeg) + swing.GetReach() * 0.85f,
+                hipX + gaitDir * stride,
+                HipWorldY(m_SwingLeg) + swing.GetReach() * 0.9f,
+                10.0f,
                 deltaTime);
         }
     }
 
     void Actor::UpdateIdleFeet(const Terrain& terrain, float deltaTime)
     {
+        // Standing still, the feet settle under the hips one at a time:
+        // a foot left far out by the last stride steps back in, so the
+        // actor doesn't freeze mid-stride in a lunge.
+        constexpr float SettleSlack = 5.0f;
+
+        bool anySwinging = false;
+
+        for (int i = 0; i < 2; i++)
+        {
+            if (!m_Legs[i].IsPlanted() && !IsPartDestroyed(LegPart(i)))
+                anySwinging = true;
+        }
+
+        if (!anySwinging &&
+            m_Legs[0].IsPlanted() &&
+            m_Legs[1].IsPlanted())
+        {
+            int worst = -1;
+            float worstOffset = SettleSlack;
+
+            for (int i = 0; i < 2; i++)
+            {
+                const float offset =
+                    std::fabs(m_Legs[i].GetFootX() - RestFootX(i));
+
+                if (offset > worstOffset)
+                {
+                    worst = i;
+                    worstOffset = offset;
+                }
+            }
+
+            if (worst >= 0)
+            {
+                float footholdY = 0.0f;
+
+                if (FindReachableFoothold(terrain, worst, RestFootX(worst), footholdY))
+                    m_Legs[worst].Unplant();
+            }
+        }
+
         for (int i = 0; i < 2; i++)
         {
             if (IsPartDestroyed(LegPart(i)))
@@ -2053,17 +2302,17 @@ namespace Atlas
             if (m_Legs[i].IsPlanted())
                 continue;
 
-            const float hipX = HipWorldX(i);
+            const float hipX = RestFootX(i);
 
             float footholdY = 0.0f;
 
             if (FindReachableFoothold(terrain, i, hipX, footholdY))
             {
-                if (m_Legs[i].SwingToward(
+                if (m_Legs[i].AdvanceSwing(
                     hipX,
                     footholdY,
-                    120.0f,
-                    FootLift * 0.5f,
+                    0.2f,
+                    FootLift * 0.6f,
                     deltaTime))
                 {
                     m_Legs[i].Plant(hipX, footholdY);
@@ -2073,7 +2322,8 @@ namespace Atlas
             {
                 m_Legs[i].DangleToward(
                     hipX,
-                    HipWorldY(i) + m_Legs[i].GetReach() * 0.85f,
+                    HipWorldY(i) + m_Legs[i].GetReach() * 0.9f,
+                    8.0f,
                     deltaTime);
             }
         }
@@ -2081,6 +2331,16 @@ namespace Atlas
 
     void Actor::UpdateDanglingFeet(float deltaTime)
     {
+        // In the air the legs pose with the motion: knees tuck up on the
+        // way up (lead leg higher, a running-jump split), stretch down
+        // ready to land on the way down, and trail behind fast flight.
+        const float rising = std::clamp(-m_VelocityY / 400.0f, 0.0f, 1.0f);
+        const float falling = std::clamp(m_VelocityY / 500.0f, 0.0f, 1.0f);
+        const float trail = std::clamp(-m_VelocityX * 0.035f, -7.0f, 7.0f);
+
+        // The leg whose hip is on the facing side leads.
+        const int lead = m_FacingDir > 0.0f ? 1 : 0;
+
         for (int i = 0; i < 2; i++)
         {
             m_Legs[i].Unplant();
@@ -2088,9 +2348,29 @@ namespace Atlas
             if (IsPartDestroyed(LegPart(i)))
                 continue;
 
+            const float reach = m_Legs[i].GetReach();
+            const bool leading = i == lead;
+
+            float drop = 0.82f;
+            float forward = 0.0f;
+
+            if (m_Jetting)
+            {
+                // Hanging under the pack, a slight run in the legs.
+                drop = 0.86f;
+                forward = leading ? 2.0f : -3.0f;
+            }
+            else
+            {
+                drop += -rising * (leading ? 0.3f : 0.12f) + falling * 0.1f;
+                forward = rising * (leading ? 7.0f : -5.0f) +
+                    falling * (leading ? 2.0f : -2.0f);
+            }
+
             m_Legs[i].DangleToward(
-                HipWorldX(i) + m_FacingDir * 2.0f,
-                HipWorldY(i) + m_Legs[i].GetReach() * 0.8f,
+                HipWorldX(i) + m_FacingDir * forward + trail,
+                HipWorldY(i) + reach * drop,
+                10.0f,
                 deltaTime);
         }
     }
@@ -2126,6 +2406,13 @@ namespace Atlas
         // them on a turn used to teleport the joints away from planted
         // feet and made the legs pop when reversing direction.
         return m_X + m_Legs[leg].GetHipOffsetX();
+    }
+
+    float Actor::RestFootX(int leg) const
+    {
+        // Crouched, the feet sit a little forward so the folded knees
+        // stay up off the ground.
+        return HipWorldX(leg) + (m_Crouching ? m_FacingDir * 3.0f : 0.0f);
     }
 
     float Actor::HipWorldY(int leg) const
