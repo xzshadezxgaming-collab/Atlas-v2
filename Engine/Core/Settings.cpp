@@ -37,6 +37,7 @@ namespace Atlas
             return;
 
         Volume = std::clamp(ini.GetFloat("Audio", "Volume", Volume), 0.0f, 1.0f);
+        MusicVolume = std::clamp(ini.GetFloat("Audio", "Music", MusicVolume), 0.0f, 1.0f);
         ScreenShake = ini.GetInt("Video", "ScreenShake", ScreenShake ? 1 : 0) != 0;
         Fullscreen = ini.GetInt("Video", "Fullscreen", Fullscreen ? 1 : 0) != 0;
         ShowFps = ini.GetInt("Video", "ShowFps", ShowFps ? 1 : 0) != 0;
@@ -56,7 +57,8 @@ namespace Atlas
             return;
 
         out << "[Audio]\n"
-            << "Volume = " << Volume << "\n\n"
+            << "Volume = " << Volume << "\n"
+            << "Music = " << MusicVolume << "\n\n"
             << "[Video]\n"
             << "ScreenShake = " << (ScreenShake ? 1 : 0) << "\n"
             << "Fullscreen = " << (Fullscreen ? 1 : 0) << "\n"

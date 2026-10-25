@@ -452,6 +452,18 @@ namespace Atlas
         m_Events.push_back(event);
     }
 
+    void World::EmitSoundAt(Sfx sound, float volume, float x, float y)
+    {
+        SimEvent event;
+        event.Type = SimEventType::Sound;
+        event.Sound = sound;
+        event.Volume = volume;
+        event.Positional = true;
+        event.X = x;
+        event.Y = y;
+        Emit(event);
+    }
+
     void World::EmitSound(Sfx sound, float volume)
     {
         SimEvent event;
@@ -594,7 +606,7 @@ namespace Atlas
         switched.Y = body.GetCenterY();
         Emit(switched);
 
-        EmitSound(Sfx::Reload, 0.6f);
+        EmitSoundAt(Sfx::Reload, 0.6f, body.GetCenterX(), body.GetCenterY());
     }
 
     int World::AddPlayer()
@@ -1020,13 +1032,13 @@ namespace Atlas
             input.SelectSlot != player.GetSelectedItem())
         {
             player.SelectItem(input.SelectSlot);
-            EmitSound(Sfx::Reload, 0.7f);
+            EmitSoundAt(Sfx::Reload, 0.7f, player.GetCenterX(), player.GetCenterY());
         }
 
         if (input.ReloadPressed)
         {
             player.GetWeapon().StartReload();
-            EmitSound(Sfx::Reload);
+            EmitSoundAt(Sfx::Reload, 1.0f, player.GetCenterX(), player.GetCenterY());
         }
 
         // Digger plasma-beam visual: tracks the aim every tick while the
@@ -1076,7 +1088,7 @@ namespace Atlas
         player.SetAim(input.AimX, input.AimY);
 
         if (input.JumpPressed && player.IsGrounded())
-            EmitSound(Sfx::Jump, 0.5f);
+            EmitSoundAt(Sfx::Jump, 0.5f, player.GetCenterX(), player.GetCenterY());
 
         state.PrevFallSpeed = player.GetVelocityY();
         state.WasGrounded = player.IsGrounded();
@@ -1094,7 +1106,7 @@ namespace Atlas
             player.IsGrounded() &&
             state.PrevFallSpeed > 320.0f)
         {
-            EmitSound(Sfx::Land, 0.6f);
+            EmitSoundAt(Sfx::Land, 0.6f, player.GetCenterX(), player.GetCenterY());
 
             SimEvent landing;
             landing.Type = SimEventType::HardLanding;
@@ -1135,11 +1147,12 @@ namespace Atlas
 
         if (player.IsJetting() && state.JetSoundTimer <= 0.0f)
         {
-            EmitSound(Sfx::JetBurst, 0.55f);
+            EmitSoundAt(Sfx::JetBurst, 0.55f, player.GetCenterX(), player.GetCenterY());
             state.JetSoundTimer = 0.15f;
         }
 
         player.GetWeapon().Update(FixedTimeStep);
+        player.TakeShotsFired(); // the player's own shots are voiced below
 
         if (input.Fire && !player.IsArmDestroyed())
         {
@@ -1167,13 +1180,15 @@ namespace Atlas
                     fired.Player = slot;
                     Emit(fired);
 
-                    EmitSound(FireSfxFor(def), 0.8f);
+                    // (Rockets are voiced by FlushLaunch.)
+                    if (def.Kind != WeaponKind::Launcher)
+                        EmitSoundAt(FireSfxFor(def), 0.8f, player.GetCenterX(), player.GetCenterY());
                 }
                 else if (state.ToolSfxTimer <= 0.0f)
                 {
                     // Dig tools and flamers tick fast; don't machine-gun
                     // the sound.
-                    EmitSound(FireSfxFor(def), 0.7f);
+                    EmitSoundAt(FireSfxFor(def), 0.7f, player.GetCenterX(), player.GetCenterY());
                     state.ToolSfxTimer = def.Kind == WeaponKind::Flamer ? 0.18f : 0.1f;
                 }
 
@@ -1193,7 +1208,7 @@ namespace Atlas
 
             state.GrenadeCooldown = GrenadeCooldownTime;
 
-            EmitSound(Sfx::Throw, 0.7f);
+            EmitSoundAt(Sfx::Throw, 0.7f, player.GetCenterX(), player.GetCenterY());
         }
     }
 
@@ -1261,6 +1276,21 @@ namespace Atlas
         }
     }
 
+    void World::AiShotSound(Actor& actor)
+    {
+        if (actor.TakeShotsFired() <= 0 || !actor.GetWeapon().GetDef())
+            return;
+
+        const WeaponDef& def = *actor.GetWeapon().GetDef();
+
+        // Rockets have their own launch sound; flame only now and then.
+        if (def.Kind == WeaponKind::Launcher ||
+            (def.Kind == WeaponKind::Flamer && m_Tick % 20u != 0u))
+            return;
+
+        EmitSoundAt(FireSfxFor(def), 0.55f, actor.GetCenterX(), actor.GetCenterY());
+    }
+
     void World::FlushLaunch(Actor& actor)
     {
         PendingLaunch launch;
@@ -1272,7 +1302,7 @@ namespace Atlas
             launch.X, launch.Y, launch.VelX, launch.VelY,
             actor.GetTeam(), actor.GetId(), launch.Radius, launch.Damage);
 
-        EmitSound(Sfx::Rocket, 0.8f);
+        EmitSoundAt(Sfx::Rocket, 0.8f, launch.X, launch.Y);
     }
 
     void World::Step(const PlayerInput* inputs, int inputCount)
@@ -1343,6 +1373,7 @@ namespace Atlas
             enemy.Brain.Update(
                 *enemy.Body, orders, m_Terrain, m_Particles, m_Terrain, FixedTimeStep);
             FlushLaunch(*enemy.Body);
+            AiShotSound(*enemy.Body);
         }
 
         // --- Allies: fight the nearest enemy, otherwise follow the
@@ -1401,6 +1432,7 @@ namespace Atlas
             ally.Brain.Update(
                 *ally.Body, orders, m_Terrain, m_Particles, m_Terrain, FixedTimeStep);
             FlushLaunch(*ally.Body);
+            AiShotSound(*ally.Body);
         }
 
         // --- Drones ---
@@ -1426,10 +1458,18 @@ namespace Atlas
 
         if (m_Grenades.ExplodedThisFrame())
         {
-            EmitSound(Sfx::Explosion);
+            for (const Blast& at : m_Grenades.GetBlasts())
+                EmitSoundAt(Sfx::Explosion, 1.0f, at.X, at.Y);
 
             SimEvent blast;
             blast.Type = SimEventType::Explosion;
+
+            if (!m_Grenades.GetBlasts().empty())
+            {
+                blast.X = m_Grenades.GetBlasts().front().X;
+                blast.Y = m_Grenades.GetBlasts().front().Y;
+            }
+
             Emit(blast);
         }
 
@@ -1500,7 +1540,7 @@ namespace Atlas
             {
                 m_Stats.BodiesLost++;
                 player.Body->Gib(m_Particles);
-                EmitSound(Sfx::Gib);
+                EmitSoundAt(Sfx::Gib, 1.0f, player.Body->GetCenterX(), player.Body->GetCenterY());
                 player.RespawnTimer = RespawnTime;
                 player.Gibbed = true;
             }
@@ -1513,7 +1553,7 @@ namespace Atlas
             if (!body.IsAlive())
             {
                 body.Gib(m_Particles);
-                EmitSound(Sfx::Gib, 0.8f);
+                EmitSoundAt(Sfx::Gib, 0.8f, body.GetCenterX(), body.GetCenterY());
 
                 m_TeamGold[0] += KillBounty;
                 m_Stats.EnemiesKilled++;
@@ -1545,7 +1585,7 @@ namespace Atlas
             {
                 m_Stats.BodiesLost++;
                 m_Allies[i].Body->Gib(m_Particles);
-                EmitSound(Sfx::Gib, 0.8f);
+                EmitSoundAt(Sfx::Gib, 0.8f, m_Allies[i].Body->GetCenterX(), m_Allies[i].Body->GetCenterY());
 
                 m_Allies.erase(m_Allies.begin() + static_cast<std::ptrdiff_t>(i));
             }
@@ -1593,7 +1633,7 @@ namespace Atlas
             if (taker >= 0)
             {
                 m_Players[taker].Body->Heal(30);
-                EmitSound(Sfx::Reload, 0.9f);
+                EmitSoundAt(Sfx::Reload, 0.9f, pickup.X, pickup.Y);
 
                 m_HealthPickups[i] = m_HealthPickups.back();
                 m_HealthPickups.pop_back();
@@ -1666,7 +1706,7 @@ namespace Atlas
             m_Deliveries.Update(m_Terrain, FixedTimeStep, landed, delivered);
 
             if (!landed.empty())
-                EmitSound(Sfx::Land, 0.7f);
+                EmitSoundAt(Sfx::Land, 0.7f, landed.front()->PayloadX, landed.front()->PayloadY);
 
             for (const Delivery* delivery : delivered)
             {
@@ -1726,7 +1766,7 @@ namespace Atlas
             {
                 m_Players[taker].Body->AddItem(pickup.Weapon);
 
-                EmitSound(Sfx::Reload, 0.8f);
+                EmitSoundAt(Sfx::Reload, 0.8f, pickup.X, pickup.Y);
 
                 m_WeaponPickups[i] = m_WeaponPickups.back();
                 m_WeaponPickups.pop_back();
@@ -1748,7 +1788,7 @@ namespace Atlas
 
             if (m_SteamSoundTimer <= 0.0f)
             {
-                EmitSound(Sfx::JetBurst, 0.3f);
+                EmitSoundAt(Sfx::JetBurst, 0.3f, steam.X, steam.Y);
                 m_SteamSoundTimer = 0.25f;
             }
         }
@@ -1991,6 +2031,7 @@ namespace Atlas
                         drone.X + dirX * 9.0f, drone.Y + 3.0f + dirY * 9.0f,
                         dirX * GunVelocity, dirY * GunVelocity,
                         6, 6.0f, drone.Id, drone.Team);
+                    EmitSoundAt(Sfx::Shot, 0.4f, drone.X, drone.Y);
                 }
 
                 if (drone.BurstTimer <= 0.0f)
@@ -2074,7 +2115,7 @@ namespace Atlas
                     70, 74, 84, 2);
             }
 
-            EmitSound(Sfx::DroneDown, 0.8f);
+            EmitSoundAt(Sfx::DroneDown, 0.8f, drone.X, drone.Y);
 
             if (drone.Team == 1)
             {

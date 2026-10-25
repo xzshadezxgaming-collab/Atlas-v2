@@ -324,6 +324,10 @@ namespace Atlas
         void Emit(const SimEvent& event);
         void EmitSound(Sfx sound, float volume = 1.0f);
 
+        // A sound from somewhere in the world: the client fades and pans
+        // it by where it is relative to the view.
+        void EmitSoundAt(Sfx sound, float volume, float x, float y);
+
         void InitActor(Actor& actor, int team);
         void SpawnEnemy(float x, bool attacker,
             BodyClass bodyClass = BodyClass::Medium, const WeaponDef* weapon = nullptr);
@@ -331,6 +335,7 @@ namespace Atlas
         void UpdateDrones();
         void DamageDrones(Actor* const* actors, int actorCount);
         void FlushLaunch(Actor& actor);
+        void AiShotSound(Actor& actor);
         void GiveStarterKit(Actor& body);
         void BuildBase(int team, float centerX);
         void UpdateBrains();

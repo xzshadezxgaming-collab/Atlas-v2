@@ -285,6 +285,7 @@ namespace Atlas
     void Application::ApplySettings()
     {
         Audio::SetMasterVolume(m_Settings.Volume);
+        Audio::SetMusicVolume(m_Settings.MusicVolume);
         m_Window.SetFullscreen(m_Settings.Fullscreen);
     }
 
@@ -300,6 +301,10 @@ namespace Atlas
         bool changed = false;
 
         if (ui.Slider(x, y, w, h, "VOLUME", m_Settings.Volume))
+            changed = true;
+        y += gap;
+
+        if (ui.Slider(x, y, w, h, "MUSIC", m_Settings.MusicVolume))
             changed = true;
         y += gap;
 
@@ -517,6 +522,7 @@ namespace Atlas
                 return false;
 
             Input::Update();
+            Audio::UpdateMusic(0.2f);
 
             const Uint64 now = SDL_GetPerformanceCounter();
             const float dt = std::min(MaxFrameTime, static_cast<float>(
@@ -1156,15 +1162,50 @@ namespace Atlas
             }
         };
 
+        // How much fighting is going on near the view, for the music.
+        float combatHeat = 0.0f;
+
         auto handleEvents = [&]()
         {
+            const float listenX = camera.GetX() + static_cast<float>(ViewWidth) * 0.5f;
+            const float listenY = camera.GetY() + static_cast<float>(ViewHeight) * 0.5f;
+
             for (const SimEvent& event : world.GetEvents())
             {
                 switch (event.Type)
                 {
                 case SimEventType::Sound:
-                    Audio::Play(event.Sound, event.Volume);
+                {
+                    if (!event.Positional)
+                    {
+                        Audio::Play(event.Sound, event.Volume);
+                        break;
+                    }
+
+                    // Full volume across the screen, fading out over
+                    // about another screen beyond it; panned by side.
+                    const float dx = event.X - listenX;
+                    const float dy = event.Y - listenY;
+                    const float distance = std::sqrt(dx * dx + dy * dy);
+                    const float fade = std::clamp(1.0f - (distance - 560.0f) / 1100.0f, 0.0f, 1.0f);
+
+                    if (fade > 0.02f)
+                    {
+                        Audio::Play(event.Sound, event.Volume * fade,
+                            std::clamp(dx / 900.0f, -1.0f, 1.0f));
+                    }
+
+                    const bool fighting =
+                        event.Sound == Sfx::Shot || event.Sound == Sfx::Shotgun ||
+                        event.Sound == Sfx::Rifle || event.Sound == Sfx::Sniper ||
+                        event.Sound == Sfx::Rocket || event.Sound == Sfx::Flame ||
+                        event.Sound == Sfx::Explosion;
+
+                    if (fighting && fade > 0.0f)
+                        combatHeat = std::min(1.5f, combatHeat + 0.05f * fade +
+                            (event.Sound == Sfx::Explosion ? 0.3f * fade : 0.0f));
                     break;
+                }
 
                 case SimEventType::GunFired:
                     if (event.Player == localPlayer)
@@ -1179,8 +1220,14 @@ namespace Atlas
                     break;
 
                 case SimEventType::Explosion:
-                    trauma = std::min(trauma + 0.5f, 1.0f);
+                {
+                    // Shake by how close it was.
+                    const float dx = event.X - listenX;
+                    const float dy = event.Y - listenY;
+                    const float near = std::clamp(1.0f - std::sqrt(dx * dx + dy * dy) / 1200.0f, 0.0f, 1.0f);
+                    trauma = std::min(trauma + 0.5f * near, 1.0f);
                     break;
+                }
 
                 case SimEventType::EnemyKilled:
                 {
@@ -1864,6 +1911,9 @@ namespace Atlas
 
             // Visual-decay state for the HUD and crosshair.
             crosshairBloom = std::max(0.0f, crosshairBloom - frameTime * 6.0f);
+
+            combatHeat = std::max(0.0f, combatHeat - frameTime * 0.12f);
+            Audio::UpdateMusic(std::min(1.0f, combatHeat * 1.4f));
 
             {
                 const float healthFill =

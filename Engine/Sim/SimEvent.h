@@ -35,6 +35,7 @@ namespace Atlas
 
         Sfx Sound = Sfx::Shot;
         float Volume = 1.0f;
+        bool Positional = false; // Sound: at X, Y rather than everywhere
 
         float X = 0.0f;
         float Y = 0.0f;

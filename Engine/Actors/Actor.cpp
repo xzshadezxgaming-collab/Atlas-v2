@@ -177,6 +177,7 @@ namespace Atlas
         m_ItemCount(0),
         m_Selected(0),
         m_MuzzleFlash(0.0f),
+        m_ShotsFired(0),
         m_Class(BodyClass::Medium),
         m_BurnTimer(0.0f),
         m_Health(100),
@@ -1238,8 +1239,17 @@ namespace Atlas
         return GetHandY() + m_AimDirY * (barrel + 2.0f);
     }
 
+    int Actor::TakeShotsFired()
+    {
+        const int shots = m_ShotsFired;
+        m_ShotsFired = 0;
+        return shots;
+    }
+
     void Actor::NotifyFired()
     {
+        m_ShotsFired++;
+
         const WeaponDef* def = GetWeapon().GetDef();
 
         // Muzzle flash and recoil are gun things; dig tools don't kick

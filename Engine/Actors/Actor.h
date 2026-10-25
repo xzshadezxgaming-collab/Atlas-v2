@@ -152,6 +152,9 @@ namespace Atlas
         // Flashes the muzzle briefly (call after a successful shot).
         void NotifyFired();
 
+        // Shots fired since last asked (for the World's sound events).
+        int TakeShotsFired();
+
         // Drives the digger's plasma-helix beam visual: call every
         // rendered frame while the tool is actively cutting, with the
         // current impact point (a raycast preview, independent of the
@@ -320,6 +323,7 @@ namespace Atlas
         int m_ItemCount;
         int m_Selected;
         float m_MuzzleFlash;
+        int m_ShotsFired;
 
         // Vitals
         BodyClass m_Class;
