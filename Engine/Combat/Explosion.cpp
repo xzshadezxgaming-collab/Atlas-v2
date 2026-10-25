@@ -17,11 +17,15 @@ namespace Atlas
         float x,
         float y,
         float radius,
-        int maxDamage)
+        int maxDamage,
+        int team)
     {
         // Carve the crater, collecting some of the destroyed pixels.
+        Terrain::Box spare;
+        const bool hasSpare = particles.GetFriendlyBrainBox(team, spare);
+
         std::vector<Terrain::DestroyedPixel> debris;
-        terrain.CarveCircleCollect(x, y, radius, debris, 40);
+        terrain.CarveCircleCollect(x, y, radius, debris, 40, hasSpare ? &spare : nullptr);
 
         // Debris flies outward from the blast center.
         for (const Terrain::DestroyedPixel& pixel : debris)

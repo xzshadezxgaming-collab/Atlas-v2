@@ -47,6 +47,8 @@ namespace Atlas
 
         // Player slot that ordered it (supply crates resupply them).
         int OwnerPlayer = 0;
+
+        int Team = 0; // whose ship it is
     };
 
     // Cortex Command-style order delivery: a drop ship flies in from off
@@ -74,7 +76,8 @@ namespace Atlas
             float shipDir,
             float targetX,
             const WeaponDef* weapon = nullptr,
-            int ownerPlayer = 0);
+            int ownerPlayer = 0,
+            int team = 0);
 
         // outLanded: deliveries whose payload touched down this tick (for
         // a landing thud). outDelivered: deliveries that reached their

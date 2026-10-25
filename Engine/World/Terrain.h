@@ -51,6 +51,12 @@ namespace Atlas
         const std::uint8_t* GetPixelData() const;
         void SetMaterial(int x, int y, Material material);
 
+        // What dug-out space at (x, y) shows behind it (Air = sky).
+        void SetBackwall(int x, int y, Material material);
+
+        // First solid row from the top in column x (height if none).
+        int GetSurfaceY(int x) const;
+
         // World-space solidity query. Outside the world: the sides and the
         // bottom are treated as solid walls, the sky above is open.
         bool IsSolid(float worldX, float worldY) const;
@@ -80,6 +86,15 @@ namespace Atlas
             Material Mat;
         };
 
+        // Inclusive pixel rectangle.
+        struct Box
+        {
+            int MinX;
+            int MinY;
+            int MaxX;
+            int MaxY;
+        };
+
         // Like CarveCircle, but samples up to maxSamples of the destroyed
         // pixels into outDebris.
         int CarveCircleCollect(
@@ -87,7 +102,8 @@ namespace Atlas
             float centerY,
             float radius,
             std::vector<DestroyedPixel>& outDebris,
-            int maxSamples);
+            int maxSamples,
+            const Box* spareBrain = nullptr); // brain pixels in here survive
 
         // Removes a single solid pixel and returns its material
         // (Material::Air if there was nothing to remove).

@@ -11,6 +11,23 @@ namespace Atlas
         constexpr float GrenadeCooldownTime = 0.9f;
         constexpr float RespawnTime = 3.0f;
 
+        // A dead player whose team has other bodies jumps into one after
+        // this long instead of waiting out the respawn.
+        constexpr float SwitchOnDeathDelay = 1.0f;
+
+        // Bunker geometry, in pixels.
+        constexpr int BunkerHalfInner = 100;
+        constexpr int BunkerInnerHeight = 84;
+        constexpr int BunkerWall = 8;
+        constexpr int BunkerDoorHeight = 70;
+        constexpr int BaseFlatHalf = 170; // ground levelled around a bunker
+        constexpr int BaseRamp = 70;      // and blended back to the terrain
+
+        // Where players stand up inside their bunker (clear of the jar).
+        constexpr float PlayerSpawnOffsets[4] = { -52.0f, 52.0f, -78.0f, 78.0f };
+
+        constexpr float FirstEnemyDropTime = 20.0f;
+
         // Drop ships start this far to the side of the ordering player:
         // half a view width plus a margin, so they visibly fly in from
         // beyond the edge of that player's screen.
@@ -81,8 +98,25 @@ namespace Atlas
         m_SteamSoundTimer(0.0f),
         m_Wave(0),
         m_WaveTimer(2.5f),
-        m_BotsEnabled(true)
+        m_BotsEnabled(true),
+        m_Mode(GameMode::BrainAssault),
+        m_Outcome(MatchOutcome::InProgress),
+        m_TeamGold{},
+        m_BrainAlarmTimer(0.0f),
+        m_AllyOrder(AllyOrder::Defend),
+        m_AllyOrderPlayer(0)
     {
+    }
+
+    float TeamBase::GetBrainHealth() const
+    {
+        if (!BrainAlive || BrainPixelsStart <= 0)
+            return 0.0f;
+
+        const float dead = World::BrainDeathThreshold * static_cast<float>(BrainPixelsStart);
+        const float span = static_cast<float>(BrainPixelsStart) - dead;
+
+        return std::clamp((static_cast<float>(BrainPixels) - dead) / span, 0.0f, 1.0f);
     }
 
     bool World::Create(const WorldConfig& config)
@@ -108,7 +142,268 @@ namespace Atlas
         m_EnemyWeapon = FindWeapon("EnemyGun");
         m_AllyWeapon = FindWeapon("SMG");
 
+        m_Mode = config.Mode;
+
+        if (m_Mode == GameMode::BrainAssault)
+        {
+            const float width = static_cast<float>(m_Terrain.GetWidth());
+
+            BuildBase(0, std::floor(width * 0.12f));
+            BuildBase(1, std::floor(width * 0.88f));
+
+            m_TeamGold[0] = StartingGold;
+            m_TeamGold[1] = StartingGold;
+
+            // A few guards at the enemy base from the start.
+            const TeamBase& enemyBase = m_Bases[1];
+            SpawnEnemy(enemyBase.X - 150.0f, false);
+            SpawnEnemy(enemyBase.X - 190.0f, false);
+            SpawnEnemy(enemyBase.X + 60.0f, false);
+
+            m_WaveTimer = FirstEnemyDropTime;
+        }
+
         return true;
+    }
+
+    void World::BuildBase(int team, float centerX)
+    {
+        TeamBase& base = m_Bases[team];
+
+        const int cx = static_cast<int>(centerX);
+        const int width = m_Terrain.GetWidth();
+        const int height = m_Terrain.GetHeight();
+
+        auto isBedrock = [&](int x, int y)
+        {
+            return m_Terrain.GetMaterial(x, y) == Material::Bedrock;
+        };
+
+        const int floorY = m_Terrain.GetSurfaceY(cx) + 4;
+
+        // Level the ground around the bunker, blending back into the
+        // natural surface on both sides. Loose sand and caves under the
+        // footprint become packed dirt so the base can't slump.
+        for (int x = cx - BaseFlatHalf - BaseRamp; x <= cx + BaseFlatHalf + BaseRamp; x++)
+        {
+            if (x < 0 || x >= width)
+                continue;
+
+            const int natural = m_Terrain.GetSurfaceY(x);
+            const int fromCenter = std::abs(x - cx);
+
+            int target = floorY;
+
+            if (fromCenter > BaseFlatHalf)
+            {
+                const float t = static_cast<float>(fromCenter - BaseFlatHalf) /
+                    static_cast<float>(BaseRamp);
+                const float smooth = t * t * (3.0f - 2.0f * t);
+                target = static_cast<int>(std::lround(
+                    static_cast<float>(floorY) + (static_cast<float>(natural - floorY)) * smooth));
+            }
+
+            for (int y = 0; y < target; y++)
+            {
+                if (!isBedrock(x, y))
+                    m_Terrain.SetMaterial(x, y, Material::Air);
+            }
+
+            const int fillDepth = fromCenter > BaseFlatHalf ? 24 : 48;
+
+            for (int y = target; y < std::min(height, target + fillDepth); y++)
+            {
+                const Material here = m_Terrain.GetMaterial(x, y);
+
+                if (here == Material::Bedrock)
+                    break;
+
+                if (GetMaterialInfo(here).Behavior != MaterialBehavior::Static)
+                    m_Terrain.SetMaterial(x, y, y == target ? Material::Grass : Material::Dirt);
+            }
+        }
+
+        // The shell: concrete walls, roof and floor, with a doorway on
+        // each side. The inside shows a concrete wall behind it.
+        const int innerLeft = cx - BunkerHalfInner;
+        const int innerRight = cx + BunkerHalfInner; // exclusive
+        const int innerTop = floorY - BunkerInnerHeight;
+        const int outerLeft = innerLeft - BunkerWall;
+        const int outerRight = innerRight + BunkerWall;
+        const int outerTop = innerTop - BunkerWall;
+        const int outerBottom = floorY + BunkerWall;
+
+        for (int y = outerTop; y < outerBottom; y++)
+        {
+            for (int x = outerLeft; x < outerRight; x++)
+            {
+                if (isBedrock(x, y))
+                    continue;
+
+                const bool inside =
+                    x >= innerLeft && x < innerRight && y >= innerTop && y < floorY;
+
+                const bool doorway =
+                    (x < innerLeft || x >= innerRight) &&
+                    y >= floorY - BunkerDoorHeight && y < floorY;
+
+                if (inside || doorway)
+                {
+                    m_Terrain.SetMaterial(x, y, Material::Air);
+                    m_Terrain.SetBackwall(x, y, Material::Concrete);
+                }
+                else
+                {
+                    m_Terrain.SetMaterial(x, y, Material::Concrete);
+                }
+            }
+        }
+
+        // The brain: a pedestal, a glass jar full of water, and the
+        // brain itself floating in it.
+        const int pedestalTop = floorY - 10;
+
+        for (int y = pedestalTop; y < floorY; y++)
+        {
+            for (int x = cx - 14; x < cx + 14; x++)
+                m_Terrain.SetMaterial(x, y, Material::Concrete);
+        }
+
+        const int jarLeft = cx - 16;
+        const int jarRight = cx + 16; // exclusive
+        const int jarTop = pedestalTop - 38;
+
+        for (int y = jarTop; y < pedestalTop; y++)
+        {
+            for (int x = jarLeft; x < jarRight; x++)
+            {
+                const bool rim =
+                    x < jarLeft + 2 || x >= jarRight - 2 || y < jarTop + 2 || y >= pedestalTop - 2;
+
+                m_Terrain.SetMaterial(x, y, rim ? Material::Glass : Material::Water);
+            }
+        }
+
+        const float brainCX = static_cast<float>(cx) - 0.5f;
+        const float brainCY = static_cast<float>(jarTop + 19);
+        const float brainRX = 11.5f;
+        const float brainRY = 9.5f;
+
+        base.BrainMinX = cx - 12;
+        base.BrainMaxX = cx + 11;
+        base.BrainMinY = static_cast<int>(brainCY - brainRY);
+        base.BrainMaxY = static_cast<int>(brainCY + brainRY);
+        base.BrainPixelsStart = 0;
+
+        for (int y = base.BrainMinY; y <= base.BrainMaxY; y++)
+        {
+            for (int x = base.BrainMinX; x <= base.BrainMaxX; x++)
+            {
+                const float ex = (static_cast<float>(x) - brainCX) / brainRX;
+                const float ey = (static_cast<float>(y) - brainCY) / brainRY;
+
+                // Two lobes: a notch along the top middle.
+                const bool notch = std::abs(x - cx) <= 0 && ey < -0.35f;
+
+                if (ex * ex + ey * ey <= 1.0f && !notch)
+                {
+                    m_Terrain.SetMaterial(x, y, Material::Brain);
+                    base.BrainPixelsStart++;
+                }
+            }
+        }
+
+        m_Particles.SetFriendlyBrainBox(
+            team, base.BrainMinX, base.BrainMinY, base.BrainMaxX, base.BrainMaxY);
+
+        base.Exists = true;
+        base.X = centerX;
+        base.FloorY = floorY;
+        base.BrainPixels = base.BrainPixelsStart;
+        base.BrainAlive = base.BrainPixelsStart > 0;
+    }
+
+    void World::UpdateBrains()
+    {
+        m_BrainAlarmTimer -= FixedTimeStep;
+
+        for (int team = 0; team < TeamCount; team++)
+        {
+            TeamBase& base = m_Bases[team];
+
+            if (!base.Exists || !base.BrainAlive)
+                continue;
+
+            int pixels = 0;
+
+            for (int y = base.BrainMinY; y <= base.BrainMaxY; y++)
+            {
+                for (int x = base.BrainMinX; x <= base.BrainMaxX; x++)
+                {
+                    if (m_Terrain.GetMaterial(x, y) == Material::Brain)
+                        pixels++;
+                }
+            }
+
+            if (pixels < base.BrainPixels && m_BrainAlarmTimer <= 0.0f)
+            {
+                SimEvent alarm;
+                alarm.Type = SimEventType::BrainUnderAttack;
+                alarm.Value = team;
+                alarm.X = base.GetBrainCenterX();
+                alarm.Y = base.GetBrainCenterY();
+                Emit(alarm);
+
+                m_BrainAlarmTimer = 4.0f;
+            }
+
+            base.BrainPixels = pixels;
+
+            if (static_cast<float>(pixels) >
+                BrainDeathThreshold * static_cast<float>(base.BrainPixelsStart))
+                continue;
+
+            // Dead: what's left of it bursts.
+            base.BrainAlive = false;
+
+            for (int y = base.BrainMinY; y <= base.BrainMaxY; y++)
+            {
+                for (int x = base.BrainMinX; x <= base.BrainMaxX; x++)
+                {
+                    if (m_Terrain.GetMaterial(x, y) != Material::Brain)
+                        continue;
+
+                    m_Terrain.SetMaterial(x, y, Material::Air);
+
+                    if ((x + y) % 3 == 0)
+                    {
+                        m_Particles.SpawnBlood(
+                            static_cast<float>(x), static_cast<float>(y),
+                            RandomUnit() * 160.0f, -80.0f + RandomUnit() * 120.0f);
+                    }
+                }
+            }
+
+            EmitSound(Sfx::Gib);
+            EmitSound(Sfx::Explosion, 0.8f);
+
+            SimEvent destroyed;
+            destroyed.Type = SimEventType::BrainDestroyed;
+            destroyed.Value = team;
+            destroyed.X = base.GetBrainCenterX();
+            destroyed.Y = base.GetBrainCenterY();
+            Emit(destroyed);
+
+            if (m_Outcome == MatchOutcome::InProgress)
+            {
+                m_Outcome = team == 0 ? MatchOutcome::Defeat : MatchOutcome::Victory;
+
+                SimEvent over;
+                over.Type = SimEventType::MatchOver;
+                over.Value = team == 0 ? 1 : 0;
+                Emit(over);
+            }
+        }
     }
 
     float World::RandomUnit()
@@ -146,8 +441,140 @@ namespace Atlas
 
     float World::GetSpawnX(int playerSlot) const
     {
+        if (m_Bases[0].Exists)
+            return m_Bases[0].X + PlayerSpawnOffsets[playerSlot % MaxPlayers];
+
         return static_cast<float>(m_Terrain.GetWidth()) * 0.5f +
             static_cast<float>(playerSlot) * 48.0f;
+    }
+
+    void World::RespawnPlayer(int slot)
+    {
+        PlayerSlot& player = m_Players[slot];
+
+        player.Body->ResetVitals();
+
+        // Inside the bunker when there is one (search from below its
+        // roof, not from the sky). The ground there may have been blown
+        // up, so look sideways, then from the sky, for room to stand.
+        const int bunkerSearch = m_Bases[0].Exists
+            ? m_Bases[0].FloorY - BunkerInnerHeight + 4
+            : 0;
+
+        const float spawnX = GetSpawnX(slot);
+        bool placed = false;
+
+        for (int pass = 0; pass < 2 && !placed; pass++)
+        {
+            const int searchFrom = pass == 0 ? bunkerSearch : 0;
+
+            for (int attempt = 0; attempt < 12 && !placed; attempt++)
+            {
+                const float offset = static_cast<float>((attempt + 1) / 2) * 18.0f *
+                    (attempt % 2 == 0 ? 1.0f : -1.0f);
+
+                player.Body->Spawn(m_Terrain, spawnX + offset, searchFrom);
+                placed = player.Body->HasRoom(m_Terrain);
+            }
+        }
+
+        if (!placed)
+            player.Body->Spawn(m_Terrain, spawnX);
+        player.Gibbed = false;
+        player.WasGrounded = true;
+        player.PrevFallSpeed = 0.0f;
+    }
+
+    int World::AllyIndexNearest(float x, float y) const
+    {
+        int best = -1;
+        float bestDistSquared = 0.0f;
+
+        for (int i = 0; i < static_cast<int>(m_Allies.size()); i++)
+        {
+            const Actor& body = *m_Allies[static_cast<std::size_t>(i)].Body;
+
+            if (!body.IsAlive())
+                continue;
+
+            const float dx = body.GetCenterX() - x;
+            const float dy = body.GetCenterY() - y;
+            const float distSquared = dx * dx + dy * dy;
+
+            if (best < 0 || distSquared < bestDistSquared)
+            {
+                best = i;
+                bestDistSquared = distSquared;
+            }
+        }
+
+        return best;
+    }
+
+    void World::SwitchBody(int slot, bool fromDeadBody)
+    {
+        PlayerSlot& player = m_Players[slot];
+        Actor& body = *player.Body;
+
+        // From a corpse: the nearest survivor. Otherwise cycle through
+        // the team in order.
+        const int index = fromDeadBody
+            ? AllyIndexNearest(body.GetCenterX(), body.GetCenterY())
+            : (m_Allies.empty() ? -1 : 0);
+
+        if (index < 0)
+            return;
+
+        // Bodies trade places by value, so the player's Actor object (and
+        // every reference to it) stays put while what it holds changes.
+        Ally& ally = m_Allies[static_cast<std::size_t>(index)];
+        std::swap(body, *ally.Body);
+
+        if (fromDeadBody)
+        {
+            // The ally entry now holds the corpse; it's already been
+            // gibbed, so just drop it.
+            m_Allies.erase(m_Allies.begin() + index);
+        }
+        else
+        {
+            // The body left behind gets a fresh AI and goes to the back
+            // of the line, so repeated switching visits everyone.
+            Ally left = std::move(ally);
+            left.Brain = AIController();
+            left.Brain.Seed(left.Body->GetId());
+
+            m_Allies.erase(m_Allies.begin() + index);
+            m_Allies.push_back(std::move(left));
+        }
+
+        player.Gibbed = false;
+        player.RespawnTimer = 0.0f;
+        player.WasGrounded = body.IsGrounded();
+        player.PrevFallSpeed = 0.0f;
+        player.PrevLegPlanted[0] = true;
+        player.PrevLegPlanted[1] = true;
+
+        // Keep the loadout selection pointing at what this body holds.
+        player.CurrentSlot = 0;
+
+        for (int i = 0; i < LoadoutSize; i++)
+        {
+            if (m_Loadout[i] == body.GetWeapon().GetDef())
+            {
+                player.CurrentSlot = i;
+                break;
+            }
+        }
+
+        SimEvent switched;
+        switched.Type = SimEventType::BodySwitched;
+        switched.Player = slot;
+        switched.X = body.GetCenterX();
+        switched.Y = body.GetCenterY();
+        Emit(switched);
+
+        EmitSound(Sfx::Reload, 0.6f);
     }
 
     int World::AddPlayer()
@@ -173,21 +600,63 @@ namespace Atlas
 
         player.Body->SetTint(Tints[slot][0], Tints[slot][1], Tints[slot][2]);
         player.Body->SetWeaponDef(m_Loadout[0]);
-        player.Body->Spawn(m_Terrain, GetSpawnX(slot));
 
         m_Players.push_back(std::move(player));
+        RespawnPlayer(slot);
         return slot;
     }
 
-    void World::SpawnEnemy(float x)
+    void World::SpawnEnemy(float x, bool attacker)
     {
+        if (static_cast<int>(m_Enemies.size()) >= MaxEnemies)
+            return;
+
         Enemy enemy;
         enemy.Body = std::make_unique<Actor>();
         InitActor(*enemy.Body, 1);
         enemy.Body->SetTint(255, 118, 106);
         enemy.Body->SetWeaponDef(m_EnemyWeapon);
-        enemy.Body->Spawn(m_Terrain, x);
+
+        // Inside the enemy bunker counts as "from below its roof".
+        const TeamBase& base = m_Bases[1];
+        const bool inBunker = base.Exists &&
+            std::fabs(x - base.X) < static_cast<float>(BunkerHalfInner);
+
+        enemy.Body->Spawn(m_Terrain, x,
+            inBunker ? base.FloorY - BunkerInnerHeight + 4 : 0);
+
+        enemy.Brain.Seed(enemy.Body->GetId());
+        enemy.Attacker = attacker;
         m_Enemies.push_back(std::move(enemy));
+    }
+
+    void World::SpawnEnemyDrop(int count)
+    {
+        const TeamBase& base = m_Bases[1];
+        const float width = static_cast<float>(m_Terrain.GetWidth());
+
+        for (int i = 0; i < count; i++)
+        {
+            // Land on the near side of their bunker, spread out a bit.
+            const float targetX = std::clamp(
+                base.X - 220.0f - static_cast<float>(i) * 36.0f + RandomUnit() * 14.0f,
+                40.0f, width - 40.0f);
+
+            m_Deliveries.Order(
+                DeliveryKind::Reinforcement,
+                width + 160.0f + static_cast<float>(i) * 90.0f,
+                -1.0f,
+                targetX,
+                nullptr,
+                -1,
+                1);
+        }
+
+        SimEvent incoming;
+        incoming.Type = SimEventType::EnemyDropIncoming;
+        incoming.Value = count;
+        incoming.X = base.X;
+        Emit(incoming);
     }
 
     void World::SpawnWave(int count)
@@ -215,7 +684,7 @@ namespace Atlas
             for (int attempt = 0; attempt < 10 && tooCloseToAPlayer(x); attempt++)
                 x = RandomRange(minX, maxX);
 
-            SpawnEnemy(x);
+            SpawnEnemy(x, true);
         }
     }
 
@@ -231,6 +700,7 @@ namespace Atlas
         ally.Body->SetTint(120, 170, 255);
         ally.Body->SetWeaponDef(weapon ? weapon : m_AllyWeapon);
         ally.Body->Spawn(m_Terrain, x);
+        ally.Brain.Seed(ally.Body->GetId());
         m_Allies.push_back(std::move(ally));
     }
 
@@ -314,7 +784,7 @@ namespace Atlas
         if (player < 0 || player >= GetPlayerCount())
             return false;
 
-        Actor& buyer = *m_Players[player].Body;
+        const Actor& buyer = *m_Players[player].Body;
 
         if (order.Bodies.empty() &&
             order.LooseWeapons.empty() &&
@@ -323,21 +793,26 @@ namespace Atlas
 
         const int cost = PriceOrder(order);
 
-        if (buyer.GetGold() < cost)
+        if (m_TeamGold[0] < cost)
             return false;
 
-        buyer.AddGold(-cost);
+        m_TeamGold[0] -= cost;
+
+        // Drops land on the buyer, or at home if they're between bodies.
+        const float dropX = buyer.IsAlive() || !m_Bases[0].Exists
+            ? buyer.GetCenterX()
+            : m_Bases[0].X + 150.0f;
 
         auto queueDelivery = [&](DeliveryKind kind, const WeaponDef* weapon)
         {
             const bool fromLeft = (m_Rng() % 2u) == 0u;
             const float shipDir = fromLeft ? 1.0f : -1.0f;
             const float shipOrigin = fromLeft
-                ? buyer.GetCenterX() - ShipSpawnDistance
-                : buyer.GetCenterX() + ShipSpawnDistance;
+                ? dropX - ShipSpawnDistance
+                : dropX + ShipSpawnDistance;
 
             m_Deliveries.Order(
-                kind, shipOrigin, shipDir, buyer.GetCenterX(), weapon, player);
+                kind, shipOrigin, shipDir, dropX, weapon, player);
         };
 
         for (const WeaponDef* weapon : order.Bodies)
@@ -414,19 +889,38 @@ namespace Atlas
         state.JetSoundTimer -= FixedTimeStep;
         state.ToolSfxTimer -= FixedTimeStep;
 
+        // Standing orders for the team's AI, from whoever gives them.
+        if (input.AllyOrder >= 0 &&
+            input.AllyOrder < static_cast<std::int8_t>(AllyOrder::Count))
+        {
+            m_AllyOrder = static_cast<AllyOrder>(input.AllyOrder);
+            m_AllyOrderPlayer = slot;
+            EmitSound(Sfx::Reload, 0.5f);
+        }
+
         if (!player.IsAlive())
         {
             state.RespawnTimer -= FixedTimeStep;
 
-            if (state.RespawnTimer <= 0.0f)
+            // With the brain gone there's nothing to come back to.
+            if (m_Outcome == MatchOutcome::Defeat)
+                return;
+
+            if (!m_Allies.empty() &&
+                state.RespawnTimer <= RespawnTime - SwitchOnDeathDelay)
             {
-                player.ResetVitals();
-                player.Spawn(m_Terrain, GetSpawnX(slot));
-                state.Gibbed = false;
+                SwitchBody(slot, true);
+            }
+            else if (state.RespawnTimer <= 0.0f)
+            {
+                RespawnPlayer(slot);
             }
 
             return;
         }
+
+        if (input.SwitchBodyPressed)
+            SwitchBody(slot, false);
 
         // Weapon switching and reload.
         if (input.SelectSlot >= 0 && input.SelectSlot < LoadoutSize)
@@ -600,7 +1094,8 @@ namespace Atlas
                 player.GetHandX(),
                 player.GetHandY(),
                 player.GetAimDirX() * 520.0f + player.GetVelocityX() * 0.4f,
-                player.GetAimDirY() * 520.0f - 60.0f);
+                player.GetAimDirY() * 520.0f - 60.0f,
+                player.GetTeam());
 
             state.GrenadeCooldown = GrenadeCooldownTime;
 
@@ -678,52 +1173,101 @@ namespace Atlas
         for (Ally& ally : m_Allies)
             actorPtrs[actorCount++] = ally.Body.get();
 
-        // --- Enemies: each hunts the nearest living player ---
-        for (Enemy& enemy : m_Enemies)
+        // --- Enemies: fight the nearest of the players' side; attackers
+        // march on the players' brain, guards hold their own base ---
+        const TeamBase& home = m_Bases[0];
+        const TeamBase& enemyBase = m_Bases[1];
+
+        for (std::size_t i = 0; i < m_Enemies.size(); i++)
         {
-            Actor* target = NearestLivingPlayer(
-                enemy.Body->GetCenterX(), enemy.Body->GetCenterY());
+            Enemy& enemy = m_Enemies[i];
+            const float x = enemy.Body->GetCenterX();
+            const float y = enemy.Body->GetCenterY();
 
-            enemy.Brain.Update(
-                *enemy.Body,
-                target,
-                m_Terrain,
-                m_Particles,
-                m_Terrain,
-                FixedTimeStep);
-        }
+            AIOrders orders;
 
-        // --- Allies: each fights whichever enemy is nearest ---
-        for (Ally& ally : m_Allies)
-        {
-            Actor* nearestEnemy = nullptr;
-            float nearestDistSquared = 0.0f;
-
-            for (Enemy& enemy : m_Enemies)
+            if (m_Mode == GameMode::Survival)
             {
-                if (!enemy.Body->IsAlive())
-                    continue;
+                orders.Target = NearestLivingPlayer(x, y);
+            }
+            else
+            {
+                orders.Target = NearestOfTeam(0, x, y);
 
-                const float dx =
-                    enemy.Body->GetCenterX() - ally.Body->GetCenterX();
-                const float dy =
-                    enemy.Body->GetCenterY() - ally.Body->GetCenterY();
-                const float distSquared = dx * dx + dy * dy;
-
-                if (!nearestEnemy || distSquared < nearestDistSquared)
+                if (enemy.Attacker && home.BrainAlive)
                 {
-                    nearestEnemy = enemy.Body.get();
-                    nearestDistSquared = distSquared;
+                    orders.HasGoal = true;
+                    orders.GoalX = home.GetBrainCenterX();
+                    orders.HasPoint = true;
+                    orders.PointX = home.GetBrainCenterX();
+                    orders.PointY = home.GetBrainCenterY();
+                }
+                else if (enemyBase.Exists)
+                {
+                    orders.HasGoal = true;
+                    orders.GoalX = enemyBase.X - 150.0f - static_cast<float>(i % 3) * 40.0f;
                 }
             }
 
+            enemy.Brain.Update(
+                *enemy.Body, orders, m_Terrain, m_Particles, m_Terrain, FixedTimeStep);
+        }
+
+        // --- Allies: fight the nearest enemy, otherwise follow the
+        // team's standing order ---
+        for (std::size_t i = 0; i < m_Allies.size(); i++)
+        {
+            Ally& ally = m_Allies[i];
+            const float x = ally.Body->GetCenterX();
+            const float y = ally.Body->GetCenterY();
+            const float spread = static_cast<float>(i) * 26.0f;
+
+            AIOrders orders;
+            orders.Target = NearestOfTeam(1, x, y);
+
+            AllyOrder order = m_AllyOrder;
+
+            // Without a base there's nothing to defend: stick with people.
+            if (order == AllyOrder::Defend && !home.Exists)
+                order = AllyOrder::Follow;
+
+            if (order == AllyOrder::Attack && !enemyBase.BrainAlive)
+                order = AllyOrder::Defend;
+
+            switch (order)
+            {
+            case AllyOrder::Defend:
+                orders.HasGoal = true;
+                orders.GoalX = home.X + 160.0f + spread;
+                break;
+
+            case AllyOrder::Follow:
+            {
+                const int leader = std::clamp(m_AllyOrderPlayer, 0, GetPlayerCount() - 1);
+
+                if (GetPlayerCount() > 0 && m_Players[static_cast<std::size_t>(leader)].Body->IsAlive())
+                {
+                    const Actor& body = *m_Players[static_cast<std::size_t>(leader)].Body;
+                    orders.HasGoal = true;
+                    orders.GoalX = body.GetCenterX() - body.GetFacingDir() * (40.0f + spread);
+                }
+                break;
+            }
+
+            case AllyOrder::Attack:
+                orders.HasGoal = true;
+                orders.GoalX = enemyBase.GetBrainCenterX();
+                orders.HasPoint = true;
+                orders.PointX = enemyBase.GetBrainCenterX();
+                orders.PointY = enemyBase.GetBrainCenterY();
+                break;
+
+            default:
+                break;
+            }
+
             ally.Brain.Update(
-                *ally.Body,
-                nearestEnemy,
-                m_Terrain,
-                m_Particles,
-                m_Terrain,
-                FixedTimeStep);
+                *ally.Body, orders, m_Terrain, m_Particles, m_Terrain, FixedTimeStep);
         }
 
         // --- Lava and water ---
@@ -754,6 +1298,16 @@ namespace Atlas
             if (Actor* owner = FindActor(credit.OwnerId))
                 owner->AddGold(credit.Amount);
         }
+
+        // ...and from every body into its team's funds.
+        for (PlayerSlot& player : m_Players)
+            CollectGold(*player.Body);
+
+        for (Enemy& enemy : m_Enemies)
+            CollectGold(*enemy.Body);
+
+        for (Ally& ally : m_Allies)
+            CollectGold(*ally.Body);
 
         // Damage events: compare each enemy's health to last tick's -
         // catches every damage source without any plumbing.
@@ -802,6 +1356,8 @@ namespace Atlas
             {
                 body.Gib(m_Particles);
                 EmitSound(Sfx::Gib, 0.8f);
+
+                m_TeamGold[0] += KillBounty;
 
                 SimEvent kill;
                 kill.Type = SimEventType::EnemyKilled;
@@ -888,8 +1444,38 @@ namespace Atlas
             }
         }
 
+        UpdateBrains();
+
+        // --- Enemy reinforcements: drop ships to their base on a timer,
+        // bigger as the match goes on ---
+        if (m_Mode == GameMode::BrainAssault &&
+            m_BotsEnabled &&
+            m_Outcome == MatchOutcome::InProgress &&
+            enemyBase.BrainAlive)
+        {
+            m_WaveTimer -= FixedTimeStep;
+
+            if (m_WaveTimer <= 0.0f)
+            {
+                m_Wave++;
+
+                const int room = MaxEnemies - static_cast<int>(m_Enemies.size());
+                const int count = std::min(room, std::min(2 + m_Wave / 2, 6));
+
+                if (count > 0)
+                    SpawnEnemyDrop(count);
+
+                m_WaveTimer = std::max(18.0f, 34.0f - static_cast<float>(m_Wave));
+
+                SimEvent wave;
+                wave.Type = SimEventType::WaveStarted;
+                wave.Value = m_Wave;
+                Emit(wave);
+            }
+        }
+
         // --- Waves ---
-        if (m_BotsEnabled && m_Enemies.empty())
+        if (m_Mode == GameMode::Survival && m_BotsEnabled && m_Enemies.empty())
         {
             m_WaveTimer -= FixedTimeStep;
 
@@ -936,7 +1522,10 @@ namespace Atlas
                     break;
 
                 case DeliveryKind::Reinforcement:
-                    SpawnAlly(delivery->PayloadX, delivery->Weapon);
+                    if (delivery->Team == 1)
+                        SpawnEnemy(delivery->PayloadX, true);
+                    else
+                        SpawnAlly(delivery->PayloadX, delivery->Weapon);
                     break;
 
                 case DeliveryKind::WeaponPickup:
@@ -1025,6 +1614,16 @@ namespace Atlas
         h.Int(static_cast<std::int64_t>(m_Tick));
         h.Int(m_Wave);
         h.Float(m_WaveTimer);
+        h.Int(static_cast<std::int64_t>(m_Outcome));
+        h.Int(static_cast<std::int64_t>(m_AllyOrder));
+        h.Int(m_AllyOrderPlayer);
+
+        for (int team = 0; team < TeamCount; team++)
+        {
+            h.Int(m_TeamGold[team]);
+            h.Int(m_Bases[team].BrainPixels);
+            h.Int(m_Bases[team].BrainAlive ? 1 : 0);
+        }
 
         h.Bytes(
             m_Terrain.GetMaterialData(),
@@ -1148,6 +1747,66 @@ namespace Atlas
     int World::GetWave() const
     {
         return m_Wave;
+    }
+
+    GameMode World::GetMode() const { return m_Mode; }
+    MatchOutcome World::GetOutcome() const { return m_Outcome; }
+    const TeamBase& World::GetBase(int team) const { return m_Bases[std::clamp(team, 0, TeamCount - 1)]; }
+    float World::GetWaveTimer() const { return m_WaveTimer; }
+    AllyOrder World::GetAllyOrder() const { return m_AllyOrder; }
+
+    int World::GetTeamGold(int team) const
+    {
+        return m_TeamGold[std::clamp(team, 0, TeamCount - 1)];
+    }
+
+    void World::AddTeamGold(int team, int amount)
+    {
+        m_TeamGold[std::clamp(team, 0, TeamCount - 1)] += amount;
+    }
+
+    void World::CollectGold(Actor& body)
+    {
+        const int gold = body.GetGold();
+
+        if (gold == 0)
+            return;
+
+        m_TeamGold[std::clamp(body.GetTeam(), 0, TeamCount - 1)] += gold;
+        body.AddGold(-gold);
+    }
+
+    Actor* World::NearestOfTeam(int team, float x, float y)
+    {
+        Actor* nearest = nullptr;
+        float nearestDistSquared = 0.0f;
+
+        auto consider = [&](Actor& body)
+        {
+            if (!body.IsAlive() || body.GetTeam() != team)
+                return;
+
+            const float dx = body.GetCenterX() - x;
+            const float dy = body.GetCenterY() - y;
+            const float distSquared = dx * dx + dy * dy;
+
+            if (!nearest || distSquared < nearestDistSquared)
+            {
+                nearest = &body;
+                nearestDistSquared = distSquared;
+            }
+        };
+
+        for (PlayerSlot& player : m_Players)
+            consider(*player.Body);
+
+        for (Enemy& enemy : m_Enemies)
+            consider(*enemy.Body);
+
+        for (Ally& ally : m_Allies)
+            consider(*ally.Body);
+
+        return nearest;
     }
 
     std::uint64_t World::GetTick() const

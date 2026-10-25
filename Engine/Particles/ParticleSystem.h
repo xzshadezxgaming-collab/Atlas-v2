@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../World/Material.h"
+#include "../World/Terrain.h"
 
 #include <cstdint>
 #include <vector>
@@ -117,7 +118,26 @@ namespace Atlas
         int GetActiveCount() const;
         void Clear();
 
+        // A team's own bullets pass harmlessly off brain pixels inside
+        // this box (its brain), so nobody shoots their own brain by
+        // accident.
+        void SetFriendlyBrainBox(int team, int minX, int minY, int maxX, int maxY);
+        bool GetFriendlyBrainBox(int team, Terrain::Box& out) const;
+
     private:
+        struct BrainBox
+        {
+            bool Set = false;
+            int MinX = 0;
+            int MinY = 0;
+            int MaxX = 0;
+            int MaxY = 0;
+        };
+
+        BrainBox m_BrainBoxes[2];
+
+        bool IsFriendlyBrain(int team, int x, int y) const;
+
         void Push(const Particle& particle);
 
         // Deterministic-ish cheap RNG for spread/bursts.

@@ -322,6 +322,7 @@ namespace Atlas
                 info.Width = Config.Width;
                 info.Height = Config.Height;
                 info.Seed = Config.Seed;
+                info.Mode = static_cast<std::uint8_t>(Config.Mode);
                 info.WeaponsIni = WeaponsIni;
                 info.HistoryFrames = static_cast<std::uint32_t>(OutgoingFirst);
 
@@ -487,6 +488,9 @@ namespace Atlas
                 Config.Width = info.Width;
                 Config.Height = info.Height;
                 Config.Seed = info.Seed;
+                Config.Mode = info.Mode == static_cast<std::uint8_t>(GameMode::Survival)
+                    ? GameMode::Survival
+                    : GameMode::BrainAssault;
                 WeaponsIni = info.WeaponsIni;
                 LocalSlot = info.Slot;
                 HistoryTotal = info.HistoryFrames;

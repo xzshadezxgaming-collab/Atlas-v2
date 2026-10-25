@@ -41,12 +41,16 @@ namespace Atlas
 
         // Procedural drop-ship hull: a sleek wedge with a glowing tail
         // engine, nose pointed the direction it's flying.
-        void DrawDropShipHull(Window& window, float x, float y, float dir)
+        void DrawDropShipHull(Window& window, float x, float y, float dir, int team)
         {
             window.DrawFilledRect(x - 22.0f, y - 6.0f, 44.0f, 12.0f,
                 40, 42, 50, 255);
-            window.DrawFilledRect(x - 22.0f, y - 6.0f, 44.0f, 3.0f,
-                72, 76, 90, 255);
+
+            // Team stripe along the spine.
+            if (team == 0)
+                window.DrawFilledRect(x - 22.0f, y - 6.0f, 44.0f, 3.0f, 72, 76, 90, 255);
+            else
+                window.DrawFilledRect(x - 22.0f, y - 6.0f, 44.0f, 3.0f, 150, 50, 44, 255);
 
             window.DrawFilledRect(x + dir * 8.0f - 5.0f, y - 3.0f, 10.0f, 6.0f,
                 130, 205, 235, 220);
@@ -84,13 +88,15 @@ namespace Atlas
                 payloadX + 3.0f, payloadY - 12.0f, 210, 210, 200, 200);
         }
 
-        void DrawDeliveryPayload(Window& window, float x, float y, DeliveryKind kind)
+        void DrawDeliveryPayload(Window& window, float x, float y, DeliveryKind kind, int team)
         {
             if (kind == DeliveryKind::Reinforcement)
             {
-                // Soldier hanging in the harness.
-                window.DrawFilledRect(x - 4.0f, y - 16.0f, 8.0f, 10.0f,
-                    70, 96, 130, 255);
+                // Soldier hanging in the harness, in team colors.
+                if (team == 0)
+                    window.DrawFilledRect(x - 4.0f, y - 16.0f, 8.0f, 10.0f, 70, 96, 130, 255);
+                else
+                    window.DrawFilledRect(x - 4.0f, y - 16.0f, 8.0f, 10.0f, 150, 60, 52, 255);
                 window.DrawFilledRect(x - 3.0f, y - 20.0f, 6.0f, 5.0f,
                     214, 170, 130, 255);
                 window.DrawFilledRect(x - 4.0f, y - 6.0f, 3.0f, 6.0f,
@@ -134,9 +140,11 @@ namespace Atlas
         float shipDir,
         float targetX,
         const WeaponDef* weapon,
-        int ownerPlayer)
+        int ownerPlayer,
+        int team)
     {
         Delivery delivery;
+        delivery.Team = team;
         delivery.Kind = kind;
         delivery.ShipX = originX;
         delivery.ShipDir = shipDir;
@@ -254,7 +262,7 @@ namespace Atlas
                 delivery.Phase == DeliveryPhase::Descending)
             {
                 DrawDropShipHull(
-                    window, delivery.ShipX, DeliveryAltitude, delivery.ShipDir);
+                    window, delivery.ShipX, DeliveryAltitude, delivery.ShipDir, delivery.Team);
             }
 
             if (delivery.Phase == DeliveryPhase::Descending)
@@ -267,14 +275,14 @@ namespace Atlas
                     window, delivery.PayloadX, delivery.PayloadY, canopyOpen);
                 DrawDeliveryPayload(
                     window, delivery.PayloadX, delivery.PayloadY,
-                    delivery.Kind);
+                    delivery.Kind, delivery.Team);
             }
             else if (delivery.Phase == DeliveryPhase::Landed &&
                 !delivery.Delivered)
             {
                 DrawDeliveryPayload(
                     window, delivery.PayloadX, delivery.PayloadY,
-                    delivery.Kind);
+                    delivery.Kind, delivery.Team);
                 window.DrawGlow(
                     delivery.PayloadX, delivery.PayloadY - 8.0f, 16.0f,
                     230, 205, 110, 90);

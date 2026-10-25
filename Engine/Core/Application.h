@@ -20,6 +20,9 @@ namespace Atlas
         std::string Address = "127.0.0.1";
         std::uint16_t Port = 27960;
 
+        // Endless waves instead of brain-versus-brain (--survival).
+        bool Survival = false;
+
         // Parses --host [port] and --join <address>[:port]. Returns false
         // (and prints usage) on bad arguments.
         bool Parse(int argc, char** argv);

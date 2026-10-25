@@ -18,6 +18,9 @@ namespace Atlas
         Lava,
         Obsidian,
         Bedrock,
+        Concrete,
+        Brain,
+        Glass,
 
         Count
     };
@@ -79,6 +82,9 @@ namespace Atlas
         { "Lava",      255, 104,  28, false, MaterialBehavior::Liquid,   7,   0.0f,    0, false, false, 245 },
         { "Obsidian",   46,  36,  58, true,  MaterialBehavior::Static,   0,  12.0f,    0, true,  false, 255 },
         { "Bedrock",    40,  38,  44, true,  MaterialBehavior::Static,   0, 1.0e9f,    0, true,  true,  255 },
+        { "Concrete",  132, 128, 118, true,  MaterialBehavior::Static,   0,  30.0f,    0, true,  false, 255 },
+        { "Brain",     226, 136, 156, true,  MaterialBehavior::Static,   0,   1.2f,    0, false, false, 255 },
+        { "Glass",     176, 222, 238, true,  MaterialBehavior::Static,   0,   0.5f,    0, false, false, 110 },
     };
 
     static_assert(

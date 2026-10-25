@@ -16,5 +16,6 @@ namespace Atlas
         float x,
         float y,
         float radius,
-        int maxDamage);
+        int maxDamage,
+        int team = -1); // the blast spares this team's brain
 }

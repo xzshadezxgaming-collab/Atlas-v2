@@ -268,10 +268,24 @@ namespace Atlas
                 if (dx * dx + dy * dy > radiusSquared)
                     continue;
 
-                const MaterialInfo& info = GetMaterialInfo(GetMaterial(x, y));
+                const Material material = GetMaterial(x, y);
+                const MaterialInfo& info = GetMaterialInfo(material);
 
                 if (!info.Solid || info.Indestructible)
                     continue;
+
+                // Very hard materials (concrete) only give way near the
+                // middle of the blast, and a brain's tissue is tough
+                // enough that a blast must be nearly on top of it.
+                if (info.Strength > 12.0f || material == Material::Brain)
+                {
+                    const float reach = material == Material::Brain
+                        ? 0.3f
+                        : std::max(0.25f, 12.0f / info.Strength);
+
+                    if (dx * dx + dy * dy > radiusSquared * reach * reach)
+                        continue;
+                }
 
                 SetMaterial(x, y, Material::Air);
                 removed++;
@@ -286,7 +300,8 @@ namespace Atlas
         float centerY,
         float radius,
         std::vector<DestroyedPixel>& outDebris,
-        int maxSamples)
+        int maxSamples,
+        const Box* spareBrain)
     {
         const int minX = static_cast<int>(std::floor(centerX - radius));
         const int maxX = static_cast<int>(std::ceil(centerX + radius));
@@ -312,6 +327,24 @@ namespace Atlas
 
                 if (!info.Solid || info.Indestructible)
                     continue;
+
+                if (spareBrain && material == Material::Brain &&
+                    x >= spareBrain->MinX && x <= spareBrain->MaxX &&
+                    y >= spareBrain->MinY && y <= spareBrain->MaxY)
+                    continue;
+
+                // Very hard materials (concrete) only give way near the
+                // middle of the blast, and a brain's tissue is tough
+                // enough that a blast must be nearly on top of it.
+                if (info.Strength > 12.0f || material == Material::Brain)
+                {
+                    const float reach = material == Material::Brain
+                        ? 0.3f
+                        : std::max(0.25f, 12.0f / info.Strength);
+
+                    if (dx * dx + dy * dy > radiusSquared * reach * reach)
+                        continue;
+                }
 
                 SetMaterial(x, y, Material::Air);
                 removed++;
@@ -1371,6 +1404,28 @@ namespace Atlas
                 static_cast<std::uint32_t>(y / 4)) % 100u) * 0.003f;
             break;
 
+        case Material::Concrete:
+            // Cast panels: dark seams on a 24x16 grid, a little grit.
+            if (x % 24 == 0 || y % 16 == 0)
+                factor *= 0.7f;
+            else if (hash % 23u == 0u)
+                factor *= 0.85f;
+            break;
+
+        case Material::Brain:
+        {
+            // Folds: a wavy dark crease pattern.
+            const float fold = std::sin(static_cast<float>(x) * 0.9f +
+                std::sin(static_cast<float>(y) * 0.7f) * 2.2f);
+
+            factor = 0.95f + fold * 0.18f + static_cast<float>(hash % 100u) * 0.001f;
+            break;
+        }
+
+        case Material::Glass:
+            factor = (x + y) % 9 == 0 ? 1.25f : 1.0f;
+            break;
+
         default:
             break;
         }
@@ -1414,10 +1469,49 @@ namespace Atlas
             bFactor = factor * (1.0f - warm * 0.4f);
         }
 
+        if (info.Alpha < 255)
+        {
+            // See-through solids (glass) blend over whatever is behind.
+            const float a = static_cast<float>(info.Alpha) / 255.0f;
+            const bool hasWall = wall != Material::Air;
+
+            m_Pixels[index + 0] = static_cast<std::uint8_t>(std::min(255.0f,
+                Shade(info.R, rFactor) * a + wallR * (1.0f - a)));
+            m_Pixels[index + 1] = static_cast<std::uint8_t>(std::min(255.0f,
+                Shade(info.G, gFactor) * a + wallG * (1.0f - a)));
+            m_Pixels[index + 2] = static_cast<std::uint8_t>(std::min(255.0f,
+                Shade(info.B, bFactor) * a + wallB * (1.0f - a)));
+            m_Pixels[index + 3] = hasWall ? 255 : info.Alpha;
+            return;
+        }
+
         m_Pixels[index + 0] = Shade(info.R, rFactor);
         m_Pixels[index + 1] = Shade(info.G, gFactor);
         m_Pixels[index + 2] = Shade(info.B, bFactor);
         m_Pixels[index + 3] = 255;
+    }
+
+    void Terrain::SetBackwall(int x, int y, Material material)
+    {
+        if (x < 0 || x >= m_Width || y < 0 || y >= m_Height)
+            return;
+
+        m_Backwall[static_cast<std::size_t>(y) * m_Width + x] =
+            static_cast<std::uint8_t>(material);
+
+        WritePixelColor(x, y, GetMaterial(x, y));
+        MarkDirty(x, y);
+    }
+
+    int Terrain::GetSurfaceY(int x) const
+    {
+        for (int y = 0; y < m_Height; y++)
+        {
+            if (GetMaterialInfo(GetMaterial(x, y)).Solid)
+                return y;
+        }
+
+        return m_Height;
     }
 
     void Terrain::MarkDirty(int x, int y)

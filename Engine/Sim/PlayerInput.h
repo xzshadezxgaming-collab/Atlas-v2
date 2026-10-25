@@ -32,6 +32,14 @@ namespace Atlas
 
         // Loadout slot to switch to, -1 = keep the current one.
         std::int8_t SelectSlot = -1;
+
+        // Edge: take over the next friendly body (Cortex Command's
+        // actor switching). The body you leave carries on under AI.
+        bool SwitchBodyPressed = false;
+
+        // New standing order for the team's AI units (an AllyOrder
+        // value), -1 = no change.
+        std::int8_t AllyOrder = -1;
     };
 
     // A drop-ship order, as sent by a player's buy menu. The World prices

@@ -23,9 +23,10 @@ namespace Atlas
         float y,
         float velX,
         float velY,
+        int team,
         float fuse)
     {
-        m_Grenades.push_back({ x, y, velX, velY, fuse, 0.0f });
+        m_Grenades.push_back({ x, y, velX, velY, fuse, 0.0f, team });
     }
 
     void GrenadeSystem::Update(
@@ -53,7 +54,8 @@ namespace Atlas
                     grenade.X,
                     grenade.Y,
                     ExplosionRadius,
-                    ExplosionDamage);
+                    ExplosionDamage,
+                    grenade.Team);
 
                 m_ExplodedThisFrame = true;
 
