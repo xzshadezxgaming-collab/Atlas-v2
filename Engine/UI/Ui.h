@@ -49,6 +49,10 @@ namespace Atlas
         bool Hovered(float x, float y, float w, float h) const;
 
     private:
+        // A control's face: rounded border, vertical gradient fill, and
+        // an accent bar down the left edge when lit (0..1).
+        void Frame(float x, float y, float w, float h, float lit, bool pressed = false);
+
         Window& m_Window;
 
         float m_MouseX = 0.0f;

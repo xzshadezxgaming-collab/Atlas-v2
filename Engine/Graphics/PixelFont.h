@@ -8,8 +8,10 @@ namespace Atlas
 {
     class Window;
 
-    // Tiny built-in 3x5 pixel font (A-Z, 0-9, and a few symbols), drawn
-    // as screen-space rects. No font files needed.
+    // Built-in pixel fonts (A-Z, 0-9, and a few symbols), drawn as
+    // screen-space rects. No font files needed. Scales of 2 and up use a
+    // chunky 3x5 face (4*scale advance); smaller scales use a crisp 5x7
+    // face at one pixel per font pixel (6px advance, 7px tall).
     class PixelFont
     {
     public:

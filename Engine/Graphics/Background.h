@@ -4,9 +4,9 @@ namespace Atlas
 {
     class Window;
 
-    // Procedural parallax backdrop: dusk sky gradient, stars, moon,
-    // drifting clouds, four layered mountain/ridge silhouettes that
-    // scroll at different speeds behind the terrain, and horizon haze.
+    // Procedural parallax backdrop: smooth dusk sky gradient, galaxy
+    // band, stars, a shaded moon, soft clouds, five gradient ridge
+    // silhouettes with haze between them and pines on the nearest.
     class Background
     {
     public:
@@ -26,6 +26,6 @@ namespace Atlas
         float LayerHeight(int layer, float worldX) const;
 
         unsigned int m_Seed;
-        float m_Phase[4][3];
+        float m_Phase[5][3];
     };
 }

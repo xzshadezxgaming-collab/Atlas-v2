@@ -83,13 +83,18 @@ namespace Atlas
         m_SimTick = 0;
         m_Reactions.clear();
 
+        m_RecolorQueued.assign(static_cast<std::size_t>(width) * height, 0);
+        m_RecolorQueue.clear();
+
         Generate(seed);
-        RebuildAllPixels();
 
         // Let freshly generated sand and water find their rest before the
         // match starts, so the first seconds aren't a landslide.
         for (int i = 0; i < 900 && GetAwakeRegionCount() > 0; i++)
             Simulate();
+
+        RebuildAllPixels();
+        m_PixelsStale = false;
 
         m_Reactions.clear();
 
@@ -123,6 +128,13 @@ namespace Atlas
 
         SDL_SetTextureBlendMode(m_Texture, SDL_BLENDMODE_BLEND);
         SDL_SetTextureScaleMode(m_Texture, SDL_SCALEMODE_NEAREST);
+
+        // Changes made while headless weren't shaded.
+        if (m_PixelsStale)
+        {
+            RebuildAllPixels();
+            m_PixelsStale = false;
+        }
 
         // The whole color layer goes up on the next Update().
         m_DirtyAll = true;
@@ -186,18 +198,37 @@ namespace Atlas
         if (slot == static_cast<std::uint8_t>(material))
             return;
 
+        const std::uint8_t previous = slot;
         slot = static_cast<std::uint8_t>(material);
 
         Wake(x, y);
 
         // A change here also changes the edge lighting of the pixels
-        // directly above and below.
-        for (int dy = -1; dy <= 1; dy++)
+        // directly above and below - and when it opens or fills a hole,
+        // the bevels and contact shadows of everything nearby.
+        const bool solidityChanged =
+            GetMaterialInfo(static_cast<Material>(previous)).Solid !=
+            GetMaterialInfo(material).Solid;
+
+        const int reachX = solidityChanged ? 2 : 0;
+        const int reachUp = solidityChanged ? 3 : 1;
+        const int reachDown = solidityChanged ? ShadowReach : 1;
+
+        // Colors are only needed where they get drawn. Headless (no
+        // texture yet), skip them and rebuild once a texture exists;
+        // otherwise queue the area and recolor it once per frame in
+        // Update(), so a pixel that changes many times between frames
+        // is only shaded once.
+        if (!m_Texture)
         {
-            WritePixelColor(x, y + dy, GetMaterial(x, y + dy));
-            MarkDirty(
-                std::clamp(x, 0, m_Width - 1),
-                std::clamp(y + dy, 0, m_Height - 1));
+            m_PixelsStale = true;
+            return;
+        }
+
+        for (int dy = -reachUp; dy <= reachDown; dy++)
+        {
+            for (int dx = -reachX; dx <= reachX; dx++)
+                QueueRecolor(x + dx, y + dy);
         }
     }
 
@@ -440,10 +471,36 @@ namespace Atlas
         return placed;
     }
 
+    void Terrain::QueueRecolor(int x, int y)
+    {
+        if (x < 0 || x >= m_Width || y < 0 || y >= m_Height)
+            return;
+
+        const std::size_t cell = static_cast<std::size_t>(y) * m_Width + x;
+
+        if (m_RecolorQueued[cell])
+            return;
+
+        m_RecolorQueued[cell] = 1;
+        m_RecolorQueue.push_back(static_cast<std::uint32_t>(cell));
+    }
+
     void Terrain::Update()
     {
         if (!m_Texture)
             return;
+
+        for (const std::uint32_t cell : m_RecolorQueue)
+        {
+            const int x = static_cast<int>(cell % static_cast<std::uint32_t>(m_Width));
+            const int y = static_cast<int>(cell / static_cast<std::uint32_t>(m_Width));
+
+            WritePixelColor(x, y, GetMaterial(x, y));
+            MarkDirty(x, y);
+            m_RecolorQueued[cell] = 0;
+        }
+
+        m_RecolorQueue.clear();
 
         if (m_DirtyAll)
         {
@@ -1277,6 +1334,28 @@ namespace Atlas
             f += static_cast<float>(hash % 100u) * 0.0004f;
             f *= static_cast<float>(m_DepthShade[cell]) / 255.0f;
 
+            // Contact shadow: the open space just under a ceiling, and
+            // beside a wall, is darker, so tunnels read as carved with
+            // depth instead of flat cut-outs.
+            if (info.Alpha == 0)
+            {
+                for (int k = 1; k <= ShadowReach; k++)
+                {
+                    if (GetMaterialInfo(GetMaterial(x, y - k)).Solid)
+                    {
+                        f *= 0.48f + 0.52f * static_cast<float>(k - 1) / ShadowReach;
+                        break;
+                    }
+                }
+
+                if (GetMaterialInfo(GetMaterial(x - 1, y)).Solid ||
+                    GetMaterialInfo(GetMaterial(x + 1, y)).Solid)
+                    f *= 0.78f;
+                else if (GetMaterialInfo(GetMaterial(x - 2, y)).Solid ||
+                    GetMaterialInfo(GetMaterial(x + 2, y)).Solid)
+                    f *= 0.9f;
+            }
+
             wallR = wallInfo.R * f;
             wallG = wallInfo.G * f;
             wallB = wallInfo.B * f * 1.08f;
@@ -1430,14 +1509,25 @@ namespace Atlas
             break;
         }
 
-        // Directional light: sunlit top edges, dark undersides.
-        const bool airAbove = !GetMaterialInfo(GetMaterial(x, y - 1)).Solid;
-        const bool airBelow = !GetMaterialInfo(GetMaterial(x, y + 1)).Solid;
+        // Directional light with a bevel: sunlit top edges fading over
+        // three pixels, dark undersides over two, softer side rims.
+        auto open = [&](int px, int py)
+        {
+            return !GetMaterialInfo(GetMaterial(px, py)).Solid;
+        };
 
-        if (airAbove && y > 0)
-            factor *= material == Material::Grass ? 1.5f : 1.33f;
-        else if (airBelow)
-            factor *= 0.6f;
+        if (y > 0 && open(x, y - 1))
+            factor *= material == Material::Grass ? 1.45f : 1.32f;
+        else if (y > 1 && open(x, y - 2))
+            factor *= 1.14f;
+        else if (y > 2 && open(x, y - 3))
+            factor *= 1.05f;
+        else if (open(x, y + 1))
+            factor *= 0.58f;
+        else if (open(x, y + 2))
+            factor *= 0.8f;
+        else if (open(x - 1, y) || open(x + 1, y))
+            factor *= 0.86f;
 
         // Chroma grain: each pixel leans slightly warm or cool instead
         // of only lighter/darker, so big fields of one material read as

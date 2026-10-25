@@ -809,14 +809,14 @@ namespace Atlas
             {
             case ParticleType::Smoke:
             {
-                // Grows and thins out as it rises.
-                const float size = 2.0f + age * 9.0f;
-                const Uint8 alpha = static_cast<Uint8>(120.0f * (1.0f - age));
-                const Uint8 tone = static_cast<Uint8>(120.0f + age * 40.0f);
+                // A soft puff that grows and thins out as it rises,
+                // starting sooty and lightening to gray.
+                const float radius = 3.0f + age * 12.0f;
+                const Uint8 alpha = static_cast<Uint8>(110.0f * (1.0f - age) * std::min(1.0f, age * 8.0f + 0.3f));
+                const Uint8 tone = static_cast<Uint8>(70.0f + age * 80.0f);
 
-                window.DrawFilledRect(
-                    p.X - size * 0.5f, p.Y - size * 0.5f, size, size,
-                    tone, tone, static_cast<Uint8>(tone - 4), alpha);
+                window.DrawSoft(p.X, p.Y, radius,
+                    tone, tone, static_cast<Uint8>(tone + 6), alpha);
                 break;
             }
 
@@ -835,12 +835,10 @@ namespace Atlas
             case ParticleType::Dust:
             {
                 // Disperses: grows while fading, like a kicked-up puff.
-                const float size = 2.0f + age * 7.0f;
-                const Uint8 alpha = static_cast<Uint8>(85.0f * (1.0f - age));
+                const float radius = 2.5f + age * 8.0f;
+                const Uint8 alpha = static_cast<Uint8>(120.0f * (1.0f - age));
 
-                window.DrawFilledRect(
-                    p.X - size * 0.5f, p.Y - size * 0.5f, size, size,
-                    p.R, p.G, p.B, alpha);
+                window.DrawSoft(p.X, p.Y, radius, p.R, p.G, p.B, alpha);
                 break;
             }
 
@@ -929,6 +927,10 @@ namespace Atlas
                     r = 150; g = 45; b = 20;
                 }
 
+                // A short motion streak, so fast embers read as flying.
+                window.DrawStreak(p.X, p.Y,
+                    p.X - p.VelX * 0.025f, p.Y - p.VelY * 0.025f,
+                    2.0f, r, g, b, 200);
                 window.DrawFilledRect(
                     p.X - 1.0f, p.Y - 1.0f, 2.0f, 2.0f, r, g, b, 255);
 
@@ -945,21 +947,10 @@ namespace Atlas
                 // doesn't.
                 const float radius = 6.0f + age * 175.0f;
                 const float fade = (1.0f - age) * (1.0f - age);
-                const Uint8 alpha = static_cast<Uint8>(160.0f * fade);
+                const Uint8 alpha = static_cast<Uint8>(150.0f * fade);
 
-                constexpr int Points = 30;
-
-                for (int i = 0; i < Points; i++)
-                {
-                    const float angle =
-                        static_cast<float>(i) * 6.28318f / Points;
-
-                    window.DrawFilledRect(
-                        p.X + std::cos(angle) * radius - 1.5f,
-                        p.Y + std::sin(angle) * radius * 0.82f - 1.5f,
-                        3.0f, 3.0f,
-                        p.R, p.G, p.B, alpha);
-                }
+                window.DrawRing(p.X, p.Y, radius, 4.0f + age * 14.0f, 0.82f,
+                    p.R, p.G, p.B, alpha);
                 break;
             }
 
@@ -983,23 +974,15 @@ namespace Atlas
 
                 const float streak = std::min(14.0f, speed * 0.014f);
 
-                const float tailX = p.X - p.VelX / speed * streak;
-                const float tailY = p.Y - p.VelY / speed * streak;
+                const float tailX = p.X - p.VelX / speed * streak * 1.8f;
+                const float tailY = p.Y - p.VelY / speed * streak * 1.8f;
 
-                for (int seg = 0; seg < 3; seg++)
-                {
-                    const float t = static_cast<float>(seg) / 3.0f;
-
-                    window.DrawFilledRect(
-                        p.X + (tailX - p.X) * t - 1.0f,
-                        p.Y + (tailY - p.Y) * t - 1.0f,
-                        2.0f,
-                        2.0f,
-                        255,
-                        static_cast<Uint8>(240 - seg * 50),
-                        static_cast<Uint8>(170 - seg * 50),
-                        static_cast<Uint8>(255 - seg * 70));
-                }
+                // A tapered additive tracer with a white-hot head.
+                window.DrawStreak(p.X, p.Y, tailX, tailY, 3.0f, 255, 200, 110, 210);
+                window.DrawStreak(p.X, p.Y,
+                    p.X + (tailX - p.X) * 0.5f, p.Y + (tailY - p.Y) * 0.5f,
+                    1.4f, 255, 250, 225, 255);
+                window.DrawFilledRect(p.X - 1.0f, p.Y - 1.0f, 2.0f, 2.0f, 255, 250, 230, 255);
 
                 window.DrawGlow(p.X, p.Y, 6.0f, 255, 210, 110, 55);
                 break;
