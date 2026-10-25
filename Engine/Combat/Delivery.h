@@ -53,6 +53,9 @@ namespace Atlas
 
         // Reinforcement: its build (a BodyClass value).
         int BodyClass = 1;
+
+        // The ship's fly-over has been reported (see GetShipPasses).
+        bool PassReported = false;
     };
 
     // Cortex Command-style order delivery: a drop ship flies in from off
@@ -97,10 +100,16 @@ namespace Atlas
 
         void Draw(Window& window) const;
 
+        // X of each ship that started its pass over its drop point during
+        // the last Update - about a second out, so a fly-by sound peaks
+        // as the ship crosses.
+        const std::vector<float>& GetShipPasses() const;
+
         int GetActiveCount() const;
         void Clear();
 
     private:
         std::vector<Delivery> m_Deliveries;
+        std::vector<float> m_ShipPasses;
     };
 }

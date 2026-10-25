@@ -4,7 +4,26 @@ A 2D game engine inspired by the technology behind **Cortex Command**:
 fully destructible per-pixel terrain, pixel-level physics, and
 material-driven gameplay — rebuilt on modern C++ and SDL3.
 
-## Current features (v0.8.0)
+## Current features (v0.9.0)
+
+- **Art and sound packs** — every build now has its own hand-pixelled
+  body: the **scout** in a soft cap, goggles and khaki with a radio
+  whip, the **rifleman** in olive, and the **heavy** in a full steel
+  suit with a glowing visor and armoured jetpack, each with matching
+  sleeves. Every weapon has real pixel art held at the grip and turned
+  with your aim (SMG, shotgun, rifle, scoped sniper, rocket tube,
+  flamethrower, digger, shovel), and the HUD's item slots show each
+  weapon's icon. Drop ships, drones, weapon cases, supply crates, drone
+  pods, medkits, rockets and grenades are sprites too, and the HUD bars
+  have proper icons. A new sound pack replaces the old synth blips with
+  layered effects (muzzle blast, body, room and echo tails, pump and
+  bolt mechanics, debris crackle, grunts) recorded in several takes so
+  rapid fire never repeats one sample, plus new sounds for menu clicks,
+  squad orders over the radio, weapon and body switching, medkits,
+  pickups, steam, the brain alarm, sending an order, drop ships flying
+  over, and victory and defeat stingers. Both packs are generated from
+  source by scripts in `Tools/` (see **Assets** below), and the game
+  falls back to its built-in drawing and synth when a pack is missing.
 
 - **Smarter enemy, your landing zone** — the enemy commander now runs
   on a real budget: it earns gold over time (faster on harder
@@ -269,6 +288,29 @@ The game is split into a **simulation** and a **client**:
   per-system seeds). Same seed + same inputs = bit-identical state,
   which `World::ComputeStateHash()` checks. This is the groundwork for
   networking (input replication, replays, desync detection).
+
+## Assets
+
+The art and sound live in `Assets/`, and both packs are built from
+source by scripts you can edit and re-run:
+
+- `Tools/art/make_sprites.py` (Pillow) holds every sprite as
+  hand-authored pixel art in palette-letter grids, adds outlines, and
+  writes 24-bit magenta-keyed BMPs plus `Assets/Sprites/sprites.ini`
+  (each sprite's file and pivot: the pixel it is placed and rotated
+  around; a weapon's pivot is its grip, with the muzzle `BarrelLength`
+  pixels ahead). `--preview sheet.png` writes a contact sheet. The
+  engine's `SpriteBank` loads the pack by name; a weapon picks its art
+  from its kind and stats, or from a `Sprite = name` key in
+  `weapons.ini`.
+- `Tools/audio/make_sfx.py` (numpy) synthesizes every effect and writes
+  16-bit mono WAVs to `Assets/Sounds`. An effect with several takes is
+  saved as `name_1.wav`, `name_2.wav`, ... and the game plays a
+  different one each time. Drop in your own WAVs with the same names to
+  replace any sound.
+
+`AssetTests` (run by `ctest`) checks that everything listed loads and
+that every weapon, build and sound effect has its asset.
 
 ## Building
 

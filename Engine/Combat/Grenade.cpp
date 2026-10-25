@@ -3,6 +3,7 @@
 #include "Explosion.h"
 
 #include "../Core/Window.h"
+#include "../Graphics/SpriteBank.h"
 #include "../Particles/ParticleSystem.h"
 #include "../World/Terrain.h"
 
@@ -294,16 +295,24 @@ namespace Atlas
                 const float dirY = grenade.VelY / speed;
 
                 // Olive body, red nose, white-hot exhaust.
-                for (int seg = 0; seg < 7; seg++)
+                if (const SpriteFrame* sprite = SpriteBank::Find("rocket"))
                 {
-                    const float t = static_cast<float>(seg);
-                    const bool nose = seg >= 5;
+                    window.DrawSprite(*sprite, grenade.X - dirX * 3.0f, grenade.Y - dirY * 3.0f,
+                        std::atan2(dirY, dirX) * 57.2957795f);
+                }
+                else
+                {
+                    for (int seg = 0; seg < 7; seg++)
+                    {
+                        const float t = static_cast<float>(seg);
+                        const bool nose = seg >= 5;
 
-                    window.DrawFilledRect(
-                        grenade.X - dirX * (6.0f - t) - 1.5f,
-                        grenade.Y - dirY * (6.0f - t) - 1.5f,
-                        3.0f, 3.0f,
-                        nose ? 190 : 86, nose ? 50 : 96, nose ? 40 : 70, 255);
+                        window.DrawFilledRect(
+                            grenade.X - dirX * (6.0f - t) - 1.5f,
+                            grenade.Y - dirY * (6.0f - t) - 1.5f,
+                            3.0f, 3.0f,
+                            nose ? 190 : 86, nose ? 50 : 96, nose ? 40 : 70, 255);
+                    }
                 }
 
                 window.DrawGlow(grenade.X - dirX * 8.0f, grenade.Y - dirY * 8.0f,
@@ -314,15 +323,24 @@ namespace Atlas
                 continue;
             }
 
-            window.DrawFilledRect(
-                grenade.X - 2.0f,
-                grenade.Y - 2.0f,
-                4.0f,
-                4.0f,
-                40,
-                48,
-                40,
-                255);
+            if (const SpriteFrame* sprite = SpriteBank::Find("grenade"))
+            {
+                // Tumbles with its horizontal speed.
+                window.DrawSprite(*sprite, grenade.X, grenade.Y,
+                    std::fmod(grenade.X * 9.0f, 360.0f));
+            }
+            else
+            {
+                window.DrawFilledRect(
+                    grenade.X - 2.0f,
+                    grenade.Y - 2.0f,
+                    4.0f,
+                    4.0f,
+                    40,
+                    48,
+                    40,
+                    255);
+            }
 
             // Blinking fuse light that blinks faster as time runs out.
             const float blinkRate = grenade.Fuse < 0.8f ? 16.0f : 6.0f;

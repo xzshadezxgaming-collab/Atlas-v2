@@ -609,7 +609,7 @@ namespace Atlas
         switched.Y = body.GetCenterY();
         Emit(switched);
 
-        EmitSoundAt(Sfx::Reload, 0.6f, body.GetCenterX(), body.GetCenterY());
+        EmitSoundAt(Sfx::BodySwitch, 0.6f, body.GetCenterX(), body.GetCenterY());
     }
 
     int World::AddPlayer()
@@ -1045,7 +1045,7 @@ namespace Atlas
         {
             m_AllyOrder = static_cast<AllyOrder>(input.AllyOrder);
             m_AllyOrderPlayer = slot;
-            EmitSound(Sfx::Reload, 0.5f);
+            EmitSound(Sfx::SquadOrder, 0.5f);
         }
 
         if (!player.IsAlive())
@@ -1078,7 +1078,7 @@ namespace Atlas
             input.SelectSlot != player.GetSelectedItem())
         {
             player.SelectItem(input.SelectSlot);
-            EmitSoundAt(Sfx::Reload, 0.7f, player.GetCenterX(), player.GetCenterY());
+            EmitSoundAt(Sfx::WeaponSwitch, 0.7f, player.GetCenterX(), player.GetCenterY());
         }
 
         if (input.ReloadPressed)
@@ -1681,7 +1681,7 @@ namespace Atlas
             if (taker >= 0)
             {
                 m_Players[taker].Body->Heal(30);
-                EmitSoundAt(Sfx::Reload, 0.9f, pickup.X, pickup.Y);
+                EmitSoundAt(Sfx::Heal, 0.9f, pickup.X, pickup.Y);
 
                 m_HealthPickups[i] = m_HealthPickups.back();
                 m_HealthPickups.pop_back();
@@ -1761,6 +1761,10 @@ namespace Atlas
 
             m_Deliveries.Update(m_Terrain, FixedTimeStep, landed, delivered);
 
+            // Ships ordered together fly together: one fly-by is enough.
+            if (!m_Deliveries.GetShipPasses().empty())
+                EmitSoundAt(Sfx::Ship, 0.8f, m_Deliveries.GetShipPasses().front(), 0.0f);
+
             if (!landed.empty())
                 EmitSoundAt(Sfx::Land, 0.7f, landed.front()->PayloadX, landed.front()->PayloadY);
 
@@ -1822,7 +1826,7 @@ namespace Atlas
             {
                 m_Players[taker].Body->AddItem(pickup.Weapon);
 
-                EmitSoundAt(Sfx::Reload, 0.8f, pickup.X, pickup.Y);
+                EmitSoundAt(Sfx::Pickup, 0.8f, pickup.X, pickup.Y);
 
                 m_WeaponPickups[i] = m_WeaponPickups.back();
                 m_WeaponPickups.pop_back();
@@ -1844,7 +1848,7 @@ namespace Atlas
 
             if (m_SteamSoundTimer <= 0.0f)
             {
-                EmitSoundAt(Sfx::JetBurst, 0.3f, steam.X, steam.Y);
+                EmitSoundAt(Sfx::Steam, 0.3f, steam.X, steam.Y);
                 m_SteamSoundTimer = 0.25f;
             }
         }

@@ -1,6 +1,7 @@
 #include "Delivery.h"
 
 #include "../Core/Window.h"
+#include "../Graphics/SpriteBank.h"
 #include "../World/Terrain.h"
 
 #include <algorithm>
@@ -43,6 +44,16 @@ namespace Atlas
         // engine, nose pointed the direction it's flying.
         void DrawDropShipHull(Window& window, float x, float y, float dir, int team)
         {
+            if (const SpriteFrame* sprite = SpriteBank::Find(team == 0 ? "ship_team0" : "ship_team1"))
+            {
+                window.DrawSprite(*sprite, x, y, 0.0f, dir < 0.0f);
+
+                window.DrawGlow(x - dir * 25.0f, y + 1.0f, 14.0f, 255, 170, 90, 160);
+                window.DrawFilledRect(x - dir * 26.0f - 2.0f, y - 1.0f, 4.0f, 4.0f,
+                    255, 220, 160, 255);
+                return;
+            }
+
             window.DrawFilledRect(x - 22.0f, y - 6.0f, 44.0f, 12.0f,
                 40, 42, 50, 255);
 
@@ -90,6 +101,24 @@ namespace Atlas
 
         void DrawDeliveryPayload(Window& window, float x, float y, DeliveryKind kind, int team)
         {
+            const char* crate =
+                kind == DeliveryKind::Drone ? "crate_drone"
+                : kind == DeliveryKind::WeaponPickup ? "crate_weapon"
+                : kind == DeliveryKind::Reinforcement ? nullptr
+                : "crate_supply";
+
+            if (const SpriteFrame* sprite = crate ? SpriteBank::Find(crate) : nullptr)
+            {
+                window.DrawSprite(*sprite, x, y);
+
+                if (kind == DeliveryKind::Drone)
+                {
+                    window.DrawFilledRect(x, y - 4.0f, 2.0f, 1.0f,
+                        team == 0 ? 90 : 255, team == 0 ? 170 : 80, team == 0 ? 255 : 60, 255);
+                }
+                return;
+            }
+
             if (kind == DeliveryKind::Reinforcement)
             {
                 // Soldier hanging in the harness, in team colors.
@@ -174,6 +203,7 @@ namespace Atlas
     {
         outLanded.clear();
         outDelivered.clear();
+        m_ShipPasses.clear();
 
         for (std::size_t i = 0; i < m_Deliveries.size(); )
         {
@@ -186,6 +216,13 @@ namespace Atlas
                 delivery.ShipX += delivery.ShipDir * ShipSpeed * deltaTime;
                 delivery.PayloadX = delivery.ShipX;
                 delivery.PayloadY = DeliveryAltitude;
+
+                if (!delivery.PassReported &&
+                    std::fabs(delivery.TargetX - delivery.ShipX) < ShipSpeed * 1.1f)
+                {
+                    delivery.PassReported = true;
+                    m_ShipPasses.push_back(delivery.TargetX);
+                }
 
                 const bool arrived = delivery.ShipDir > 0.0f
                     ? delivery.ShipX >= delivery.TargetX
@@ -299,6 +336,11 @@ namespace Atlas
                     230, 205, 110, 90);
             }
         }
+    }
+
+    const std::vector<float>& DeliverySystem::GetShipPasses() const
+    {
+        return m_ShipPasses;
     }
 
     int DeliverySystem::GetActiveCount() const

@@ -10,6 +10,29 @@
 
 namespace Atlas
 {
+    std::string WeaponSpriteName(const WeaponDef& def)
+    {
+        if (!def.Sprite.empty())
+            return "weapon_" + def.Sprite;
+
+        switch (def.Kind)
+        {
+        case WeaponKind::Digger: return "weapon_digger";
+        case WeaponKind::Shovel: return "weapon_shovel";
+        case WeaponKind::Launcher: return "weapon_launcher";
+        case WeaponKind::Flamer: return "weapon_flamer";
+        default: break;
+        }
+
+        if (def.LaserSight)
+            return "weapon_sniper";
+
+        if (def.Pellets > 1)
+            return "weapon_shotgun";
+
+        return def.BarrelLength >= 18.0f ? "weapon_rifle" : "weapon_smg";
+    }
+
     std::vector<WeaponDef> BuiltInWeaponDefs()
     {
         std::vector<WeaponDef> defs;
@@ -278,6 +301,7 @@ namespace Atlas
                 section, "LimbDamage", def->LimbDamage);
             def->Cost = ini.GetInt(section, "Cost", def->Cost);
             def->LaserSight = ini.GetInt(section, "LaserSight", def->LaserSight ? 1 : 0) != 0;
+            def->Sprite = ini.GetString(section, "Sprite", def->Sprite);
             def->BlastRadius = ini.GetFloat(section, "BlastRadius", def->BlastRadius);
             def->BlastDamage = ini.GetInt(section, "BlastDamage", def->BlastDamage);
         }

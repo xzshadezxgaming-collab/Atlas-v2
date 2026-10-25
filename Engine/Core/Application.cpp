@@ -12,6 +12,7 @@
 #include "../Graphics/Camera.h"
 #include "../Graphics/MapThumbnail.h"
 #include "../Graphics/PixelFont.h"
+#include "../Graphics/SpriteBank.h"
 #include "../Input/Input.h"
 #include "../Graphics/Texture2D.h"
 #include "../Particles/ParticleSystem.h"
@@ -238,7 +239,7 @@ namespace Atlas
     {
         std::cout << "=================================\n";
         std::cout << "        ATLAS ENGINE\n";
-        std::cout << "           v0.8.0\n";
+        std::cout << "           v0.9.0\n";
         std::cout << "=================================\n\n";
 
         if (!m_Window.Create("Atlas", ViewWidth, ViewHeight))
@@ -249,6 +250,24 @@ namespace Atlas
         if (!Audio::Init())
         {
             std::cout << "(no audio device - running silent)\n";
+        }
+
+        {
+            const std::string firstSound = ResolveAssetPath("Assets/Sounds/uiclick.wav");
+            const int sounds = Audio::LoadSoundPack(
+                firstSound.substr(0, firstSound.find_last_of("/\\")));
+
+            if (sounds > 0)
+                std::cout << "Loaded " << sounds << " sound takes\n";
+        }
+
+        {
+            std::string spritesIni = ResolveAssetPath("Assets/Sprites/sprites.ini");
+            const int sprites = SpriteBank::Load(
+                m_Window.GetRenderer(),
+                spritesIni.substr(0, spritesIni.find_last_of("/\\")));
+
+            std::cout << "Loaded " << sprites << " sprites\n";
         }
 
         // The game draws its own crosshair glued to the mouse position;
@@ -283,6 +302,7 @@ namespace Atlas
         }
 
         m_Settings.Save();
+        SpriteBank::Unload();
         Audio::Shutdown();
     }
 
@@ -728,7 +748,7 @@ namespace Atlas
                         {
                             request.LandingZone = std::clamp(
                                 static_cast<int>(std::lround((mx - px) / pw * 100.0f)), 6, 42);
-                            Audio::Play(Sfx::Reload, 0.4f);
+                            Audio::Play(Sfx::UiClick, 0.5f);
                         }
 
                         auto marker = [&](float fraction, Uint8 r, Uint8 g, Uint8 b, const std::string& label)
@@ -857,7 +877,7 @@ namespace Atlas
                 ui.Text(left, static_cast<float>(ViewHeight) - 60.0f, 2.0f, error, 255, 120, 100);
 
             ui.Text(static_cast<float>(ViewWidth) - 16.0f, static_cast<float>(ViewHeight) - 20.0f, 1.5f,
-                "V0.8.0", 120, 124, 140, 2);
+                "V0.9.0", 120, 124, 140, 2);
 
             ui.End();
 
@@ -1381,6 +1401,7 @@ namespace Atlas
                     {
                         brainAlarm = 1.0f;
                         pushBanner("BRAIN UNDER ATTACK", "DEFEND YOUR BUNKER", 255, 90, 80, 1.8f);
+                        Audio::Play(Sfx::Alarm, 0.7f);
                     }
                     break;
 
@@ -1390,9 +1411,15 @@ namespace Atlas
 
                 case SimEventType::MatchOver:
                     if (event.Value == 0)
+                    {
                         pushBanner("VICTORY", "THE ENEMY BRAIN IS DESTROYED", 140, 235, 150, 6.0f);
+                        Audio::Play(Sfx::Victory, 0.8f);
+                    }
                     else
+                    {
                         pushBanner("DEFEAT", "YOUR BRAIN IS DESTROYED", 255, 90, 80, 6.0f);
+                        Audio::Play(Sfx::Defeat, 0.8f);
+                    }
                     break;
 
                 case SimEventType::EnemyDropIncoming:
@@ -1698,7 +1725,7 @@ namespace Atlas
                             break;
                         }
 
-                        Audio::Play(Sfx::Reload, 0.35f);
+                        Audio::Play(Sfx::UiClick, 0.45f);
                     }
 
                     // Assignment toggle: cycles which cart body (if any)
@@ -1784,7 +1811,7 @@ namespace Atlas
                             queuedOrder = order;
                             orderQueued = true;
                             cart.Clear();
-                            Audio::Play(Sfx::Reload, 0.6f);
+                            Audio::Play(Sfx::OrderSent, 0.6f);
                         }
                     }
 
@@ -2081,6 +2108,12 @@ namespace Atlas
             // Medkits.
             for (const HealthPickup& pickup : pickups)
             {
+                if (const SpriteFrame* sprite = SpriteBank::Find("medkit"))
+                {
+                    m_Window.DrawSprite(*sprite, pickup.X, pickup.Y + 4.0f);
+                    continue;
+                }
+
                 m_Window.DrawFilledRect(
                     pickup.X - 5.0f, pickup.Y - 4.0f, 10.0f, 8.0f,
                     235, 235, 235, 255);
@@ -2099,15 +2132,22 @@ namespace Atlas
                 m_Window.DrawGlow(
                     pickup.X, pickup.Y - 4.0f, 14.0f, 200, 220, 160, 70);
 
-                m_Window.DrawFilledRect(
-                    pickup.X - 6.0f, pickup.Y - 6.0f, 12.0f, 8.0f,
-                    24, 22, 27, 255);
-                m_Window.DrawFilledRect(
-                    pickup.X - 5.0f, pickup.Y - 5.0f, 10.0f, 6.0f,
-                    72, 82, 56, 255);
-                m_Window.DrawFilledRect(
-                    pickup.X - 5.0f, pickup.Y - 5.0f, 10.0f, 1.5f,
-                    92, 104, 70, 255);
+                if (const SpriteFrame* sprite = SpriteBank::Find("crate_weapon"))
+                {
+                    m_Window.DrawSprite(*sprite, pickup.X, pickup.Y + 2.0f);
+                }
+                else
+                {
+                    m_Window.DrawFilledRect(
+                        pickup.X - 6.0f, pickup.Y - 6.0f, 12.0f, 8.0f,
+                        24, 22, 27, 255);
+                    m_Window.DrawFilledRect(
+                        pickup.X - 5.0f, pickup.Y - 5.0f, 10.0f, 6.0f,
+                        72, 82, 56, 255);
+                    m_Window.DrawFilledRect(
+                        pickup.X - 5.0f, pickup.Y - 5.0f, 10.0f, 1.5f,
+                        92, 104, 70, 255);
+                }
 
                 if (pickup.Weapon)
                 {
@@ -2165,6 +2205,42 @@ namespace Atlas
                 const float y = std::floor(drone.Y + std::sin(drone.Phase * 9.0f) * 0.5f);
                 const bool hurt = drone.HurtFlash > 0.0f;
                 const Uint8 shell = hurt ? 230 : 84;
+
+                if (const SpriteFrame* sprite =
+                    SpriteBank::Find(drone.Team == 0 ? "drone_team0" : "drone_team1"))
+                {
+                    // Spinning blades over the two rotor housings.
+                    const float blade = 3.0f + std::fabs(std::sin(drone.Phase * 40.0f)) * 5.0f;
+
+                    for (int side = -1; side <= 1; side += 2)
+                    {
+                        const float rx = x + static_cast<float>(side) * 6.5f;
+                        m_Window.DrawFilledRect(rx - blade, y - 7.0f, blade * 2.0f, 1.0f,
+                            200, 205, 215, 150);
+                    }
+
+                    m_Window.DrawSprite(*sprite, x, y, 0.0f, drone.AimX < 0.0f, false, 1.0f,
+                        hurt ? 200 : 0);
+
+                    for (int seg = 0; seg < 3; seg++)
+                    {
+                        const float t = 3.0f + static_cast<float>(seg) * 2.0f;
+                        m_Window.DrawFilledRect(
+                            x + drone.AimX * t - 1.0f, y + 4.0f + drone.AimY * t - 1.0f,
+                            2.0f, 2.0f, 40, 40, 48, 255);
+                    }
+
+                    if (drone.Firing && drone.Cooldown > 1.0f / 6.0f - 0.04f)
+                    {
+                        m_Window.DrawGlow(x + drone.AimX * 10.0f, y + 4.0f + drone.AimY * 10.0f,
+                            10.0f, 255, 200, 100, 80);
+                    }
+
+                    m_Window.DrawGlow(x, y, 9.0f,
+                        drone.Team == 0 ? 90 : 230, drone.Team == 0 ? 150 : 70,
+                        drone.Team == 0 ? 240 : 60, 30);
+                    continue;
+                }
 
                 // Rotor arms and spinning blades (two blur widths).
                 m_Window.DrawFilledRect(x - 11.0f, y - 5.0f, 22.0f, 2.0f, 34, 34, 40, 255);
@@ -2748,11 +2824,11 @@ namespace Atlas
             };
 
             // Backing panel with a subtle border and a highlight line.
-            m_Window.DrawScreenRect(8.0f, 8.0f, barWidth + 34.0f, 92.0f,
+            m_Window.DrawScreenRect(8.0f, 8.0f, barWidth + 58.0f, 92.0f,
                 120, 126, 148, 60);
-            m_Window.DrawScreenRect(9.0f, 9.0f, barWidth + 32.0f, 90.0f,
+            m_Window.DrawScreenRect(9.0f, 9.0f, barWidth + 56.0f, 90.0f,
                 12, 12, 18, 195);
-            m_Window.DrawScreenRect(9.0f, 9.0f, barWidth + 32.0f, 1.0f,
+            m_Window.DrawScreenRect(9.0f, 9.0f, barWidth + 56.0f, 1.0f,
                 170, 176, 198, 70);
 
             auto drawBar = [&](
@@ -2793,6 +2869,16 @@ namespace Atlas
             };
 
             // Tiny icons in the gutter left of each bar.
+            if (const SpriteFrame* health = SpriteBank::Find("icon_health"),
+                *fuel = SpriteBank::Find("icon_fuel"),
+                *ammo = SpriteBank::Find("icon_ammo");
+                health && fuel && ammo)
+            {
+                m_Window.DrawSpriteScreen(*health, 22.0f - health->Width * 0.5f, 18.5f - health->Height * 0.5f);
+                m_Window.DrawSpriteScreen(*fuel, 22.0f - fuel->Width * 0.5f, 31.5f - fuel->Height * 0.5f);
+                m_Window.DrawSpriteScreen(*ammo, 22.0f - ammo->Width * 0.5f, 44.5f - ammo->Height * 0.5f);
+            }
+            else
             {
                 // Health: red cross.
                 m_Window.DrawScreenRect(18.0f, 15.0f, 8.0f, 2.0f,
@@ -2886,45 +2972,82 @@ namespace Atlas
             // The body's items, with their number keys.
             const int shownItems = std::max(LoadoutSize, player.GetItemCount());
 
+            // Item slots show the weapon's icon from the sprite pack, with
+            // the number key in the corner; without the pack, just the key.
+            constexpr float SlotW = 24.0f;
+            constexpr float SlotStep = 25.0f;
+
             for (int i = 0; i < player.GetItemCount(); i++)
             {
                 const bool selected = i == player.GetSelectedItem();
-                const float slotX = barX + static_cast<float>(i) * 22.0f;
+                const float slotX = barX + static_cast<float>(i) * SlotStep;
 
-                m_Window.DrawScreenRect(slotX, 70.0f, 18.0f, 16.0f,
+                m_Window.DrawScreenRect(slotX, 70.0f, SlotW, 16.0f,
                     28, 28, 36, 255);
 
                 if (selected)
                 {
-                    m_Window.DrawScreenRect(slotX, 70.0f, 18.0f, 16.0f,
+                    m_Window.DrawScreenRect(slotX, 70.0f, SlotW, 16.0f,
                         235, 225, 170, 255);
                     m_Window.DrawScreenRect(slotX + 1.0f, 71.0f,
-                        16.0f, 14.0f, 62, 58, 40, 255);
+                        SlotW - 2.0f, 14.0f, 62, 58, 40, 255);
                 }
 
-                PixelFont::Draw(
-                    m_Window,
-                    slotX + 6.0f,
-                    73.0f,
-                    2.0f,
-                    std::to_string(i + 1),
-                    selected ? 235 : 130,
-                    selected ? 225 : 132,
-                    selected ? 170 : 140);
+                const WeaponDef* itemDef = player.GetItem(i).GetDef();
+                const SpriteFrame* icon = itemDef
+                    ? SpriteBank::Find("icon_" + WeaponSpriteName(*itemDef))
+                    : nullptr;
+
+                if (icon)
+                {
+                    m_Window.DrawSpriteScreen(*icon,
+                        std::floor(slotX + (SlotW - icon->Width) * 0.5f),
+                        std::floor(79.0f - icon->Height * 0.5f),
+                        1.0f, selected ? 255 : 170);
+
+                    PixelFont::Draw(
+                        m_Window,
+                        slotX + 2.0f,
+                        72.0f,
+                        1.0f,
+                        std::to_string(i + 1),
+                        selected ? 255 : 150,
+                        selected ? 240 : 152,
+                        selected ? 180 : 160);
+                }
+                else
+                {
+                    PixelFont::Draw(
+                        m_Window,
+                        slotX + 9.0f,
+                        73.0f,
+                        2.0f,
+                        std::to_string(i + 1),
+                        selected ? 235 : 130,
+                        selected ? 225 : 132,
+                        selected ? 170 : 140);
+                }
             }
 
             // Gold readout: a small nugget icon plus the tally, sitting
             // to the right of the weapon slots in the same row.
             {
                 const float goldX =
-                    barX + static_cast<float>(shownItems) * 22.0f + 6.0f;
+                    barX + static_cast<float>(shownItems) * SlotStep + 6.0f;
 
-                m_Window.DrawScreenRect(goldX, 73.0f, 8.0f, 8.0f,
-                    24, 22, 27, 255);
-                m_Window.DrawScreenRect(goldX + 1.0f, 74.0f, 6.0f, 6.0f,
-                    218, 176, 56, 255);
-                m_Window.DrawScreenRect(goldX + 1.0f, 74.0f, 6.0f, 2.0f,
-                    240, 205, 110, 255);
+                if (const SpriteFrame* gold = SpriteBank::Find("icon_gold"))
+                {
+                    m_Window.DrawSpriteScreen(*gold, goldX - 1.0f, 73.0f);
+                }
+                else
+                {
+                    m_Window.DrawScreenRect(goldX, 73.0f, 8.0f, 8.0f,
+                        24, 22, 27, 255);
+                    m_Window.DrawScreenRect(goldX + 1.0f, 74.0f, 6.0f, 6.0f,
+                        218, 176, 56, 255);
+                    m_Window.DrawScreenRect(goldX + 1.0f, 74.0f, 6.0f, 2.0f,
+                        240, 205, 110, 255);
+                }
 
                 drawText(
                     goldX + 13.0f,
