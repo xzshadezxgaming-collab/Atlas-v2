@@ -84,8 +84,11 @@ namespace Atlas
     {
         out.U8(static_cast<std::uint8_t>(order.Bodies.size()));
 
-        for (const WeaponDef* weapon : order.Bodies)
-            WriteWeapon(out, weapon, world);
+        for (const OrderBody& body : order.Bodies)
+        {
+            WriteWeapon(out, body.Weapon, world);
+            out.U8(body.Class);
+        }
 
         out.U8(static_cast<std::uint8_t>(order.LooseWeapons.size()));
 
@@ -93,6 +96,7 @@ namespace Atlas
             WriteWeapon(out, weapon, world);
 
         out.U8(static_cast<std::uint8_t>(order.SupplyCrates));
+        out.U8(static_cast<std::uint8_t>(order.Drones));
     }
 
     OrderRequest ReadOrder(ByteReader& in, const World& world)
@@ -102,7 +106,12 @@ namespace Atlas
         const std::uint32_t bodies = std::min<std::uint32_t>(in.U8(), MaxListLength);
 
         for (std::uint32_t i = 0; i < bodies; i++)
-            order.Bodies.push_back(ReadWeapon(in, world));
+        {
+            OrderBody body;
+            body.Weapon = ReadWeapon(in, world);
+            body.Class = in.U8();
+            order.Bodies.push_back(body);
+        }
 
         const std::uint32_t loose = std::min<std::uint32_t>(in.U8(), MaxListLength);
 
@@ -110,6 +119,7 @@ namespace Atlas
             order.LooseWeapons.push_back(ReadWeapon(in, world));
 
         order.SupplyCrates = in.U8();
+        order.Drones = std::min<int>(in.U8(), static_cast<int>(MaxListLength));
 
         return order;
     }

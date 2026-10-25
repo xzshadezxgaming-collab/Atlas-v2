@@ -109,6 +109,59 @@ namespace Atlas
         }
 
         {
+            // Long-range precision: one heavy round that punches through
+            // a lot of rock, with a laser to line it up.
+            WeaponDef sniper;
+            sniper.Name = "Sniper";
+            sniper.FireRate = 0.9f;
+            sniper.ClipSize = 5;
+            sniper.ReloadTime = 2.6f;
+            sniper.MuzzleVelocity = 2400.0f;
+            sniper.SpreadDegrees = 0.15f;
+            sniper.Damage = 80;
+            sniper.Power = 34.0f;
+            sniper.Recoil = 150.0f;
+            sniper.BarrelLength = 24.0f;
+            sniper.LaserSight = true;
+            sniper.Cost = 90;
+            defs.push_back(sniper);
+        }
+
+        {
+            WeaponDef rocket;
+            rocket.Name = "Rocket Launcher";
+            rocket.Kind = WeaponKind::Launcher;
+            rocket.FireRate = 0.8f;
+            rocket.ClipSize = 1;
+            rocket.ReloadTime = 2.4f;
+            rocket.MuzzleVelocity = 520.0f;
+            rocket.SpreadDegrees = 1.0f;
+            rocket.Recoil = 120.0f;
+            rocket.BarrelLength = 20.0f;
+            rocket.BlastRadius = 30.0f;
+            rocket.BlastDamage = 110;
+            rocket.Cost = 120;
+            defs.push_back(rocket);
+        }
+
+        {
+            WeaponDef flamer;
+            flamer.Name = "Flamethrower";
+            flamer.Kind = WeaponKind::Flamer;
+            flamer.FireRate = 30.0f;
+            flamer.ClipSize = 120;
+            flamer.ReloadTime = 2.8f;
+            flamer.MuzzleVelocity = 380.0f;
+            flamer.SpreadDegrees = 7.0f;
+            flamer.Damage = 2;
+            flamer.Pellets = 2;
+            flamer.Recoil = 4.0f;
+            flamer.BarrelLength = 17.0f;
+            flamer.Cost = 75;
+            defs.push_back(flamer);
+        }
+
+        {
             WeaponDef enemyGun;
             enemyGun.Name = "EnemyGun";
             enemyGun.FireRate = 5.0f;
@@ -120,6 +173,7 @@ namespace Atlas
             enemyGun.Pellets = 1;
             enemyGun.Recoil = 30.0f;
             enemyGun.BarrelLength = 14.0f;
+            enemyGun.Cost = 0; // not for sale
             defs.push_back(enemyGun);
         }
 
@@ -175,6 +229,10 @@ namespace Atlas
                 currentKind = "Digger";
             else if (def->Kind == WeaponKind::Shovel)
                 currentKind = "Shovel";
+            else if (def->Kind == WeaponKind::Launcher)
+                currentKind = "Launcher";
+            else if (def->Kind == WeaponKind::Flamer)
+                currentKind = "Flamer";
 
             const std::string kind =
                 ini.GetString(section, "Kind", currentKind);
@@ -183,6 +241,10 @@ namespace Atlas
                 def->Kind = WeaponKind::Digger;
             else if (kind == "Shovel")
                 def->Kind = WeaponKind::Shovel;
+            else if (kind == "Launcher")
+                def->Kind = WeaponKind::Launcher;
+            else if (kind == "Flamer")
+                def->Kind = WeaponKind::Flamer;
             else
                 def->Kind = WeaponKind::Gun;
 
@@ -215,6 +277,9 @@ namespace Atlas
             def->LimbDamage = ini.GetInt(
                 section, "LimbDamage", def->LimbDamage);
             def->Cost = ini.GetInt(section, "Cost", def->Cost);
+            def->LaserSight = ini.GetInt(section, "LaserSight", def->LaserSight ? 1 : 0) != 0;
+            def->BlastRadius = ini.GetFloat(section, "BlastRadius", def->BlastRadius);
+            def->BlastDamage = ini.GetInt(section, "BlastDamage", def->BlastDamage);
         }
 
         return defs;
@@ -465,6 +530,55 @@ namespace Atlas
 
         const float baseAngle = std::atan2(dirY, dirX);
 
+        if (m_Def->Kind == WeaponKind::Launcher)
+        {
+            const float angle = baseAngle + RandomUnit() * spreadRadians;
+
+            m_HasLaunch = true;
+            m_Launch.X = muzzleX;
+            m_Launch.Y = muzzleY;
+            m_Launch.VelX = std::cos(angle) * m_Def->MuzzleVelocity;
+            m_Launch.VelY = std::sin(angle) * m_Def->MuzzleVelocity;
+            m_Launch.Radius = m_Def->BlastRadius;
+            m_Launch.Damage = m_Def->BlastDamage;
+
+            // Back-blast.
+            for (int i = 0; i < 4; i++)
+            {
+                particles.SpawnSmoke(
+                    muzzleX - dirX * (m_Def->BarrelLength + 10.0f),
+                    muzzleY - dirY * (m_Def->BarrelLength + 10.0f),
+                    -dirX * 90.0f + RandomUnit() * 40.0f,
+                    -dirY * 90.0f + RandomUnit() * 40.0f - 10.0f);
+            }
+
+            return true;
+        }
+
+        if (m_Def->Kind == WeaponKind::Flamer)
+        {
+            const std::uint32_t ownerId = owner ? owner->GetId() : 0u;
+            const int ownerTeam = owner ? owner->GetTeam() : -1;
+
+            for (int i = 0; i < m_Def->Pellets; i++)
+            {
+                const float angle = baseAngle + RandomUnit() * spreadRadians;
+                const float speed =
+                    m_Def->MuzzleVelocity * (1.0f + RandomUnit() * 0.18f);
+
+                particles.SpawnFlame(
+                    muzzleX,
+                    muzzleY,
+                    std::cos(angle) * speed,
+                    std::sin(angle) * speed,
+                    m_Def->Damage,
+                    ownerId,
+                    ownerTeam);
+            }
+
+            return true;
+        }
+
         for (int i = 0; i < m_Def->Pellets; i++)
         {
             const float angle = baseAngle + RandomUnit() * spreadRadians;
@@ -495,6 +609,22 @@ namespace Atlas
             -110.0f + RandomUnit() * 40.0f);
 
         return true;
+    }
+
+    bool Weapon::TakeLaunch(PendingLaunch& out)
+    {
+        if (!m_HasLaunch)
+            return false;
+
+        out = m_Launch;
+        m_HasLaunch = false;
+        return true;
+    }
+
+    bool Weapon::IsTool() const
+    {
+        return m_Def &&
+            (m_Def->Kind == WeaponKind::Digger || m_Def->Kind == WeaponKind::Shovel);
     }
 
     void Weapon::StartReload()

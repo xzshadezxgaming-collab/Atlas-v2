@@ -14,7 +14,7 @@ namespace Atlas
 
     // Bump whenever the wire format or anything that affects simulation
     // results changes: peers on different versions would desync.
-    constexpr std::uint16_t ProtocolVersion = 2;
+    constexpr std::uint16_t ProtocolVersion = 3;
 
     constexpr std::uint16_t DefaultPort = 27960;
 

@@ -15,6 +15,8 @@ namespace Atlas
         Gun,
         Digger, // energy tool: carves terrain at the aim point
         Shovel, // digs bigger scoops at close range
+        Launcher, // fires a rocket that explodes on impact
+        Flamer, // sprays burning fuel that sets things alight
     };
 
     struct WeaponDef
@@ -71,6 +73,26 @@ namespace Atlas
         // a reinforcement, or as a loose field pickup). Weapons that
         // aren't meant to be purchasable (EnemyGun) just go unused.
         int Cost = 20;
+
+        // Guns: draws an aiming laser out to the first wall.
+        bool LaserSight = false;
+
+        // Launchers: the rocket's blast.
+        float BlastRadius = 30.0f;
+        int BlastDamage = 110;
+    };
+
+    // A rocket a Launcher wants fired this tick. Weapons don't own
+    // projectiles, so the World collects it and hands it to the
+    // GrenadeSystem.
+    struct PendingLaunch
+    {
+        float X = 0.0f;
+        float Y = 0.0f;
+        float VelX = 0.0f;
+        float VelY = 0.0f;
+        float Radius = 0.0f;
+        int Damage = 0;
     };
 
     // Loads weapon definitions from an INI file; returns built-in defaults
@@ -132,7 +154,15 @@ namespace Atlas
             float& outDirX,
             float& outDirY) const;
 
+        // Launchers: takes the rocket the last TryFire produced, if any.
+        bool TakeLaunch(PendingLaunch& out);
+
+        bool IsTool() const;
+
     private:
+        bool m_HasLaunch = false;
+        PendingLaunch m_Launch;
+
         const WeaponDef* m_Def;
 
         float m_Cooldown;

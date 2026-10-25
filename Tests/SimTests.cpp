@@ -3,6 +3,7 @@
 
 #include "Sim/World.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -63,7 +64,7 @@ namespace
         input.ReloadPressed = (tick % 700) == 5;
 
         if (tick % 360 == 0)
-            input.SelectSlot = static_cast<std::int8_t>((tick / 360) % World::LoadoutSize);
+            input.SelectSlot = static_cast<std::int8_t>((tick / 360) % std::max(1, body.GetItemCount()));
 
         return input;
     }
@@ -73,8 +74,25 @@ namespace
     {
         std::vector<PlayerInput> inputs(world.GetPlayerCount());
 
+        static const char* const Extras[] = { "Rocket Launcher", "Flamethrower", "Sniper" };
+
         for (std::uint64_t t = 0; t < ticks; t++)
         {
+            // Hand out the fancier weapons, and put drones up on both
+            // sides now and then, so every system gets exercised.
+            if (t % 600 == 300)
+            {
+                for (int p = 0; p < world.GetPlayerCount(); p++)
+                    world.GetPlayer(p).Body->AddItem(world.FindWeapon(Extras[(t / 600 + p) % 3]));
+            }
+
+            if (t % 2400 == 1200)
+            {
+                const Actor& body = *world.GetPlayer(0).Body;
+                world.AddDrone(body.GetCenterX() - 40.0f, body.GetY() - 80.0f, 0);
+                world.AddDrone(body.GetCenterX() + 300.0f, body.GetY() - 120.0f, 1);
+            }
+
             for (int p = 0; p < world.GetPlayerCount(); p++)
                 inputs[p] = ScriptedInput(world, p, t + static_cast<std::uint64_t>(p) * 97u);
 
@@ -190,7 +208,7 @@ namespace
         Actor& player = *world.GetPlayer(slot).Body;
 
         OrderRequest order;
-        order.Bodies.push_back(world.GetAllyWeapon());
+        order.Bodies.push_back({ world.GetAllyWeapon(), 1 });
         order.SupplyCrates = 1;
 
         world.AddTeamGold(0, -world.GetTeamGold(0));
@@ -260,7 +278,7 @@ namespace
         // Order a body and hop into it.
         world.AddTeamGold(0, 1000);
         OrderRequest order;
-        order.Bodies.push_back(world.GetAllyWeapon());
+        order.Bodies.push_back({ world.GetAllyWeapon(), 1 });
         Check(world.SubmitOrder(slot, order), "reinforcement ordered");
 
         for (int t = 0; t < 120 * 30 && world.GetAllies().empty(); t++)
@@ -362,6 +380,343 @@ namespace
     }
 }
 
+namespace
+{
+    // Puts the player out in the open past their base, with one of the
+    // enemy guards dragged over `gap` pixels to the right. Returns the
+    // guard (null if there was none).
+    Actor* SetUpDuel(World& world, int slot, float gap)
+    {
+        world.SetBotsEnabled(false);
+
+        Actor& player = *world.GetPlayer(slot).Body;
+        const float x = world.GetBase(0).X + 420.0f;
+
+        // A flat, open arena so the terrain doesn't decide the fight.
+        Terrain& terrain = world.GetTerrain();
+        const int floorY = terrain.GetSurfaceY(static_cast<int>(x));
+
+        for (int px = static_cast<int>(x) - 60; px <= static_cast<int>(x + gap) + 60; px++)
+        {
+            for (int py = floorY - 140; py < floorY; py++)
+                terrain.SetMaterial(px, py, Material::Air);
+
+            for (int py = floorY; py < floorY + 8; py++)
+                terrain.SetMaterial(px, py, Material::Concrete);
+        }
+
+        player.Spawn(terrain, x);
+
+        std::vector<Enemy>& enemies = world.GetEnemies();
+
+        if (enemies.empty())
+            return nullptr;
+
+        // Only one guard in the duel.
+        while (enemies.size() > 1)
+            enemies.pop_back();
+
+        Actor& guard = *enemies.front().Body;
+        guard.Spawn(world.GetTerrain(), x + gap);
+        return &guard;
+    }
+
+    int SelectWeapon(World& world, int slot, const std::string& name)
+    {
+        Actor& body = *world.GetPlayer(slot).Body;
+        body.AddItem(world.FindWeapon(name));
+
+        PlayerInput select;
+        select.SelectSlot = static_cast<std::int8_t>(body.GetSelectedItem());
+        world.Step(&select, 1);
+        return body.GetSelectedItem();
+    }
+
+    void TestBodiesAndInventory()
+    {
+        std::printf("bodies: builds, armor, per-body inventories\n");
+
+        {
+            Actor heavy;
+            heavy.SetBodyClass(BodyClass::Heavy);
+            Check(heavy.GetMaxHealth() == 200 && heavy.GetHealth() == 200, "heavy has 200 health");
+            heavy.TakeDamage(100, 0.0f, 0.0f);
+            Check(heavy.GetHealth() == 130, "heavy armor soaks 30% of a hit");
+
+            Actor scout;
+            scout.SetBodyClass(BodyClass::Light);
+            Check(scout.GetMaxHealth() == 70, "scout has 70 health");
+            scout.Heal(500);
+            Check(scout.GetHealth() == 70, "healing stops at the build's max");
+        }
+
+        // Scouts run, heavies plod.
+        float walked[2] = {};
+
+        for (int build = 0; build < 2; build++)
+        {
+            World world;
+            world.Create(MakeConfig(21u));
+            world.SetBotsEnabled(false);
+            const int slot = world.AddPlayer();
+            Actor& body = *world.GetPlayer(slot).Body;
+            body.SetBodyClass(build == 0 ? BodyClass::Light : BodyClass::Heavy);
+            body.Spawn(world.GetTerrain(), world.GetBase(0).X + 420.0f);
+
+            for (int t = 0; t < 60; t++)
+                world.Step(nullptr, 0);
+
+            const float startX = body.GetCenterX();
+            PlayerInput walk;
+            walk.MoveX = 1.0f;
+
+            for (int t = 0; t < 48; t++)
+                world.Step(&walk, 1);
+
+            walked[build] = body.GetCenterX() - startX;
+        }
+
+        Check(walked[0] > walked[1] * 1.3f, "scout outpaces heavy (" +
+            std::to_string(static_cast<int>(walked[0])) + " vs " +
+            std::to_string(static_cast<int>(walked[1])) + ")");
+
+        // Every body carries its own kit.
+        World world;
+        world.Create(MakeConfig(22u));
+        world.SetBotsEnabled(false);
+        const int slot = world.AddPlayer();
+        Actor& player = *world.GetPlayer(slot).Body;
+
+        Check(player.GetItemCount() == World::LoadoutSize, "player starts with the standard kit");
+
+        const int sniper = SelectWeapon(world, slot, "Sniper");
+        Check(player.GetItemCount() == World::LoadoutSize + 1, "picked-up weapon is added, not swapped");
+        Check(player.GetWeapon().GetDef() == world.FindWeapon("Sniper") && sniper == World::LoadoutSize,
+            "and held");
+
+        PlayerInput first;
+        first.SelectSlot = 0;
+        world.Step(&first, 1);
+        Check(player.GetSelectedItem() == 0, "switching back to item 1");
+
+        PlayerInput bogus;
+        bogus.SelectSlot = 5 + 10;
+        world.Step(&bogus, 1);
+        Check(player.GetSelectedItem() == 0, "out-of-range slot ignored");
+
+        world.AddTeamGold(0, 1000);
+        OrderRequest order;
+        order.Bodies.push_back({ world.FindWeapon("Shotgun"), static_cast<std::uint8_t>(BodyClass::Heavy) });
+        Check(world.PriceOrder(order) == 170 + world.FindWeapon("Shotgun")->Cost, "heavy body priced by build");
+        Check(world.SubmitOrder(slot, order), "heavy ordered");
+
+        OrderRequest bad;
+        bad.Bodies.push_back({ nullptr, 9 });
+        Check(!world.SubmitOrder(slot, bad), "unknown build refused");
+
+        for (int t = 0; t < 120 * 30 && world.GetAllies().empty(); t++)
+            world.Step(nullptr, 0);
+
+        Check(world.GetAllies().size() == 1, "heavy landed");
+
+        if (world.GetAllies().size() == 1)
+        {
+            const Actor& ally = *world.GetAllies().front().Body;
+            Check(ally.GetBodyClass() == BodyClass::Heavy && ally.GetMaxHealth() == 200, "it's a heavy");
+            Check(ally.GetWeapon().GetDef() == world.FindWeapon("Shotgun"), "holding its shotgun");
+            Check(ally.GetItemCount() == 2, "and packing a shovel");
+
+            PlayerInput swap;
+            swap.SwitchBodyPressed = true;
+            world.Step(&swap, 1);
+
+            Check(player.GetBodyClass() == BodyClass::Heavy && player.GetItemCount() == 2,
+                "switching bodies takes over that body's kit");
+            Check(world.GetAllies().front().Body->GetItemCount() == World::LoadoutSize + 1,
+                "the old body keeps its own");
+        }
+    }
+
+    void TestArsenal()
+    {
+        std::printf("arsenal: rockets, flame, sniper\n");
+
+        // Rocket: flies, hits, blows a hole in the guard.
+        {
+            World world;
+            world.Create(MakeConfig(31u));
+            const int slot = world.AddPlayer();
+            Actor* guard = SetUpDuel(world, slot, 260.0f);
+            Check(guard != nullptr, "a guard to shoot at");
+
+            SelectWeapon(world, slot, "Rocket Launcher");
+
+            bool sawRocket = false;
+            bool sawBlast = false;
+
+            for (int t = 0; t < 240 && guard && guard->IsAlive(); t++)
+            {
+                PlayerInput input;
+                input.AimX = guard->GetCenterX();
+                input.AimY = guard->GetCenterY();
+                input.Fire = t < 4;
+                world.Step(&input, 1);
+
+                sawRocket |= world.GetGrenades().GetRocketCount() > 0;
+
+
+                for (const SimEvent& event : world.GetEvents())
+                    sawBlast |= event.Type == SimEventType::Explosion;
+            }
+
+            Check(sawRocket, "rocket launched");
+            Check(sawBlast, "rocket exploded");
+            Check(world.GetEnemies().empty() || world.GetEnemies().front().Body->GetHealth() < 50,
+                "guard wrecked by the rocket");
+        }
+
+        // Flamethrower: sets the guard alight.
+        {
+            World world;
+            world.Create(MakeConfig(32u));
+            const int slot = world.AddPlayer();
+            Actor* guard = SetUpDuel(world, slot, 70.0f);
+
+            SelectWeapon(world, slot, "Flamethrower");
+
+            bool burned = false;
+            const int before = guard ? guard->GetHealth() : 0;
+
+            for (int t = 0; t < 120 && guard && guard->IsAlive(); t++)
+            {
+                PlayerInput input;
+                input.AimX = guard->GetCenterX();
+                input.AimY = guard->GetCenterY();
+                input.Fire = true;
+                world.Step(&input, 1);
+
+                burned |= guard->IsBurning();
+            }
+
+            Check(burned, "guard caught fire");
+            Check(!guard || world.GetEnemies().empty() || guard->GetHealth() < before - 20,
+                "and got hurt");
+        }
+
+        // Sniper: one shot, heavy damage, at range.
+        {
+            World world;
+            world.Create(MakeConfig(33u));
+            const int slot = world.AddPlayer();
+            Actor* guard = SetUpDuel(world, slot, 380.0f);
+
+            SelectWeapon(world, slot, "Sniper");
+
+            int lowest = guard ? guard->GetHealth() : 0;
+
+            for (int t = 0; t < 120 && guard && !world.GetEnemies().empty(); t++)
+            {
+                PlayerInput input;
+                input.AimX = guard->GetCenterX();
+                input.AimY = guard->GetY() + 18.0f;
+                input.Fire = t == 0;
+                world.Step(&input, 1);
+
+                if (!world.GetEnemies().empty())
+                    lowest = std::min(lowest, guard->GetHealth());
+                else
+                    lowest = 0;
+            }
+
+            Check(lowest <= 30, "sniper round lands hard (guard at " + std::to_string(lowest) + ")");
+        }
+    }
+
+    void TestDrones()
+    {
+        std::printf("drones: fly, fight, fall\n");
+
+        World world;
+        world.Create(MakeConfig(41u));
+        const int slot = world.AddPlayer();
+        Actor* guard = SetUpDuel(world, slot, 300.0f);
+        Actor& player = *world.GetPlayer(slot).Body;
+
+        // A friendly drone hunts the guard.
+        world.AddDrone(player.GetCenterX(), player.GetY() - 60.0f, 0);
+        Check(world.GetDrones().size() == 1, "drone in the air");
+
+        const int guardStart = guard ? guard->GetHealth() : 0;
+
+        for (int t = 0; t < 120 * 8 && guard && !world.GetEnemies().empty(); t++)
+        {
+            world.Step(nullptr, 0);
+
+            // Keep the player out of the fight.
+            player.Heal(100);
+        }
+
+        Check(world.GetEnemies().empty() || guard->GetHealth() < guardStart,
+            "drone shot the guard");
+
+        if (!world.GetDrones().empty())
+        {
+            const Drone& drone = world.GetDrones().front();
+            const float ground = static_cast<float>(world.GetTerrain().GetSurfaceY(static_cast<int>(drone.X)));
+            Check(drone.Y < ground - 30.0f, "drone hovers above the ground");
+        }
+
+        // A hostile drone gets shot down.
+        World other;
+        other.Create(MakeConfig(42u));
+        other.SetBotsEnabled(false);
+        const int me = other.AddPlayer();
+        other.GetEnemies().clear();
+
+        Actor& shooter = *other.GetPlayer(me).Body;
+        shooter.Spawn(other.GetTerrain(), other.GetBase(0).X + 420.0f);
+
+        for (int t = 0; t < 30; t++)
+            other.Step(nullptr, 0);
+
+        other.AddDrone(shooter.GetCenterX() + 160.0f, shooter.GetY() - 40.0f, 1);
+
+        bool downed = false;
+
+        for (int t = 0; t < 120 * 10 && !downed; t++)
+        {
+            PlayerInput input;
+
+            if (!other.GetDrones().empty())
+            {
+                input.AimX = other.GetDrones().front().X;
+                input.AimY = other.GetDrones().front().Y;
+            }
+
+            input.Fire = true;
+            input.ReloadPressed = t % 200 == 0;
+            other.Step(&input, 1);
+            shooter.Heal(100);
+
+            downed = other.GetDrones().empty();
+        }
+
+        Check(downed, "player shot the enemy drone down");
+
+        // Drones are orderable.
+        other.AddTeamGold(0, 1000);
+        OrderRequest order;
+        order.Drones = 2;
+        Check(other.PriceOrder(order) == 2 * World::DroneCost, "drones priced");
+        Check(other.SubmitOrder(me, order), "drones ordered");
+
+        for (int t = 0; t < 120 * 30 && other.GetDrones().size() < 2; t++)
+            other.Step(nullptr, 0);
+
+        Check(other.GetDrones().size() == 2, "ordered drones arrived");
+    }
+}
+
 int main()
 {
     TestDeterminism();
@@ -369,6 +724,9 @@ int main()
     TestOrdersAndIds();
     TestBrainAssault();
     TestEnemiesAdvance();
+    TestBodiesAndInventory();
+    TestArsenal();
+    TestDrones();
     TestMultiplayerSoak();
 
     if (g_Failures > 0)

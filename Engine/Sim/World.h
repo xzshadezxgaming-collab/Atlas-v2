@@ -111,8 +111,6 @@ namespace Atlas
     {
         std::unique_ptr<Actor> Body;
 
-        int CurrentSlot = 0; // index into the loadout
-
         float RespawnTimer = 0.0f;
         bool Gibbed = false;
 
@@ -146,6 +144,33 @@ namespace Atlas
         AIController Brain;
     };
 
+    // A small flying gun platform. Hovers above the ground, follows its
+    // side's orders and shoots what it can see. Not an Actor: bullets
+    // and blasts reach it through hit circles.
+    struct Drone
+    {
+        std::uint32_t Id = 0;
+        int Team = 0;
+
+        float X = 0.0f;
+        float Y = 0.0f;
+        float VelX = 0.0f;
+        float VelY = 0.0f;
+
+        int Health = 0;
+        float Cooldown = 0.0f;
+        float BurstTimer = 0.0f;
+        float PauseTimer = 0.0f;
+        float HurtFlash = 0.0f;
+
+        // Where its gun points (for drawing).
+        float AimX = 1.0f;
+        float AimY = 0.0f;
+        bool Firing = false;
+
+        float Phase = 0.0f; // rotor and bob animation
+    };
+
     struct HealthPickup
     {
         float X;
@@ -177,11 +202,15 @@ namespace Atlas
         static constexpr int MaxPlayers = 4;
         static constexpr int MaxEnemies = 12;
         static constexpr int MaxAllies = 8;
+        static constexpr int MaxDrones = 10;
+        static constexpr int MaxDronesPerTeam = 5;
         static constexpr int TeamCount = 2;
         static constexpr int LoadoutSize = 5;
 
         static constexpr int SupplyCrateCost = 40;
         static constexpr int ReinforcementCost = 100;
+        static constexpr int DroneCost = 80;
+        static constexpr int DroneHealth = 60;
         static constexpr int StartingGold = 300;
         static constexpr int KillBounty = 10;
 
@@ -213,7 +242,11 @@ namespace Atlas
 
         // Lands an AI unit for the players' side at x (menu backdrops,
         // scenarios). weapon null = the default rifleman.
-        void AddAlly(float x, const WeaponDef* weapon = nullptr);
+        void AddAlly(float x, const WeaponDef* weapon = nullptr,
+            BodyClass bodyClass = BodyClass::Medium);
+
+        // Puts a drone in the air at (x, y) for a team.
+        void AddDrone(float x, float y, int team);
 
         void SetAllyOrder(AllyOrder order);
 
@@ -246,6 +279,7 @@ namespace Atlas
         std::vector<Enemy>& GetEnemies();
         const std::vector<Ally>& GetAllies() const;
         std::vector<Ally>& GetAllies();
+        const std::vector<Drone>& GetDrones() const;
         const std::vector<HealthPickup>& GetHealthPickups() const;
         const std::vector<WeaponPickup>& GetWeaponPickups() const;
 
@@ -291,7 +325,13 @@ namespace Atlas
         void EmitSound(Sfx sound, float volume = 1.0f);
 
         void InitActor(Actor& actor, int team);
-        void SpawnEnemy(float x, bool attacker);
+        void SpawnEnemy(float x, bool attacker,
+            BodyClass bodyClass = BodyClass::Medium, const WeaponDef* weapon = nullptr);
+        void SpawnDrone(float x, float y, int team);
+        void UpdateDrones();
+        void DamageDrones(Actor* const* actors, int actorCount);
+        void FlushLaunch(Actor& actor);
+        void GiveStarterKit(Actor& body);
         void BuildBase(int team, float centerX);
         void UpdateBrains();
         void SwitchBody(int slot, bool deadBodyOnly);
@@ -299,7 +339,7 @@ namespace Atlas
         void SpawnEnemyDrop(int count);
         int AllyIndexNearest(float x, float y) const;
         void SpawnWave(int count);
-        void SpawnAlly(float x, const WeaponDef* weapon);
+        void SpawnAlly(float x, const WeaponDef* weapon, BodyClass bodyClass);
 
         void StepPlayer(int slot, const PlayerInput& input);
         void ApplyTerrainHazards(Actor& actor);
@@ -316,6 +356,7 @@ namespace Atlas
         std::vector<PlayerSlot> m_Players;
         std::vector<Enemy> m_Enemies;
         std::vector<Ally> m_Allies;
+        std::vector<Drone> m_Drones;
         std::vector<HealthPickup> m_HealthPickups;
         std::vector<WeaponPickup> m_WeaponPickups;
 
@@ -323,6 +364,10 @@ namespace Atlas
         const WeaponDef* m_Loadout[LoadoutSize];
         const WeaponDef* m_EnemyWeapon;
         const WeaponDef* m_AllyWeapon;
+        const WeaponDef* m_Shovel;
+        const WeaponDef* m_Rocket;
+        const WeaponDef* m_Flamer;
+        const WeaponDef* m_Shotgun;
 
         std::vector<SimEvent> m_Events;
         std::vector<GoldCredit> m_GoldCredits;

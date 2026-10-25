@@ -44,10 +44,19 @@ namespace Atlas
 
     // A drop-ship order, as sent by a player's buy menu. The World prices
     // it itself (the client's cart total is only a preview).
+    struct OrderBody
+    {
+        const WeaponDef* Weapon = nullptr; // null = the default rifle
+        std::uint8_t Class = 1;            // a BodyClass value
+    };
+
     struct OrderRequest
     {
-        // One reinforcement per entry, carrying the weapon it lands with.
-        std::vector<const WeaponDef*> Bodies;
+        // One reinforcement per entry, with its build and the weapon it
+        // lands with.
+        std::vector<OrderBody> Bodies;
+
+        int Drones = 0;
 
         // Weapons delivered as loose field crates.
         std::vector<const WeaponDef*> LooseWeapons;

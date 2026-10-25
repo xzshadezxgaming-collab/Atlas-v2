@@ -106,12 +106,23 @@ namespace Atlas
 
         self.SetAim(x, y + m_AimWobble);
 
+        // Some weapons only make sense at some ranges: a rocket at your
+        // feet kills you too, and flame doesn't carry.
+        const float rangeX = x - self.GetCenterX();
+        const float rangeY = y - self.GetCenterY();
+        const float range = std::sqrt(rangeX * rangeX + rangeY * rangeY);
+        const WeaponDef* def = self.GetWeapon().GetDef();
+
+        const bool inRange = !def ||
+            !((def->Kind == WeaponKind::Launcher && range < 110.0f) ||
+              (def->Kind == WeaponKind::Flamer && range > 170.0f));
+
         // Burst fire rhythm.
         if (m_BurstTimer > 0.0f)
         {
             m_BurstTimer -= deltaTime;
 
-            if (!self.IsArmDestroyed() && self.GetWeapon().TryFire(
+            if (inRange && !self.IsArmDestroyed() && self.GetWeapon().TryFire(
                 particles,
                 mutableTerrain,
                 self.GetMuzzleX(),
@@ -171,7 +182,12 @@ namespace Atlas
             const float dx = target->GetCenterX() - self.GetCenterX();
 
             // Keep a fighting distance: advance if far, hold if close.
-            if (std::fabs(dx) > PreferredRange)
+            // Flamers have to get in close.
+            const WeaponDef* def = self.GetWeapon().GetDef();
+            const float preferred =
+                def && def->Kind == WeaponKind::Flamer ? 110.0f : PreferredRange;
+
+            if (std::fabs(dx) > preferred)
             {
                 moveInput = dx > 0.0f ? 0.6f : -0.6f;
                 wantsProgress = true;
