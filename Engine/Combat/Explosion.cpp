@@ -99,7 +99,10 @@ namespace Atlas
                 std::sin(angle) * 40.0f - 60.0f);
         }
 
-        // Damage and knock back actors by distance.
+        // Damage and knock back actors by distance. Each limb takes its own
+        // share too, so a close blast can tear arms and legs off.
+        const float blastReach = radius * 2.2f;
+
         for (int i = 0; i < actorCount; i++)
         {
             Actor* actor = actors[i];
@@ -107,27 +110,12 @@ namespace Atlas
             if (!actor || !actor->IsAlive())
                 continue;
 
-            const float actorX = actor->GetCenterX();
-            const float actorY = actor->GetCenterY();
-
-            float dx = actorX - x;
-            float dy = actorY - y;
-            const float distance = std::sqrt(dx * dx + dy * dy);
-
-            const float blastReach = radius * 2.2f;
-
-            if (distance > blastReach)
-                continue;
-
-            const float falloff = 1.0f - distance / blastReach;
-
-            dx /= distance + 0.001f;
-            dy /= distance + 0.001f;
-
-            actor->TakeDamage(
-                static_cast<int>(static_cast<float>(maxDamage) * falloff),
-                dx * 420.0f * falloff,
-                dy * 420.0f * falloff - 140.0f * falloff);
+            actor->TakeBlast(x, y, blastReach, maxDamage, &particles);
         }
+
+        // Fling the dead about: corpses and loose limbs caught close enough
+        // burst apart.
+        particles.BlastRagdolls(x, y, radius * 2.5f,
+            420.0f + static_cast<float>(maxDamage) * 4.0f);
     }
 }

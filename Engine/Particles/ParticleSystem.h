@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../Actors/Ragdoll.h"
 #include "../World/Material.h"
 #include "../World/Terrain.h"
 
@@ -141,6 +142,18 @@ namespace Atlas
         void SpawnGib(float x, float y, float velX, float velY,
             std::uint8_t r, std::uint8_t g, std::uint8_t b, int size);
 
+        // Corpses and severed limbs (see Ragdoll). The oldest goes when
+        // there are too many.
+        void SpawnRagdoll(const Ragdoll& ragdoll);
+
+        // A blast throws nearby ragdolls around; one caught right in it
+        // is torn apart into gibs.
+        void BlastRagdolls(float x, float y, float radius, float strength);
+
+        // Drawn behind the living, so call before the actors.
+        void DrawRagdolls(Window& window) const;
+        int GetRagdollCount() const;
+
         // Convenience bursts.
         void BurstBlood(float x, float y, int count, float speed);
         void BurstDebris(float x, float y, int count, float speed, Material material);
@@ -188,7 +201,11 @@ namespace Atlas
         // Tests p against the hit circles; records a hit and returns true.
         bool HitTestCircles(const Particle& p);
 
+        // Bullets hitting a ragdoll: knocks it, splashes blood, stops.
+        bool HitRagdolls(const Particle& p);
+
         std::vector<Particle> m_Particles;
+        std::vector<Ragdoll> m_Ragdolls;
         std::vector<HitCircle> m_Circles;
         std::vector<CircleHit> m_CircleHits;
         std::uint32_t m_RandomState;

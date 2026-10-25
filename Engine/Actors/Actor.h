@@ -2,6 +2,7 @@
 
 #include "BodyPart.h"
 #include "Limb.h"
+#include "Ragdoll.h"
 
 #include "../Combat/Weapon.h"
 
@@ -16,18 +17,21 @@ namespace Atlas
     class Terrain;
     class Window;
 
-    // Independent, individually-destructible body parts. Only one arm
-    // exists as an interactive element (the far arm is baked into the
-    // torso sprite), so it stands alone rather than as a Left/Right pair.
+    // Independent, individually-destructible body parts, Cortex Command
+    // style: each can be shot up and blown off on its own. Arm is the
+    // near (gun) arm, ArmBack the far one that steadies the weapon.
     enum class BodyPartId
     {
         Head,
         Torso,
         Arm,
+        ArmBack,
         LegBack,
         LegFront,
         None,
     };
+
+    constexpr int BodyPartCount = static_cast<int>(BodyPartId::None);
 
     // Body builds you can order. Light bodies are fast and fragile,
     // heavies are slow, armored and hard to kill.
@@ -52,6 +56,10 @@ namespace Atlas
     };
 
     const BodyClassInfo& GetBodyClassInfo(BodyClass bodyClass);
+
+    // How each build's limbs are dressed (shared with ragdolls).
+    const LegStyle& GetLegStyle(BodyClass bodyClass);
+    void GetSleeveColor(BodyClass bodyClass, int& r, int& g, int& b);
 
     // A walking character, Cortex Command style: the torso is one hitbox
     // and each leg is a Limb with its own foot hitbox. Feet find and hold
@@ -181,8 +189,31 @@ namespace Atlas
         void TakeDamage(int damage, float impulseX, float impulseY);
         void Heal(int amount);
 
-        // Spews gibs and blood at the body's position (call on death).
+        // Spews gibs and blood at the body's position, and flings what
+        // limbs are still attached.
         void Gib(ParticleSystem& particles);
+
+        // Call once when the actor has died: leaves a ragdoll corpse
+        // that collapses where it fell, or, after an overkill (a blast,
+        // a destroyed torso), blows it apart. The held weapon falls free
+        // (see TakeDroppedItem). Returns true if it was gibbed.
+        bool Die(ParticleSystem& particles);
+
+        // An explosion at (x, y) reaching `reach` px: hurts and throws
+        // the actor like TakeDamage, and tears at each limb by how close
+        // it is - limbs near the blast are ripped off. particles may be
+        // null (no severed pieces fly).
+        void TakeBlast(float x, float y, float reach, int maxDamage, ParticleSystem* particles);
+
+        // An item that fell out of this actor's hands since last asked
+        // (the arm holding it was shot off, or the actor died), and where.
+        const WeaponDef* TakeDroppedItem(float& outX, float& outY);
+
+        // Open wounds bleed (and slowly drain health) until healed.
+        int GetWoundCount() const;
+
+        // Both legs gone: drags itself along the ground.
+        bool IsLegless() const;
 
         // Restores health/fuel (respawn).
         void ResetVitals();
@@ -208,10 +239,10 @@ namespace Atlas
             float& outLocal01Y) const;
 
         // Applies pixel-local damage to one limb (from TestLimbHit) on
-        // top of the usual aggregate TakeDamage. Destroying a limb has
-        // real consequences: head/torso destruction kills outright, the
-        // arm can no longer fire, a destroyed leg can never plant again
-        // (losing both legs is fatal). particles may be null.
+        // top of the usual aggregate TakeDamage, and leaves a bleeding
+        // wound. A limb chewed away comes off: losing the head or torso
+        // kills, an arm drops what it held (the other arm takes over), a
+        // lost leg leaves a hobble and both a crawl. particles may be null.
         void TakeLimbDamage(
             BodyPartId part,
             int damage,
@@ -222,6 +253,8 @@ namespace Atlas
             float impulseY);
 
         bool IsPartDestroyed(BodyPartId part) const;
+
+        // No arms left to hold anything: the actor can't use items.
         bool IsArmDestroyed() const;
 
         // 1.0 = untouched, 0.0 = destroyed (or an invalid/None part).
@@ -283,6 +316,29 @@ namespace Atlas
         void VisualHip(int leg, float& outX, float& outY) const;
 
         void DrawArmAndWeapon(Window& window) const;
+        void DrawBackArm(Window& window) const;
+        void DrawWounds(Window& window) const;
+
+        // Where an arm's elbow and hand are drawn this frame. holding:
+        // gripping the weapon (else hanging and swinging).
+        void ArmPose(bool backArm, float& shoulderX, float& shoulderY,
+            float& elbowX, float& elbowY, float& handX, float& handY) const;
+
+        // The arm that holds the weapon: the near arm, or the far one
+        // once the near arm is gone. None when both are.
+        BodyPartId HoldingArm() const;
+
+        // A ragdoll of the given pieces in the actor's current pose.
+        Ragdoll MakeRagdoll(std::uint8_t pieces, float velX, float velY) const;
+
+        // Flings a severed piece off the body.
+        void SeverPiece(BodyPartId part, ParticleSystem& particles);
+
+        void UpdateLegless(const Terrain& terrain, ParticleSystem* particles,
+            float deltaTime, float moveInput);
+        void UpdateWounds(ParticleSystem* particles, float deltaTime);
+        void AddWound(BodyPartId part, float local01X, float local01Y);
+        void DropHeldItem();
         void DrawBuildDetails(Window& window, float spriteX, float spriteY) const;
         void DrawDigBeam(Window& window) const;
 
@@ -291,6 +347,7 @@ namespace Atlas
         float RestFootX(int leg) const;
         float ShoulderX() const;
         float ShoulderY() const;
+        float BackShoulderX() const;
 
         // Current world-space AABB a limb occupies, used both for hit
         // testing and for rendering damage holes over it.
@@ -373,12 +430,37 @@ namespace Atlas
         float m_BeamPhase;
 
         // Per-limb pixel destruction. Indexed by BodyPartId (excluding
-        // None): Head, Torso, Arm, LegBack, LegFront.
+        // None): Head, Torso, Arm, ArmBack, LegBack, LegFront.
         BodyPart m_HeadPart;
         BodyPart m_TorsoPart;
         BodyPart m_ArmPart;
+        BodyPart m_ArmBackPart;
         BodyPart m_LegParts[2];
-        bool m_PartDetached[5];
+        bool m_PartDetached[BodyPartCount];
+
+        // Bullet wounds: where they are on which part (local 0..1).
+        struct Wound
+        {
+            BodyPartId Part;
+            float X01;
+            float Y01;
+        };
+
+        static constexpr int MaxWounds = 10;
+        Wound m_Wounds[MaxWounds];
+        int m_WoundCount;
+        float m_BleedTimer;
+        float m_BleedLoss;
+
+        // Direction of the last hit, for which way severed pieces fly.
+        float m_LastImpulseX;
+        float m_LastImpulseY;
+
+        const WeaponDef* m_DroppedItem;
+        float m_DropX;
+        float m_DropY;
+
+        float m_CrawlPhase;
 
         float CurrentStandHeight() const;
     };

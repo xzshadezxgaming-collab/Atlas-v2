@@ -454,6 +454,16 @@ namespace Atlas
 
         m_CircleHits.clear();
 
+        for (std::size_t r = 0; r < m_Ragdolls.size(); )
+        {
+            m_Ragdolls[r].Update(terrain, *this, deltaTime);
+
+            if (m_Ragdolls[r].IsExpired())
+                m_Ragdolls.erase(m_Ragdolls.begin() + static_cast<std::ptrdiff_t>(r));
+            else
+                r++;
+        }
+
         for (std::size_t i = 0; i < m_Particles.size(); )
         {
             Particle& p = m_Particles[i];
@@ -579,6 +589,9 @@ namespace Atlas
                                 alive = false;
                             }
                         }
+
+                        if (alive && !m_Ragdolls.empty() && HitRagdolls(p))
+                            alive = false;
 
                         if (!alive)
                             break;
@@ -1019,5 +1032,79 @@ namespace Atlas
     void ParticleSystem::Clear()
     {
         m_Particles.clear();
+        m_Ragdolls.clear();
+    }
+
+    void ParticleSystem::SpawnRagdoll(const Ragdoll& ragdoll)
+    {
+        constexpr std::size_t MaxRagdolls = 40;
+
+        if (m_Ragdolls.size() >= MaxRagdolls)
+            m_Ragdolls.erase(m_Ragdolls.begin());
+
+        m_Ragdolls.push_back(ragdoll);
+    }
+
+    bool ParticleSystem::HitRagdolls(const Particle& p)
+    {
+        for (Ragdoll& ragdoll : m_Ragdolls)
+        {
+            float minX, minY, maxX, maxY;
+            ragdoll.GetBounds(minX, minY, maxX, maxY);
+
+            if (p.X < minX - 5.0f || p.X > maxX + 5.0f ||
+                p.Y < minY - 5.0f || p.Y > maxY + 5.0f)
+                continue;
+
+            if (ragdoll.Hit(p.X, p.Y, 6.0f, p.VelX * 0.2f, p.VelY * 0.2f))
+            {
+                BurstBlood(p.X, p.Y, 4, 110.0f);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    void ParticleSystem::BlastRagdolls(float x, float y, float radius, float strength)
+    {
+        for (Ragdoll& ragdoll : m_Ragdolls)
+        {
+            const float impulse = ragdoll.Push(x, y, radius, strength);
+
+            // Caught in the heart of it: blown to bits.
+            if (impulse > strength * 0.7f && !ragdoll.IsExpired())
+            {
+                const float cx = ragdoll.GetCenterX();
+                const float cy = ragdoll.GetCenterY();
+
+                BurstBlood(cx, cy, 24, 240.0f);
+
+                for (int i = 0; i < 7; i++)
+                {
+                    const float angle = static_cast<float>(i) * 0.9f + RandomUnit();
+                    const bool meat = (i % 2) == 0;
+
+                    SpawnGib(cx, cy,
+                        std::cos(angle) * (140.0f + RandomUnit() * 60.0f),
+                        -160.0f + std::sin(angle) * 120.0f,
+                        meat ? 158 : 96, meat ? 24 : 100, meat ? 24 : 80,
+                        2 + (i % 2));
+                }
+
+                ragdoll.Expire();
+            }
+        }
+    }
+
+    void ParticleSystem::DrawRagdolls(Window& window) const
+    {
+        for (const Ragdoll& ragdoll : m_Ragdolls)
+            ragdoll.Draw(window);
+    }
+
+    int ParticleSystem::GetRagdollCount() const
+    {
+        return static_cast<int>(m_Ragdolls.size());
     }
 }

@@ -190,6 +190,10 @@ namespace Atlas
         float Y;
         float VelY;
         const WeaponDef* Weapon;
+
+        // Seconds left for a weapon dropped by a body; 0 never expires
+        // (ordered crates).
+        float Lifetime = 0.0f;
     };
 
     // The whole game simulation: terrain, actors, projectiles, pickups,

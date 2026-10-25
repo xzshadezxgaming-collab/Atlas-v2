@@ -488,6 +488,7 @@ namespace Atlas
                 camera.SetPosition(CamX, CamY);
                 Sky.Draw(window, CamX, CamY, ViewWidth, ViewHeight, time);
                 Sim->GetTerrain().Draw(window);
+                Sim->GetParticles().DrawRagdolls(window);
 
                 auto drawBody = [&](Actor& body)
                 {
@@ -2105,6 +2106,9 @@ namespace Atlas
 
             terrain.Draw(m_Window);
 
+            // Corpses and severed limbs lie behind the living.
+            particles.DrawRagdolls(m_Window);
+
             // Medkits.
             for (const HealthPickup& pickup : pickups)
             {
@@ -2132,7 +2136,16 @@ namespace Atlas
                 m_Window.DrawGlow(
                     pickup.X, pickup.Y - 4.0f, 14.0f, 200, 220, 160, 70);
 
-                if (const SpriteFrame* sprite = SpriteBank::Find("crate_weapon"))
+                // A gun dropped by a body lies on the ground as itself.
+                const SpriteFrame* dropped = pickup.Lifetime > 0.0f && pickup.Weapon
+                    ? SpriteBank::Find(WeaponSpriteName(*pickup.Weapon))
+                    : nullptr;
+
+                if (dropped)
+                {
+                    m_Window.DrawSprite(*dropped, pickup.X, pickup.Y + 1.0f);
+                }
+                else if (const SpriteFrame* sprite = SpriteBank::Find("crate_weapon"))
                 {
                     m_Window.DrawSprite(*sprite, pickup.X, pickup.Y + 2.0f);
                 }

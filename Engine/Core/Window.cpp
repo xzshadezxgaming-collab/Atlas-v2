@@ -288,6 +288,60 @@ namespace Atlas
             flipHorizontal ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
     }
 
+    void Window::DrawTextureRegion(
+        SDL_Texture* texture,
+        float texWidth,
+        float srcX,
+        float srcY,
+        float srcW,
+        float srcH,
+        float pivotX,
+        float pivotY,
+        float x,
+        float y,
+        float angleDegrees,
+        bool flipHorizontal)
+    {
+        if (!texture)
+            return;
+
+        if (m_Camera)
+        {
+            x -= m_Camera->GetX();
+            y -= m_Camera->GetY();
+        }
+
+        SDL_FRect source;
+        source.x = srcX;
+        source.y = srcY;
+        source.w = srcW;
+        source.h = srcH;
+
+        // Where the source rect and pivot sit once the whole texture is
+        // mirrored (SDL flips the region in place, so mirror its spot).
+        const float placedX = flipHorizontal ? texWidth - srcX - srcW : srcX;
+        const float placedPivotX = flipHorizontal ? texWidth - pivotX : pivotX;
+
+        SDL_FPoint center;
+        center.x = placedPivotX - placedX;
+        center.y = pivotY - srcY;
+
+        SDL_FRect destination;
+        destination.x = x - center.x;
+        destination.y = y - center.y;
+        destination.w = srcW;
+        destination.h = srcH;
+
+        SDL_RenderTextureRotated(
+            m_Renderer,
+            texture,
+            &source,
+            &destination,
+            static_cast<double>(angleDegrees),
+            &center,
+            flipHorizontal ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
+    }
+
     void Window::DrawTexture(
         SDL_Texture* texture,
         float x,

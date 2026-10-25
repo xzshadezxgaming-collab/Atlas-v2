@@ -92,6 +92,7 @@ namespace Atlas
         // Arm/weapon (the sprite's shoulders sit at y=23 of the 40px art).
         constexpr float ShoulderOffsetY = 23.0f;
         constexpr float HandDistance = 13.0f;
+        constexpr float ArmSegment = 10.0f; // upper arm and forearm
         constexpr float ArmThickness = 4.0f;
 
         // Jetpack
@@ -104,6 +105,28 @@ namespace Atlas
         constexpr float FallDamageSpeed = 640.0f;
 
         constexpr float KnockbackDamping = 5.0f;
+
+        // Limb damage. Headshots hurt most; a limb hit hurts the body
+        // less but chews the limb up. Each open wound bleeds this much
+        // health per second. A blast's limb damage scales with this, and
+        // a death this far below zero (fraction of max health) is an
+        // overkill that blows the body apart.
+        constexpr float HeadshotMultiplier = 1.6f;
+        constexpr float LimbHitMultiplier = 0.75f;
+        constexpr float WoundBleedRate = 0.35f;
+        constexpr float BlastLimbScale = 0.07f;
+        constexpr float BlastSeverHealth = 0.7f; // limb left under this after a blast is torn off
+        constexpr float GibOverkill = 0.45f;
+
+        // Losing limbs: a one-legged actor hops, a legless one drags
+        // itself; an arm short means a shakier aim and slower reloads.
+        constexpr float OneLegSpeed = 0.55f;
+        constexpr float OneLegJump = 0.75f;
+        constexpr float CrawlSpeed = 0.24f;
+        constexpr float OneArmSpread = 2.0f;
+        constexpr float OneArmReload = 0.6f;
+        constexpr float OffHandSpread = 2.8f;
+        constexpr float OffHandReload = 0.5f;
 
         void DrawArmSegmentPass(
             Window& window,
@@ -198,6 +221,29 @@ namespace Atlas
         return BodyClasses[index >= 0 && index < static_cast<int>(BodyClass::Count) ? index : 1];
     }
 
+    const LegStyle& GetLegStyle(BodyClass bodyClass)
+    {
+        const int index = static_cast<int>(bodyClass);
+        return LegStyles[index >= 0 && index < static_cast<int>(BodyClass::Count) ? index : 1];
+    }
+
+    void GetSleeveColor(BodyClass bodyClass, int& r, int& g, int& b)
+    {
+        // Olive fatigues, the scout's khaki, the heavy's steel.
+        if (bodyClass == BodyClass::Light)
+        {
+            r = 134; g = 124; b = 88;
+        }
+        else if (bodyClass == BodyClass::Heavy)
+        {
+            r = 92; g = 98; b = 112;
+        }
+        else
+        {
+            r = 92; g = 104; b = 72;
+        }
+    }
+
     Actor::Actor()
         : m_BodyTexture(nullptr),
         m_Id(0),
@@ -244,8 +290,19 @@ namespace Atlas
         m_HeadPart(5, 5),
         m_TorsoPart(7, 10),
         m_ArmPart(4, 8),
+        m_ArmBackPart(4, 8),
         m_LegParts{ BodyPart(4, 10), BodyPart(4, 10) },
-        m_PartDetached{ false, false, false, false, false }
+        m_PartDetached{},
+        m_Wounds{},
+        m_WoundCount(0),
+        m_BleedTimer(0.0f),
+        m_BleedLoss(0.0f),
+        m_LastImpulseX(0.0f),
+        m_LastImpulseY(0.0f),
+        m_DroppedItem(nullptr),
+        m_DropX(0.0f),
+        m_DropY(0.0f),
+        m_CrawlPhase(0.0f)
     {
         m_Legs[0].Configure(HipXBack, HipY, ThighLength, ShinLength);
         m_Legs[1].Configure(HipXFront, HipY, ThighLength, ShinLength);
@@ -342,13 +399,43 @@ namespace Atlas
         if (!IsAlive())
             return;
 
-        m_Crouching = crouch && !jetpack;
+        m_Crouching = crouch && !jetpack && !IsLegless();
+
+        // Open wounds bleed; bleeding out kills.
+        UpdateWounds(particles, deltaTime);
+
+        if (!IsAlive())
+            return;
+
+        // An arm short, the weapon handles worse: one-handed with the
+        // near arm, worse still in the off hand.
+        {
+            float spreadScale = 1.0f;
+            float reloadRate = 1.0f;
+
+            if (HoldingArm() == BodyPartId::ArmBack)
+            {
+                spreadScale = OffHandSpread;
+                reloadRate = OffHandReload;
+            }
+            else if (IsPartDestroyed(BodyPartId::ArmBack))
+            {
+                spreadScale = OneArmSpread;
+                reloadRate = OneArmReload;
+            }
+
+            GetWeapon().SetHandling(spreadScale, reloadRate);
+        }
+
+        const bool oneLegged =
+            IsPartDestroyed(BodyPartId::LegBack) != IsPartDestroyed(BodyPartId::LegFront);
 
         // Knockback decays; walking is layered on top of it.
         m_KnockVelX -= m_KnockVelX * std::min(1.0f, KnockbackDamping * deltaTime);
 
         const BodyClassInfo& build = GetBodyClassInfo(m_Class);
-        const float speedScale = (m_Crouching ? 0.5f : 1.0f) * build.Speed;
+        const float speedScale =
+            (m_Crouching ? 0.5f : 1.0f) * (oneLegged ? OneLegSpeed : 1.0f) * build.Speed;
 
         // Walking accelerates toward the wanted speed rather than
         // snapping to it: firm on the ground, floatier in the air.
@@ -458,6 +545,12 @@ namespace Atlas
             }
         }
 
+        if (IsLegless())
+        {
+            UpdateLegless(terrain, particles, deltaTime, moveInput);
+            return;
+        }
+
         // A planted foot only counts while the terrain under it still
         // exists (digging can remove it) and it is still within leg reach.
         for (int i = 0; i < 2; i++)
@@ -494,7 +587,7 @@ namespace Atlas
         // Jumps work from the ground or just after stepping off it.
         if (jump && (m_Grounded || m_CoyoteTimer > 0.0f) && !m_JumpRising)
         {
-            m_VelocityY = JumpVelocity;
+            m_VelocityY = JumpVelocity * (oneLegged ? OneLegJump : 1.0f);
             m_Legs[0].Unplant();
             m_Legs[1].Unplant();
             m_Grounded = false;
@@ -658,6 +751,10 @@ namespace Atlas
         if (m_Crouching)
             lean += m_FacingDir * 11.0f;
 
+        // Dragging itself along on its arms.
+        if (IsLegless() && m_Grounded)
+            lean += m_FacingDir * (16.0f + std::sin(m_CrawlPhase) * 4.0f);
+
         // Thrusting tips the body into the flight direction.
         if (m_Jetting)
             lean += std::clamp(m_VelocityX * 0.015f, -4.0f, 4.0f) +
@@ -689,7 +786,7 @@ namespace Atlas
         // the terrain instead of leaving it visually floating.
         if (m_Grounded)
         {
-            float shadowY = m_Y + BodyHeight + CurrentStandHeight() + 1.0f;
+            float shadowY = m_Y + BodyHeight + (IsLegless() ? 0.0f : CurrentStandHeight()) + 1.0f;
             float supportSum = 0.0f;
             int supportCount = 0;
 
@@ -711,8 +808,7 @@ namespace Atlas
             window.DrawFilledRect(cx - 7.0f, shadowY + 2.0f, 14.0f, 1.0f, 0, 0, 6, 30);
         }
 
-        const LegStyle& legStyle = LegStyles[
-            std::clamp(static_cast<int>(m_Class), 0, static_cast<int>(BodyClass::Count) - 1)];
+        const LegStyle& legStyle = GetLegStyle(m_Class);
 
         // The leg on the far side of the body (away from the viewer) is
         // drawn behind the torso and in shadow; which hip that is
@@ -754,6 +850,23 @@ namespace Atlas
         };
 
         drawLeg(farLeg, false);
+
+        // The far arm, behind the body, riding the same bob as the near
+        // one (drawn through a nudged camera, see below).
+        {
+            const Camera* camera = window.GetCamera();
+            Camera nudged;
+
+            if (camera && bodyOffsetY != 0.0f)
+            {
+                nudged.SetPosition(camera->GetX(), camera->GetY() - bodyOffsetY);
+                window.SetCamera(&nudged);
+            }
+
+            DrawBackArm(window);
+
+            window.SetCamera(camera);
+        }
 
         // Each build has its own art in the sprite pack; without one,
         // every build shares the client's body sprite plus drawn-on gear.
@@ -812,6 +925,8 @@ namespace Atlas
         }
 
         drawLeg(nearLeg, true);
+
+        DrawWounds(window);
 
         // The arm rides with the body's bob and landing dip (drawn
         // through a nudged camera; the simulated muzzle doesn't move).
@@ -927,25 +1042,14 @@ namespace Atlas
         }
     }
 
-    void Actor::DrawArmAndWeapon(Window& window) const
+    void Actor::ArmPose(bool backArm, float& shoulderX, float& shoulderY,
+        float& elbowX, float& elbowY, float& handX, float& handY) const
     {
-        if (IsPartDestroyed(BodyPartId::Arm))
-        {
-            // Stump at the shoulder; the weapon is gone with the arm.
-            DrawPart(window, ShoulderX() - 3.0f, ShoulderY() - 3.0f, 6.0f, 6.0f,
-                static_cast<Uint8>(90 * m_TintR / 255),
-                static_cast<Uint8>(38 * m_TintG / 255),
-                static_cast<Uint8>(34 * m_TintB / 255));
-            return;
-        }
+        shoulderX = backArm ? BackShoulderX() : ShoulderX();
+        shoulderY = ShoulderY();
 
-        if (!GetWeapon().GetDef())
-            return;
-
-        const WeaponDef& def = *GetWeapon().GetDef();
-
-        const float sx = ShoulderX();
-        const float sy = ShoulderY();
+        const WeaponDef* def = GetWeapon().GetDef();
+        const BodyPartId holder = HoldingArm();
 
         // Firing kicks the whole arm/weapon assembly back along the aim
         // for a couple of frames - reads as recoil without touching the
@@ -954,63 +1058,179 @@ namespace Atlas
             ? (m_MuzzleFlash / 0.05f) * 3.0f
             : 0.0f;
 
-        const float handX = GetHandX() - m_AimDirX * kick;
-        const float handY = GetHandY() - m_AimDirY * kick;
+        const float gripX = GetHandX() - m_AimDirX * kick;
+        const float gripY = GetHandY() - m_AimDirY * kick;
 
-        // Two-bone arm IK, elbow bent downward.
-        float dx = handX - sx;
-        float dy = handY - sy;
+        if (def && holder != BodyPartId::None)
+        {
+            const bool gripping = backArm == (holder == BodyPartId::ArmBack);
+
+            if (gripping)
+            {
+                handX = gripX;
+                handY = gripY;
+            }
+            else
+            {
+                // The far arm steadies the weapon a little up the barrel.
+                const float foregrip =
+                    def->Kind == WeaponKind::Shovel ? 7.0f
+                    : def->Kind == WeaponKind::Launcher ? 5.0f
+                    : std::min(6.0f, def->BarrelLength * 0.4f);
+
+                handX = gripX + m_AimDirX * foregrip;
+                handY = gripY + m_AimDirY * foregrip + 1.0f;
+            }
+        }
+        else
+        {
+            // Empty-handed: arms hang, swinging against the stride.
+            const float pace = std::clamp(std::fabs(m_VelocityX) / WalkSpeed, 0.0f, 1.0f);
+            const float swing = std::sin(m_BeamPhase * 11.0f) * 4.0f * pace * (backArm ? -1.0f : 1.0f);
+
+            handX = shoulderX + m_FacingDir * 1.5f + swing - std::clamp(m_VelocityX * 0.01f, -2.0f, 2.0f);
+            handY = shoulderY + ArmSegment * 1.7f;
+        }
+
+        // Two-bone IK, elbow bent downward.
+        float dx = handX - shoulderX;
+        float dy = handY - shoulderY;
         float distance = std::sqrt(dx * dx + dy * dy);
 
-        const float upper = HandDistance * 0.62f;
-        const float lower = HandDistance * 0.62f;
-
-        distance = std::min(distance, upper + lower - 0.2f);
+        distance = std::min(distance, ArmSegment * 2.0f - 0.2f);
 
         const float ux = dx / (distance + 0.001f);
         const float uy = dy / (distance + 0.001f);
 
-        const float along =
-            (upper * upper - lower * lower + distance * distance) /
-            (2.0f * distance + 0.001f);
-
-        const float height = std::sqrt(
-            std::max(0.0f, upper * upper - along * along));
+        const float along = distance * 0.5f;
+        const float height = std::sqrt(std::max(0.0f, ArmSegment * ArmSegment - along * along));
 
         // Elbow always hangs below the shoulder-hand line.
-        const float elbowX = sx + ux * along - uy * height * m_FacingDir;
-        const float elbowY = sy + uy * along + ux * height * m_FacingDir;
+        elbowX = shoulderX + ux * along - uy * height * m_FacingDir;
+        elbowY = shoulderY + uy * along + ux * height * m_FacingDir;
 
-        // Sleeve colours follow the build: olive fatigues, the scout's
-        // khaki, the heavy's steel.
-        struct Sleeve { int R, G, B; };
-        const Sleeve sleeve =
-            m_Class == BodyClass::Light ? Sleeve{ 134, 124, 88 }
-            : m_Class == BodyClass::Heavy ? Sleeve{ 92, 98, 112 }
-            : Sleeve{ 92, 104, 72 };
+        handX = shoulderX + ux * distance;
+        handY = shoulderY + uy * distance;
+
+        // A gripping hand never lets go of the weapon, even when the IK
+        // came up short.
+        if (def && holder != BodyPartId::None && backArm == (holder == BodyPartId::ArmBack))
+        {
+            handX = gripX;
+            handY = gripY;
+        }
+    }
+
+    void Actor::DrawBackArm(Window& window) const
+    {
+        int sleeveR = 0, sleeveG = 0, sleeveB = 0;
+        GetSleeveColor(m_Class, sleeveR, sleeveG, sleeveB);
+
+        // In shadow behind the body.
+        const Uint8 armR = static_cast<Uint8>(sleeveR * 78 / 100 * m_TintR / 255);
+        const Uint8 armG = static_cast<Uint8>(sleeveG * 78 / 100 * m_TintG / 255);
+        const Uint8 armB = static_cast<Uint8>(sleeveB * 78 / 100 * m_TintB / 255);
+
+        float sx, sy, ex, ey, hx, hy;
+        ArmPose(true, sx, sy, ex, ey, hx, hy);
+
+        if (IsPartDestroyed(BodyPartId::ArmBack))
+        {
+            DrawPart(window, sx - 2.0f, sy - 2.0f, 4.0f, 4.0f,
+                static_cast<Uint8>(70 * m_TintR / 255),
+                static_cast<Uint8>(28 * m_TintG / 255),
+                static_cast<Uint8>(26 * m_TintB / 255));
+            return;
+        }
+
+        DrawArmSegment(window, sx, sy, ex, ey, armR, armG, armB);
+        DrawArmSegment(window, ex, ey, hx, hy, armR, armG, armB);
+
+        DrawPart(window, hx - 2.0f, hy - 2.0f, 4.0f, 4.0f,
+            static_cast<Uint8>(62 * m_TintR / 255),
+            static_cast<Uint8>(54 * m_TintG / 255),
+            static_cast<Uint8>(44 * m_TintB / 255));
+    }
+
+    void Actor::DrawWounds(Window& window) const
+    {
+        for (int i = 0; i < m_WoundCount; i++)
+        {
+            const Wound& wound = m_Wounds[i];
+
+            float minX = 0.0f, minY = 0.0f, maxX = 0.0f, maxY = 0.0f;
+            GetPartBox(wound.Part, minX, minY, maxX, maxY);
+
+            const float x = std::floor(minX + (maxX - minX) * wound.X01);
+            const float y = std::floor(minY + (maxY - minY) * wound.Y01);
+
+            window.DrawFilledRect(x - 1.0f, y - 1.0f, 2.0f, 2.0f, 70, 8, 10, 255);
+            window.DrawFilledRect(x, y - 1.0f, 1.0f, 1.0f, 170, 30, 28, 255);
+        }
+    }
+
+    void Actor::DrawArmAndWeapon(Window& window) const
+    {
+        int sleeveR = 0, sleeveG = 0, sleeveB = 0;
+        GetSleeveColor(m_Class, sleeveR, sleeveG, sleeveB);
 
         auto shade = [&](int value, int percent, Uint8 tint)
         {
             return static_cast<Uint8>(std::min(255, value * percent / 100) * tint / 255);
         };
 
-        const Uint8 armR = shade(sleeve.R, 100, m_TintR);
-        const Uint8 armG = shade(sleeve.G, 100, m_TintG);
-        const Uint8 armB = shade(sleeve.B, 100, m_TintB);
+        float sx, sy, elbowX, elbowY, armHandX, armHandY;
+        ArmPose(false, sx, sy, elbowX, elbowY, armHandX, armHandY);
 
-        DrawArmSegment(window, sx, sy, elbowX, elbowY, armR, armG, armB);
-        DrawArmSegment(window, elbowX, elbowY, handX, handY, armR, armG, armB);
+        if (IsPartDestroyed(BodyPartId::Arm))
+        {
+            // Stump at the shoulder.
+            DrawPart(window, sx - 3.0f, sy - 3.0f, 6.0f, 6.0f,
+                static_cast<Uint8>(90 * m_TintR / 255),
+                static_cast<Uint8>(38 * m_TintG / 255),
+                static_cast<Uint8>(34 * m_TintB / 255));
+        }
+        else
+        {
+            const Uint8 armR = shade(sleeveR, 100, m_TintR);
+            const Uint8 armG = shade(sleeveG, 100, m_TintG);
+            const Uint8 armB = shade(sleeveB, 100, m_TintB);
 
-        // Shoulder pad over the joint.
-        DrawPart(window, sx - 3.0f, sy - 3.0f, 6.0f, 6.0f,
-            shade(sleeve.R, 117, m_TintR),
-            shade(sleeve.G, 115, m_TintG),
-            shade(sleeve.B, 117, m_TintB));
-        window.DrawFilledRect(sx - 3.0f, sy - 3.0f, 6.0f, 2.0f,
-            shade(sleeve.R, 141, m_TintR),
-            shade(sleeve.G, 137, m_TintG),
-            shade(sleeve.B, 142, m_TintB),
-            255);
+            DrawArmSegment(window, sx, sy, elbowX, elbowY, armR, armG, armB);
+            DrawArmSegment(window, elbowX, elbowY, armHandX, armHandY, armR, armG, armB);
+
+            // Shoulder pad over the joint.
+            DrawPart(window, sx - 3.0f, sy - 3.0f, 6.0f, 6.0f,
+                shade(sleeveR, 117, m_TintR),
+                shade(sleeveG, 115, m_TintG),
+                shade(sleeveB, 117, m_TintB));
+            window.DrawFilledRect(sx - 3.0f, sy - 3.0f, 6.0f, 2.0f,
+                shade(sleeveR, 141, m_TintR),
+                shade(sleeveG, 137, m_TintG),
+                shade(sleeveB, 142, m_TintB),
+                255);
+
+            if (!GetWeapon().GetDef())
+            {
+                // Bare glove on an empty hand.
+                DrawPart(window, armHandX - 2.0f, armHandY - 2.0f, 4.0f, 4.0f,
+                    static_cast<Uint8>(78 * m_TintR / 255),
+                    static_cast<Uint8>(68 * m_TintG / 255),
+                    static_cast<Uint8>(56 * m_TintB / 255));
+            }
+        }
+
+        if (HoldingArm() == BodyPartId::None || !GetWeapon().GetDef())
+            return;
+
+        const WeaponDef& def = *GetWeapon().GetDef();
+
+        const float kick = m_MuzzleFlash > 0.0f
+            ? (m_MuzzleFlash / 0.05f) * 3.0f
+            : 0.0f;
+
+        const float handX = GetHandX() - m_AimDirX * kick;
+        const float handY = GetHandY() - m_AimDirY * kick;
 
         // --- The weapon ---
         const float muzzleX = handX + m_AimDirX * def.BarrelLength;
@@ -1550,6 +1770,10 @@ namespace Atlas
             return;
 
         m_Health = std::min(GetMaxHealth(), m_Health + amount);
+
+        // Patched up: the bleeding stops.
+        m_WoundCount = 0;
+        m_BleedLoss = 0.0f;
     }
 
     void Actor::GetPartBox(
@@ -1576,11 +1800,10 @@ namespace Atlas
             return;
 
         case BodyPartId::Arm:
+        case BodyPartId::ArmBack:
         {
-            const float sx = ShoulderX();
-            const float sy = ShoulderY();
-            const float hx = GetHandX();
-            const float hy = GetHandY();
+            float sx, sy, ex, ey, hx, hy;
+            ArmPose(part == BodyPartId::ArmBack, sx, sy, ex, ey, hx, hy);
 
             outMinX = std::min(sx, hx) - ArmThickness * 2.0f;
             outMaxX = std::max(sx, hx) + ArmThickness * 2.0f;
@@ -1621,6 +1844,7 @@ namespace Atlas
         case BodyPartId::Head: return &m_HeadPart;
         case BodyPartId::Torso: return &m_TorsoPart;
         case BodyPartId::Arm: return &m_ArmPart;
+        case BodyPartId::ArmBack: return &m_ArmBackPart;
         case BodyPartId::LegBack: return &m_LegParts[0];
         case BodyPartId::LegFront: return &m_LegParts[1];
         default: return nullptr;
@@ -1642,7 +1866,37 @@ namespace Atlas
 
     bool Actor::IsArmDestroyed() const
     {
-        return IsPartDestroyed(BodyPartId::Arm);
+        return HoldingArm() == BodyPartId::None;
+    }
+
+    BodyPartId Actor::HoldingArm() const
+    {
+        if (!IsPartDestroyed(BodyPartId::Arm))
+            return BodyPartId::Arm;
+
+        if (!IsPartDestroyed(BodyPartId::ArmBack))
+            return BodyPartId::ArmBack;
+
+        return BodyPartId::None;
+    }
+
+    bool Actor::IsLegless() const
+    {
+        return IsPartDestroyed(BodyPartId::LegBack) && IsPartDestroyed(BodyPartId::LegFront);
+    }
+
+    int Actor::GetWoundCount() const
+    {
+        return m_WoundCount;
+    }
+
+    const WeaponDef* Actor::TakeDroppedItem(float& outX, float& outY)
+    {
+        const WeaponDef* item = m_DroppedItem;
+        outX = m_DropX;
+        outY = m_DropY;
+        m_DroppedItem = nullptr;
+        return item;
     }
 
     float Actor::GetPartHealth(BodyPartId part) const
@@ -1651,43 +1905,84 @@ namespace Atlas
         return grid ? grid->GetHealthFraction() : 0.0f;
     }
 
+    void Actor::DropHeldItem()
+    {
+        if (m_ItemCount <= 0 || !GetWeapon().GetDef())
+            return;
+
+        m_DroppedItem = GetWeapon().GetDef();
+        m_DropX = GetHandX();
+        m_DropY = GetHandY();
+
+        for (int i = m_Selected; i < m_ItemCount - 1; i++)
+            m_Items[i] = m_Items[i + 1];
+
+        m_Items[m_ItemCount - 1].SetDef(nullptr);
+        m_ItemCount--;
+        m_Selected = std::clamp(m_Selected, 0, std::max(0, m_ItemCount - 1));
+    }
+
     void Actor::DestroyPart(BodyPartId part, ParticleSystem* particles)
     {
         if (part == BodyPartId::None || m_PartDetached[static_cast<int>(part)])
             return;
 
+        // Whatever the arm was holding goes with it.
+        const bool heldByThisArm = part == HoldingArm();
+
         m_PartDetached[static_cast<int>(part)] = true;
+
+        // Wounds on the lost part go with it.
+        for (int i = 0; i < m_WoundCount; )
+        {
+            if (m_Wounds[i].Part == part)
+                m_Wounds[i] = m_Wounds[--m_WoundCount];
+            else
+                i++;
+        }
 
         float minX = 0.0f, minY = 0.0f, maxX = 0.0f, maxY = 0.0f;
         GetPartBox(part, minX, minY, maxX, maxY);
 
         if (particles)
+        {
             particles->BurstBlood((minX + maxX) * 0.5f, (minY + maxY) * 0.5f, 14, 200.0f);
+
+            if (part != BodyPartId::Torso)
+                SeverPiece(part, *particles);
+        }
 
         switch (part)
         {
         case BodyPartId::Head:
+            // Headless is dead - but in one piece, not gibbed.
+            m_Health = std::min(m_Health, 0);
+            break;
+
         case BodyPartId::Torso:
-            // Losing the head or torso is fatal outright.
-            TakeDamage(9999, 0.0f, 0.0f);
+            // The torso coming apart takes everything with it.
+            m_Health = -9999;
             break;
 
         case BodyPartId::Arm:
-            // No crawl/incapacitated sub-state: the arm simply can't
-            // fire any more (gated via IsArmDestroyed at the call sites).
+        case BodyPartId::ArmBack:
+            if (heldByThisArm)
+            {
+                DropHeldItem();
+
+                // The other arm, if any, takes over what's left.
+                if (HoldingArm() != BodyPartId::None)
+                    SelectBestWeapon();
+            }
             break;
 
         case BodyPartId::LegBack:
         case BodyPartId::LegFront:
         {
+            // A lost leg doesn't kill: the actor limps, and with both
+            // gone it drags itself along.
             const int leg = part == BodyPartId::LegBack ? 0 : 1;
             m_Legs[leg].Unplant();
-
-            if (IsPartDestroyed(BodyPartId::LegBack) &&
-                IsPartDestroyed(BodyPartId::LegFront))
-            {
-                TakeDamage(9999, 0.0f, 0.0f);
-            }
             break;
         }
 
@@ -1703,10 +1998,13 @@ namespace Atlas
         float& outLocal01X,
         float& outLocal01Y) const
     {
+        // Small parts first, so a shot at an arm across the chest hits
+        // the arm.
         constexpr BodyPartId order[] =
         {
             BodyPartId::Head,
             BodyPartId::Arm,
+            BodyPartId::ArmBack,
             BodyPartId::LegFront,
             BodyPartId::LegBack,
             BodyPartId::Torso,
@@ -1732,6 +2030,14 @@ namespace Atlas
         return false;
     }
 
+    void Actor::AddWound(BodyPartId part, float local01X, float local01Y)
+    {
+        if (m_WoundCount >= MaxWounds)
+            return;
+
+        m_Wounds[m_WoundCount++] = { part, local01X, local01Y };
+    }
+
     void Actor::TakeLimbDamage(
         BodyPartId part,
         int damage,
@@ -1744,21 +2050,236 @@ namespace Atlas
         if (!IsAlive())
             return;
 
-        TakeDamage(damage, impulseX, impulseY);
+        // Headshots hurt the most; a hit to a leg hurts less than one
+        // to the body, but chews the leg itself up.
+        // A round through an arm carries on into the chest behind it.
+        const float multiplier =
+            part == BodyPartId::Head ? HeadshotMultiplier
+            : part == BodyPartId::LegBack || part == BodyPartId::LegFront ? LimbHitMultiplier
+            : 1.0f;
 
-        if (!IsAlive())
-            return;
+        TakeDamage(
+            std::max(1, static_cast<int>(std::lround(static_cast<float>(damage) * multiplier))),
+            impulseX,
+            impulseY);
 
         BodyPart* grid = GetPartGrid(part);
 
         if (!grid)
             return;
 
+        AddWound(part, local01X, local01Y);
+
         // A bigger hit chews a visibly bigger hole than a graze.
         const float radiusCells = 1.0f + static_cast<float>(damage) * 0.05f;
 
         if (grid->DamageAtLocal(local01X, local01Y, radiusCells))
             DestroyPart(part, particles);
+    }
+
+    void Actor::TakeBlast(float x, float y, float reach, int maxDamage, ParticleSystem* particles)
+    {
+        if (!IsAlive())
+            return;
+
+        float dx = GetCenterX() - x;
+        float dy = GetCenterY() - y;
+        const float distance = std::sqrt(dx * dx + dy * dy);
+
+        if (distance > reach)
+            return;
+
+        const float falloff = 1.0f - distance / reach;
+
+        dx /= distance + 0.001f;
+        dy /= distance + 0.001f;
+
+        TakeDamage(
+            static_cast<int>(static_cast<float>(maxDamage) * falloff),
+            dx * 420.0f * falloff,
+            dy * 420.0f * falloff - 140.0f * falloff);
+
+        // Then each limb on its own: the closer it was to the blast, the
+        // more of it goes. Torn off even if the blast was fatal, so the
+        // body comes down missing what was nearest.
+        constexpr BodyPartId limbs[] =
+        {
+            BodyPartId::Head,
+            BodyPartId::Arm,
+            BodyPartId::ArmBack,
+            BodyPartId::LegBack,
+            BodyPartId::LegFront,
+        };
+
+        for (BodyPartId part : limbs)
+        {
+            if (IsPartDestroyed(part))
+                continue;
+
+            float minX = 0.0f, minY = 0.0f, maxX = 0.0f, maxY = 0.0f;
+            GetPartBox(part, minX, minY, maxX, maxY);
+
+            const float cx = (minX + maxX) * 0.5f;
+            const float cy = (minY + maxY) * 0.5f;
+            const float partDistance = std::sqrt((cx - x) * (cx - x) + (cy - y) * (cy - y));
+            const float partFalloff = 1.0f - partDistance / reach;
+
+            if (partFalloff <= 0.2f)
+                continue;
+
+            // Hit on the side facing the blast.
+            const float local01X = std::clamp(0.5f + (x - cx) / std::max(1.0f, maxX - minX), 0.0f, 1.0f);
+            const float local01Y = std::clamp(0.5f + (y - cy) / std::max(1.0f, maxY - minY), 0.0f, 1.0f);
+
+            BodyPart* grid = GetPartGrid(part);
+
+            if (!grid)
+                continue;
+
+            const float radiusCells = partFalloff * static_cast<float>(maxDamage) * BlastLimbScale;
+
+            // A blast doesn't have to chew the whole limb away: torn
+            // up badly enough, it comes off.
+            if (grid->DamageAtLocal(local01X, local01Y, radiusCells) ||
+                grid->GetHealthFraction() < BlastSeverHealth)
+                DestroyPart(part, particles);
+            else if (IsAlive())
+                AddWound(part, local01X, local01Y);
+        }
+    }
+
+    void Actor::UpdateWounds(ParticleSystem* particles, float deltaTime)
+    {
+        if (m_WoundCount == 0)
+            return;
+
+        // Each open wound drips blood and drains a little health; armour
+        // slows the bleeding.
+        m_BleedLoss += static_cast<float>(m_WoundCount) * WoundBleedRate *
+            GetBodyClassInfo(m_Class).Armor * deltaTime;
+
+        if (m_BleedLoss >= 1.0f)
+        {
+            const int loss = static_cast<int>(m_BleedLoss);
+            m_BleedLoss -= static_cast<float>(loss);
+            m_Health -= loss;
+        }
+
+        m_BleedTimer -= deltaTime;
+
+        if (particles && m_BleedTimer <= 0.0f)
+        {
+            m_BleedTimer = 0.5f / static_cast<float>(m_WoundCount);
+
+            const Wound& wound = m_Wounds[static_cast<int>(FxRandomUnit() * m_WoundCount) % m_WoundCount];
+
+            float minX = 0.0f, minY = 0.0f, maxX = 0.0f, maxY = 0.0f;
+            GetPartBox(wound.Part, minX, minY, maxX, maxY);
+
+            particles->SpawnBlood(
+                minX + (maxX - minX) * wound.X01,
+                minY + (maxY - minY) * wound.Y01,
+                m_VelocityX * 0.5f + (FxRandomUnit() - 0.5f) * 30.0f,
+                -10.0f);
+        }
+    }
+
+    Ragdoll Actor::MakeRagdoll(std::uint8_t pieces, float velX, float velY) const
+    {
+        Ragdoll ragdoll;
+        ragdoll.SetPieces(pieces);
+        ragdoll.SetLook(static_cast<int>(m_Class), m_TintR, m_TintG, m_TintB, m_FacingDir, m_BodyTexture);
+
+        const float bodyOffsetY = VisualBodyOffsetY();
+
+        // Joints where the body art has them: hips at the waist, neck at
+        // the collar, crown at the top of the helmet.
+        const float hipX = m_X + BodyWidth * 0.5f;
+        const float hipY = m_Y + HipY + bodyOffsetY;
+        const float neckX = m_X + BodyWidth * 0.5f + m_FacingDir * 3.0f;
+        const float neckY = m_Y + 21.0f + bodyOffsetY;
+
+        ragdoll.SetJoint(Ragdoll::Hip, hipX, hipY, velX, velY);
+        ragdoll.SetJoint(Ragdoll::Neck, neckX, neckY, velX, velY);
+        ragdoll.SetJoint(Ragdoll::Crown, neckX, neckY - 18.0f, velX, velY);
+
+        // Legs as they stand: the near leg is the ragdoll's front one.
+        const int nearLeg = m_FacingDir > 0.0f ? 0 : 1;
+
+        for (int leg = 0; leg < 2; leg++)
+        {
+            const bool front = leg == nearLeg;
+            const float footX = m_Legs[leg].GetFootX();
+            const float footY = m_Legs[leg].GetFootY() - Limb::AnkleHeight;
+
+            float kneeX = 0.0f, kneeY = 0.0f, ankleX = 0.0f, ankleY = 0.0f;
+            Limb::SolveKnee(hipX, hipY, footX, footY, ThighLength, ShinLength, m_FacingDir,
+                kneeX, kneeY, ankleX, ankleY);
+
+            ragdoll.SetJoint(front ? Ragdoll::KneeF : Ragdoll::KneeB, kneeX, kneeY, velX, velY);
+            ragdoll.SetJoint(front ? Ragdoll::FootF : Ragdoll::FootB, ankleX, ankleY, velX, velY);
+        }
+
+        for (int arm = 0; arm < 2; arm++)
+        {
+            float sx, sy, ex, ey, hx, hy;
+            ArmPose(arm == 1, sx, sy, ex, ey, hx, hy);
+
+            ragdoll.SetJoint(arm == 0 ? Ragdoll::ElbowF : Ragdoll::ElbowB, ex, ey, velX, velY);
+            ragdoll.SetJoint(arm == 0 ? Ragdoll::HandF : Ragdoll::HandB, hx, hy, velX, velY);
+        }
+
+        return ragdoll;
+    }
+
+    void Actor::SeverPiece(BodyPartId part, ParticleSystem& particles)
+    {
+        std::uint8_t piece = 0;
+        Ragdoll::Joint tip = Ragdoll::Crown;
+        Ragdoll::Joint root = Ragdoll::Neck;
+
+        const bool nearLegIsBack = m_FacingDir > 0.0f;
+
+        switch (part)
+        {
+        case BodyPartId::Head:
+            piece = Ragdoll::Head;
+            break;
+        case BodyPartId::Arm:
+            piece = Ragdoll::ArmF;
+            tip = Ragdoll::HandF;
+            break;
+        case BodyPartId::ArmBack:
+            piece = Ragdoll::ArmB;
+            tip = Ragdoll::HandB;
+            break;
+        case BodyPartId::LegBack:
+        case BodyPartId::LegFront:
+        {
+            const bool front = (part == BodyPartId::LegBack) == nearLegIsBack;
+            piece = front ? Ragdoll::LegF : Ragdoll::LegB;
+            tip = front ? Ragdoll::FootF : Ragdoll::FootB;
+            root = Ragdoll::Hip;
+            break;
+        }
+        default:
+            return;
+        }
+
+        // Thrown along the hit, popped upward, and spinning.
+        const float velX = m_VelocityX * 0.5f + m_LastImpulseX * 1.5f;
+        const float velY = std::min(m_VelocityY, 0.0f) - 150.0f + m_LastImpulseY * 1.5f;
+
+        Ragdoll ragdoll = MakeRagdoll(piece, velX, velY);
+
+        const float spin = (FxRandomUnit() < 0.5f ? -1.0f : 1.0f) * (90.0f + FxRandomUnit() * 90.0f);
+
+        ragdoll.SetJoint(root, ragdoll.GetJointX(root), ragdoll.GetJointY(root), velX + spin, velY);
+        ragdoll.SetJoint(tip, ragdoll.GetJointX(tip), ragdoll.GetJointY(tip), velX - spin, velY - 40.0f);
+        ragdoll.SetBleeding(2.5f);
+        ragdoll.Bind();
+
+        particles.SpawnRagdoll(ragdoll);
     }
 
     void Actor::Gib(ParticleSystem& particles)
@@ -1802,6 +2323,99 @@ namespace Atlas
 
             index++;
         }
+
+        // Whatever limbs were still on fly off in every direction.
+        constexpr BodyPartId limbs[] =
+        {
+            BodyPartId::Head,
+            BodyPartId::Arm,
+            BodyPartId::ArmBack,
+            BodyPartId::LegBack,
+            BodyPartId::LegFront,
+        };
+
+        for (BodyPartId part : limbs)
+        {
+            if (IsPartDestroyed(part))
+                continue;
+
+            m_PartDetached[static_cast<int>(part)] = true;
+
+            float minX = 0.0f, minY = 0.0f, maxX = 0.0f, maxY = 0.0f;
+            GetPartBox(part, minX, minY, maxX, maxY);
+
+            // Outward from the middle of the body, hard.
+            m_LastImpulseX = ((minX + maxX) * 0.5f - cx) * 9.0f + (FxRandomUnit() - 0.5f) * 120.0f;
+            m_LastImpulseY = ((minY + maxY) * 0.5f - cy) * 5.0f - 80.0f;
+
+            SeverPiece(part, particles);
+        }
+    }
+
+    bool Actor::Die(ParticleSystem& particles)
+    {
+        // The held item falls where the hands were.
+        if (HoldingArm() != BodyPartId::None)
+            DropHeldItem();
+
+        // Overkill (a blast, a destroyed torso) blows the body apart;
+        // otherwise it drops as a corpse with whatever it still has.
+        const bool overkill =
+            IsPartDestroyed(BodyPartId::Torso) ||
+            m_Health <= -static_cast<int>(static_cast<float>(GetMaxHealth()) * GibOverkill);
+
+        if (overkill)
+        {
+            Gib(particles);
+            return true;
+        }
+
+        std::uint8_t pieces = Ragdoll::Torso;
+
+        if (!IsPartDestroyed(BodyPartId::Head)) pieces |= Ragdoll::Head;
+        if (!IsPartDestroyed(BodyPartId::Arm)) pieces |= Ragdoll::ArmF;
+        if (!IsPartDestroyed(BodyPartId::ArmBack)) pieces |= Ragdoll::ArmB;
+
+        const bool nearLegIsBack = m_FacingDir > 0.0f;
+        const bool backAttached = !IsPartDestroyed(BodyPartId::LegBack);
+        const bool frontAttached = !IsPartDestroyed(BodyPartId::LegFront);
+
+        if (nearLegIsBack ? backAttached : frontAttached) pieces |= Ragdoll::LegF;
+        if (nearLegIsBack ? frontAttached : backAttached) pieces |= Ragdoll::LegB;
+
+        const float velX = m_VelocityX + m_LastImpulseX * 0.5f;
+        const float velY = std::min(m_VelocityY, 200.0f) + std::min(0.0f, m_LastImpulseY * 0.5f);
+
+        Ragdoll corpse = MakeRagdoll(pieces, velX, velY);
+
+        // The top half topples: along the killing hit, or backwards.
+        const float topple =
+            std::fabs(m_LastImpulseX) > 5.0f
+                ? (m_LastImpulseX > 0.0f ? 1.0f : -1.0f)
+                : -m_FacingDir;
+
+        const float toppleSpeed = 70.0f + FxRandomUnit() * 50.0f;
+
+        for (Ragdoll::Joint joint : { Ragdoll::Neck, Ragdoll::Crown, Ragdoll::ElbowF, Ragdoll::ElbowB,
+            Ragdoll::HandF, Ragdoll::HandB })
+        {
+            corpse.SetJoint(joint, corpse.GetJointX(joint), corpse.GetJointY(joint),
+                velX + topple * toppleSpeed, velY);
+        }
+
+        // Knees buckle forward.
+        for (Ragdoll::Joint joint : { Ragdoll::KneeF, Ragdoll::KneeB })
+        {
+            corpse.SetJoint(joint, corpse.GetJointX(joint), corpse.GetJointY(joint),
+                velX + m_FacingDir * 30.0f, velY);
+        }
+
+        corpse.SetBleeding(pieces == Ragdoll::AllPieces ? 1.5f : 5.0f);
+        corpse.Bind();
+
+        particles.SpawnRagdoll(corpse);
+
+        return false;
     }
 
     void Actor::ResetVitals()
@@ -1815,11 +2429,16 @@ namespace Atlas
         m_HeadPart.Reset();
         m_TorsoPart.Reset();
         m_ArmPart.Reset();
+        m_ArmBackPart.Reset();
         m_LegParts[0].Reset();
         m_LegParts[1].Reset();
 
         for (bool& detached : m_PartDetached)
             detached = false;
+
+        m_WoundCount = 0;
+        m_BleedLoss = 0.0f;
+        m_DroppedItem = nullptr;
     }
 
     void Actor::SetTeam(int team)
@@ -1888,6 +2507,11 @@ namespace Atlas
     float Actor::ShoulderY() const
     {
         return m_Y + ShoulderOffsetY;
+    }
+
+    float Actor::BackShoulderX() const
+    {
+        return ShoulderX() - m_FacingDir * 3.0f;
     }
 
     bool Actor::HasRoom(const Terrain& terrain) const
@@ -2068,8 +2692,11 @@ namespace Atlas
                     {
                         const float bottom = m_Y + BodyHeight;
 
-                        m_Legs[0].Plant(HipWorldX(0), bottom + 2.0f);
-                        m_Legs[1].Plant(HipWorldX(1), bottom + 2.0f);
+                        for (int leg = 0; leg < 2; leg++)
+                        {
+                            if (!IsPartDestroyed(LegPart(leg)))
+                                m_Legs[leg].Plant(HipWorldX(leg), bottom + 2.0f);
+                        }
                     }
 
                     m_VelocityY = 0.0f;
@@ -2406,6 +3033,60 @@ namespace Atlas
         // them on a turn used to teleport the joints away from planted
         // feet and made the legs pop when reversing direction.
         return m_X + m_Legs[leg].GetHipOffsetX();
+    }
+
+    void Actor::UpdateLegless(
+        const Terrain& terrain,
+        ParticleSystem* particles,
+        float deltaTime,
+        float moveInput)
+    {
+        // No legs to stand on: the torso sits on the ground and hauls
+        // itself along in heaves. The jetpack still works.
+        bool support = false;
+
+        for (float sampleX = m_X + 2.0f; sampleX <= m_X + BodyWidth - 2.0f; sampleX += 3.0f)
+        {
+            if (terrain.IsSolid(sampleX, m_Y + BodyHeight + 1.0f))
+            {
+                support = true;
+                break;
+            }
+        }
+
+        if (support && m_VelocityY >= 0.0f && !m_Jetting)
+        {
+            const float fallSpeed = m_VelocityY;
+            const bool landed = !m_Grounded;
+
+            m_Grounded = true;
+            m_VelocityY = 0.0f;
+            m_Fuel = std::min(1.0f, m_Fuel + JetRegenPerSecond * deltaTime);
+
+            if (landed && fallSpeed > FallDamageSpeed)
+            {
+                TakeDamage(static_cast<int>((fallSpeed - FallDamageSpeed) * 0.1f), 0.0f, 0.0f);
+
+                if (particles)
+                    particles->BurstBlood(GetCenterX(), m_Y + BodyHeight, 6, 120.0f);
+            }
+
+            float heave = 0.0f;
+
+            if (moveInput != 0.0f)
+            {
+                m_CrawlPhase += deltaTime * 8.0f;
+                heave = 0.25f + 0.75f * std::max(0.0f, std::sin(m_CrawlPhase));
+            }
+
+            m_VelocityX = m_WalkVel * CrawlSpeed * heave + m_KnockVelX;
+            MoveHorizontal(terrain, m_VelocityX * deltaTime);
+        }
+        else
+        {
+            m_Grounded = false;
+            MoveAirborne(terrain, deltaTime);
+        }
     }
 
     float Actor::RestFootX(int leg) const

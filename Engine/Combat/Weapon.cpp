@@ -348,13 +348,19 @@ namespace Atlas
 
         if (m_ReloadTimer > 0.0f)
         {
-            m_ReloadTimer -= deltaTime;
+            m_ReloadTimer -= deltaTime * m_ReloadRate;
 
             if (m_ReloadTimer <= 0.0f && m_Def)
                 m_Ammo = m_Def->ClipSize;
         }
 
         m_SweepPhase += deltaTime;
+    }
+
+    void Weapon::SetHandling(float spreadScale, float reloadRate)
+    {
+        m_SpreadScale = spreadScale;
+        m_ReloadRate = reloadRate;
     }
 
     void Weapon::GetSweptDirection(
@@ -550,7 +556,7 @@ namespace Atlas
         }
 
         const float spreadRadians =
-            m_Def->SpreadDegrees * 3.14159265f / 180.0f;
+            m_Def->SpreadDegrees * m_SpreadScale * 3.14159265f / 180.0f;
 
         const float baseAngle = std::atan2(dirY, dirX);
 

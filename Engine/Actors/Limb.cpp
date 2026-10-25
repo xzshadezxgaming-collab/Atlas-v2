@@ -474,6 +474,30 @@ namespace Atlas
         // through the floor; kneel on it instead.
         kneeY = std::min(kneeY, std::max(hipY, m_VisualFootY - 2.0f));
 
+        DrawShape(window, hipX, hipY, kneeX, kneeY, ankleX, ankleY,
+            pitch, bend, nearSide, style, tintR, tintG, tintB);
+    }
+
+    void Limb::DrawShape(
+        Window& window,
+        float hipX,
+        float hipY,
+        float kneeX,
+        float kneeY,
+        float ankleX,
+        float ankleY,
+        float pitch,
+        float bend,
+        bool nearSide,
+        const LegStyle& style,
+        unsigned char tintR,
+        unsigned char tintG,
+        unsigned char tintB)
+    {
+        const float facing = bend < 0.0f ? -1.0f : 1.0f;
+        const float cosA = std::cos(pitch);
+        const float sinA = std::sin(pitch);
+
         // Far leg is in shadow.
         const int shade = nearSide ? 0 : -26;
 
