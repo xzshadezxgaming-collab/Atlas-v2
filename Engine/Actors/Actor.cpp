@@ -186,6 +186,13 @@ namespace Atlas
         m_Legs[1].Configure(HipXFront, HipY, ThighLength, ShinLength);
     }
 
+    void Actor::ApplySubmersion(float keep, float maxSinkSpeed)
+    {
+        m_VelocityX *= keep;
+        m_KnockVelX *= keep;
+        m_VelocityY = std::min(m_VelocityY * keep, maxSinkSpeed);
+    }
+
     void Actor::SetBodyTexture(SDL_Texture* texture)
     {
         m_BodyTexture = texture;

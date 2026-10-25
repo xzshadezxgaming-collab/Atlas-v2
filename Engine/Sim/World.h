@@ -193,6 +193,7 @@ namespace Atlas
         void SpawnAlly(float x, const WeaponDef* weapon);
 
         void StepPlayer(int slot, const PlayerInput& input);
+        void ApplyTerrainHazards(Actor& actor);
         void ApplyDiggerLimbDamage(Actor& digger);
         Actor* NearestLivingPlayer(float x, float y);
 
@@ -219,6 +220,8 @@ namespace Atlas
 
         std::uint32_t m_NextActorId;
         std::uint64_t m_Tick;
+
+        float m_SteamSoundTimer;
 
         int m_Wave;
         float m_WaveTimer;

@@ -78,6 +78,7 @@ namespace Atlas
         m_Rng(1337u),
         m_NextActorId(1),
         m_Tick(0),
+        m_SteamSoundTimer(0.0f),
         m_Wave(0),
         m_WaveTimer(2.5f),
         m_BotsEnabled(true)
@@ -607,6 +608,47 @@ namespace Atlas
         }
     }
 
+    void World::ApplyTerrainHazards(Actor& actor)
+    {
+        if (!actor.IsAlive())
+            return;
+
+        const float cx = actor.GetCenterX();
+        const float feetY = actor.GetY() + actor.GetHeight() - 2.0f;
+
+        auto sample = [&](float x, float y)
+        {
+            return m_Terrain.GetMaterial(
+                static_cast<int>(std::floor(x)), static_cast<int>(std::floor(y)));
+        };
+
+        const Material atCenter = sample(cx, actor.GetCenterY());
+        const Material atFeet = sample(cx, feetY);
+        const Material atHead = sample(cx, actor.GetY() + 4.0f);
+
+        // Lava burns whatever touches it - fast.
+        if (atFeet == Material::Lava || atCenter == Material::Lava || atHead == Material::Lava)
+        {
+            if (m_Tick % 3u == 0u)
+                actor.TakeDamage(2, 0.0f, -30.0f);
+
+            if (m_Tick % 4u == 0u)
+            {
+                m_Particles.SpawnFire(
+                    cx + RandomUnit() * 6.0f, feetY - 4.0f,
+                    RandomUnit() * 20.0f, -60.0f - RandomUnit() * 30.0f);
+                m_Particles.SpawnSmoke(cx, feetY - 10.0f, RandomUnit() * 15.0f, -40.0f);
+            }
+        }
+
+        // Water: wading slows you, swimming keeps you from sinking fast.
+        const int wet =
+            (IsFluid(atFeet) ? 1 : 0) + (IsFluid(atCenter) ? 1 : 0) + (IsFluid(atHead) ? 1 : 0);
+
+        if (wet > 0)
+            actor.ApplySubmersion(wet >= 2 ? 0.93f : 0.97f, wet >= 2 ? 70.0f : 400.0f);
+    }
+
     void World::Step(const PlayerInput* inputs, int inputCount)
     {
         m_Events.clear();
@@ -683,6 +725,10 @@ namespace Atlas
                 m_Terrain,
                 FixedTimeStep);
         }
+
+        // --- Lava and water ---
+        for (int i = 0; i < actorCount; i++)
+            ApplyTerrainHazards(*actorPtrs[i]);
 
         // --- Grenades and particles ---
         m_Grenades.Update(
@@ -935,6 +981,22 @@ namespace Atlas
             else
             {
                 i++;
+            }
+        }
+
+        // --- Living terrain: sand falls, water and lava flow ---
+        m_Terrain.Simulate();
+
+        m_SteamSoundTimer -= FixedTimeStep;
+
+        for (const Terrain::DestroyedPixel& steam : m_Terrain.TakeReactions())
+        {
+            m_Particles.SpawnSmoke(steam.X, steam.Y, RandomUnit() * 20.0f, -50.0f);
+
+            if (m_SteamSoundTimer <= 0.0f)
+            {
+                EmitSound(Sfx::JetBurst, 0.3f);
+                m_SteamSoundTimer = 0.25f;
             }
         }
 

@@ -72,6 +72,10 @@ namespace Atlas
 
         bool IsCrouching() const;
 
+        // Wading or swimming: damps velocity by keep (0..1) and caps how
+        // fast the body sinks. Call after Update while submerged.
+        void ApplySubmersion(float keep, float maxSinkSpeed);
+
         void Draw(Window& window);
 
         // --- Aiming and weapon ---
