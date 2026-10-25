@@ -60,6 +60,7 @@ namespace Atlas
         int Height = 0;
         unsigned int Seed = 0;
         std::uint8_t Mode = 0; // GameMode
+        std::uint8_t Difficulty = 1;
         std::string WeaponsIni;
         std::uint32_t HistoryFrames = 0; // frames that will follow before live ones
     };

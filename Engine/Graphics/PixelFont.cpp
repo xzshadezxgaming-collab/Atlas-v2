@@ -68,6 +68,18 @@ namespace Atlas
             case '.': return Pack(0b000, 0b000, 0b000, 0b000, 0b010);
             case '%': return Pack(0b101, 0b001, 0b010, 0b100, 0b101);
             case '#': return Pack(0b101, 0b111, 0b101, 0b111, 0b101);
+            case '<': return Pack(0b001, 0b010, 0b100, 0b010, 0b001);
+            case '>': return Pack(0b100, 0b010, 0b001, 0b010, 0b100);
+            case '_': return Pack(0b000, 0b000, 0b000, 0b000, 0b111);
+            case ',': return Pack(0b000, 0b000, 0b000, 0b010, 0b100);
+            case '!': return Pack(0b010, 0b010, 0b010, 0b000, 0b010);
+            case '?': return Pack(0b110, 0b001, 0b010, 0b000, 0b010);
+            case '(': return Pack(0b010, 0b100, 0b100, 0b100, 0b010);
+            case ')': return Pack(0b010, 0b001, 0b001, 0b001, 0b010);
+            case '=': return Pack(0b000, 0b111, 0b000, 0b111, 0b000);
+            case '\'': return Pack(0b010, 0b010, 0b000, 0b000, 0b000);
+            case '[': return Pack(0b110, 0b100, 0b100, 0b100, 0b110);
+            case ']': return Pack(0b011, 0b001, 0b001, 0b001, 0b011);
 
             default: return 0;
             }

@@ -17,6 +17,7 @@
 #include "../Net/Protocol.h"
 #include "../Net/Session.h"
 #include "../Sim/World.h"
+#include "../UI/Ui.h"
 #include "../World/Terrain.h"
 
 #include <SDL3/SDL.h>
@@ -186,6 +187,8 @@ namespace Atlas
         {
             const std::string arg = argv[i];
 
+            SkipMenu = true;
+
             if (arg == "--host")
             {
                 Mode = LaunchMode::Host;
@@ -233,7 +236,7 @@ namespace Atlas
     {
         std::cout << "=================================\n";
         std::cout << "        ATLAS ENGINE\n";
-        std::cout << "           v0.5.0\n";
+        std::cout << "           v0.6.0\n";
         std::cout << "=================================\n\n";
 
         if (!m_Window.Create("Atlas", ViewWidth, ViewHeight))
@@ -250,6 +253,512 @@ namespace Atlas
         // the OS cursor on top of it would just be a second pointer.
         SDL_HideCursor();
 
+        m_Settings.Load();
+        ApplySettings();
+
+        MatchRequest request;
+        request.Mode = m_Options.Mode;
+        request.Address = m_Options.Address;
+        request.Port = m_Options.Port;
+        request.Survival = m_Options.Survival;
+
+        bool showMenu = !m_Options.SkipMenu;
+
+        for (;;)
+        {
+            if (showMenu && !RunMenu(request))
+                break;
+
+            const MatchExit exit = RunMatch(request);
+
+            if (exit == MatchExit::Quit)
+                break;
+
+            showMenu = exit == MatchExit::ToMenu;
+        }
+
+        m_Settings.Save();
+        Audio::Shutdown();
+    }
+
+    void Application::ApplySettings()
+    {
+        Audio::SetMasterVolume(m_Settings.Volume);
+        m_Window.SetFullscreen(m_Settings.Fullscreen);
+    }
+
+    bool Application::DrawSettings(Ui& ui, float x, float y)
+    {
+        const float w = 520.0f;
+        const float h = 34.0f;
+        const float gap = 42.0f;
+
+        ui.Text(x, y, 3.0f, "SETTINGS", 235, 238, 245);
+        y += 40.0f;
+
+        bool changed = false;
+
+        if (ui.Slider(x, y, w, h, "VOLUME", m_Settings.Volume))
+            changed = true;
+        y += gap;
+
+        int shake = m_Settings.ScreenShake ? 1 : 0;
+        if (ui.Choice(x, y, w, h, "SCREEN SHAKE", { "OFF", "ON" }, shake))
+        {
+            m_Settings.ScreenShake = shake == 1;
+            changed = true;
+        }
+        y += gap;
+
+        int fullscreen = m_Settings.Fullscreen ? 1 : 0;
+        if (ui.Choice(x, y, w, h, "FULLSCREEN", { "OFF", "ON" }, fullscreen))
+        {
+            m_Settings.Fullscreen = fullscreen == 1;
+            changed = true;
+        }
+        y += gap;
+
+        int fps = m_Settings.ShowFps ? 1 : 0;
+        if (ui.Choice(x, y, w, h, "SHOW FPS", { "OFF", "ON" }, fps))
+        {
+            m_Settings.ShowFps = fps == 1;
+            changed = true;
+        }
+        y += gap + 12.0f;
+
+        if (changed)
+            ApplySettings();
+
+        if (ui.Button(x, y, 200.0f, 36.0f, "BACK"))
+        {
+            m_Settings.Save();
+            return true;
+        }
+
+        return false;
+    }
+
+    namespace
+    {
+        // The menu pointer (the game hides the OS cursor).
+        void DrawPointer(Window& window, float x, float y)
+        {
+            for (int row = 0; row < 12; row++)
+            {
+                const float width = static_cast<float>(std::min(row, 8)) + 1.0f;
+                window.DrawScreenRect(x - 1.0f, y + static_cast<float>(row) - 1.0f,
+                    width + 2.0f, 1.0f, 10, 10, 14, 220);
+                window.DrawScreenRect(x, y + static_cast<float>(row), width, 1.0f,
+                    240, 242, 248, 255);
+            }
+        }
+
+        // A battle that plays itself behind the main menu: the two sides'
+        // AI fight over the brains while the camera drifts after them.
+        struct MenuBackdrop
+        {
+            std::unique_ptr<World> Sim;
+            Background Sky;
+            Texture2D BodyTexture;
+            float Accumulator = 0.0f;
+            float Age = 0.0f;
+            float CamX = 0.0f;
+            float CamY = 0.0f;
+
+            void Restart(SDL_Renderer* renderer, unsigned int seed)
+            {
+                Sim = std::make_unique<World>();
+
+                WorldConfig config;
+                config.Width = 2600;
+                config.Height = 1024;
+                config.Seed = seed;
+                config.Difficulty = 1;
+                Sim->Create(config);
+
+                Sim->GetTerrain().CreateTexture(renderer);
+                Sky.Create(seed);
+
+                const TeamBase& home = Sim->GetBase(0);
+
+                for (int i = 0; i < 5; i++)
+                    Sim->AddAlly(home.X + 180.0f + static_cast<float>(i) * 40.0f);
+
+                Sim->SetAllyOrder(AllyOrder::Attack);
+
+                Accumulator = 0.0f;
+                Age = 0.0f;
+                CamX = static_cast<float>(config.Width) * 0.5f - ViewWidth * 0.5f;
+                CamY = static_cast<float>(Sim->GetTerrain().GetSurfaceY(config.Width / 2)) - ViewHeight * 0.55f;
+            }
+
+            void Update(SDL_Renderer* renderer, float dt)
+            {
+                Age += dt;
+
+                // A fresh battle every couple of minutes, or once decided.
+                if (!Sim ||
+                    Age > 150.0f ||
+                    (Sim->GetOutcome() != MatchOutcome::InProgress && Age > 8.0f &&
+                        Sim->GetStats().EndTick + 120u * 6u < Sim->GetTick()))
+                {
+                    Restart(renderer, static_cast<unsigned int>(SDL_GetPerformanceCounter()));
+                }
+
+                Accumulator += std::min(dt, 0.1f);
+
+                while (Accumulator >= World::FixedTimeStep)
+                {
+                    Sim->Step(nullptr, 0);
+                    Accumulator -= World::FixedTimeStep;
+                }
+
+                Sim->GetTerrain().Update();
+
+                // Follow the middle of the fighting, slowly.
+                float sumX = 0.0f;
+                float sumY = 0.0f;
+                int count = 0;
+
+                for (const Ally& ally : Sim->GetAllies())
+                {
+                    sumX += ally.Body->GetCenterX();
+                    sumY += ally.Body->GetCenterY();
+                    count++;
+                }
+
+                for (const Enemy& enemy : Sim->GetEnemies())
+                {
+                    if (enemy.Attacker)
+                    {
+                        sumX += enemy.Body->GetCenterX();
+                        sumY += enemy.Body->GetCenterY();
+                        count++;
+                    }
+                }
+
+                if (count > 0)
+                {
+                    const float targetX = sumX / static_cast<float>(count) - ViewWidth * 0.62f;
+                    const float targetY = sumY / static_cast<float>(count) - ViewHeight * 0.5f;
+                    const float blend = 1.0f - std::exp(-dt * 0.35f);
+
+                    CamX += (targetX - CamX) * blend;
+                    CamY += (targetY - CamY) * blend;
+                }
+
+                const float maxX = static_cast<float>(Sim->GetTerrain().GetWidth() - ViewWidth);
+                const float maxY = static_cast<float>(Sim->GetTerrain().GetHeight() - ViewHeight);
+                CamX = std::clamp(CamX, 0.0f, maxX);
+                CamY = std::clamp(CamY, 0.0f, maxY);
+            }
+
+            void Draw(Window& window, Camera& camera, float time)
+            {
+                camera.SetPosition(CamX, CamY);
+                Sky.Draw(window, CamX, CamY, ViewWidth, ViewHeight, time);
+                Sim->GetTerrain().Draw(window);
+
+                auto drawBody = [&](Actor& body)
+                {
+                    if (!body.GetBodyTexture())
+                        body.SetBodyTexture(BodyTexture.GetTexture());
+
+                    if (body.IsAlive())
+                        body.Draw(window);
+                };
+
+                for (Enemy& enemy : Sim->GetEnemies())
+                    drawBody(*enemy.Body);
+
+                for (Ally& ally : Sim->GetAllies())
+                    drawBody(*ally.Body);
+
+                Sim->GetDeliveries().Draw(window);
+                Sim->GetParticles().Draw(window);
+            }
+        };
+    }
+
+    bool Application::RunMenu(MatchRequest& request)
+    {
+        enum class Screen { Main, Skirmish, Host, Join, Settings, Controls };
+
+        Screen screen = Screen::Main;
+
+        Camera camera;
+        m_Window.SetCamera(&camera);
+
+        Ui ui(m_Window);
+
+        MenuBackdrop backdrop;
+        backdrop.BodyTexture.Load(m_Window.GetRenderer(), ResolveAssetPath("Assets/Player.bmp"));
+        backdrop.Restart(m_Window.GetRenderer(), static_cast<unsigned int>(SDL_GetPerformanceCounter()));
+
+        // Text fields edit strings; they're parsed when a match starts.
+        std::string seedText = request.Seed != 0 ? std::to_string(request.Seed) : std::string();
+        std::string portText = std::to_string(request.Port);
+        std::string joinText = m_Settings.JoinAddress;
+
+        static const std::vector<std::string> Modes = { "BRAIN ASSAULT", "SURVIVAL" };
+        static const std::vector<std::string> Sizes = { "SMALL", "MEDIUM", "LARGE" };
+        static const std::vector<std::string> Difficulties = { "EASY", "NORMAL", "HARD" };
+
+        int modeIndex = request.Survival ? 1 : 0;
+        std::string error;
+
+        Uint64 last = SDL_GetPerformanceCounter();
+        float time = 0.0f;
+
+        for (;;)
+        {
+            if (!m_Window.PollEvents())
+                return false;
+
+            Input::Update();
+
+            const Uint64 now = SDL_GetPerformanceCounter();
+            const float dt = std::min(MaxFrameTime, static_cast<float>(
+                static_cast<double>(now - last) / static_cast<double>(SDL_GetPerformanceFrequency())));
+            last = now;
+            time += dt;
+
+            backdrop.Update(m_Window.GetRenderer(), dt);
+
+            if (Input::WasKeyPressed(SDL_SCANCODE_ESCAPE) && screen != Screen::Main)
+            {
+                if (screen == Screen::Settings)
+                    m_Settings.Save();
+
+                screen = Screen::Main;
+                error.clear();
+            }
+
+            m_Window.BeginFrame();
+            backdrop.Draw(m_Window, camera, time);
+
+            // Darken toward the left where the menu sits.
+            for (int band = 0; band < 16; band++)
+            {
+                const float x = static_cast<float>(band) * 40.0f;
+                m_Window.DrawScreenRect(x, 0.0f, 40.0f, static_cast<float>(ViewHeight),
+                    6, 7, 12, static_cast<Uint8>(200 - band * 12));
+            }
+
+            ui.Begin(time);
+
+            const float left = 80.0f;
+
+            ui.Text(left, 64.0f, 14.0f, "ATLAS", 240, 236, 225);
+            ui.Text(left + 4.0f, 150.0f, 2.0f, "DIG. FIGHT. PROTECT THE BRAIN.", 255, 150, 130);
+
+            const float y0 = 220.0f;
+            const float bw = 300.0f;
+            const float bh = 40.0f;
+            const float gap = 50.0f;
+
+            auto startMatch = [&](LaunchMode mode)
+            {
+                request.Mode = mode;
+                request.Survival = modeIndex == 1;
+
+                char* end = nullptr;
+                const unsigned long seed = seedText.empty() ? 0ul : std::strtoul(seedText.c_str(), &end, 10);
+                request.Seed = static_cast<unsigned int>(seed);
+
+                if (mode == LaunchMode::Host)
+                {
+                    const long port = std::strtol(portText.c_str(), &end, 10);
+
+                    if (port <= 0 || port > 65535)
+                    {
+                        error = "BAD PORT";
+                        return false;
+                    }
+
+                    request.Port = static_cast<std::uint16_t>(port);
+                }
+
+                return true;
+            };
+
+            bool start = false;
+
+            switch (screen)
+            {
+            case Screen::Main:
+            {
+                float y = y0;
+
+                if (ui.Button(left, y, bw, bh, "SKIRMISH")) screen = Screen::Skirmish;
+                y += gap;
+                if (ui.Button(left, y, bw, bh, "HOST GAME")) screen = Screen::Host;
+                y += gap;
+                if (ui.Button(left, y, bw, bh, "JOIN GAME")) screen = Screen::Join;
+                y += gap;
+                if (ui.Button(left, y, bw, bh, "SETTINGS")) screen = Screen::Settings;
+                y += gap;
+                if (ui.Button(left, y, bw, bh, "CONTROLS")) screen = Screen::Controls;
+                y += gap;
+
+                if (ui.Button(left, y, bw, bh, "QUIT"))
+                {
+                    ui.End();
+                    return false;
+                }
+
+                break;
+            }
+
+            case Screen::Skirmish:
+            case Screen::Host:
+            {
+                const bool host = screen == Screen::Host;
+                float y = y0 - 20.0f;
+                const float w = 520.0f;
+                const float h = 34.0f;
+
+                ui.Text(left, y, 3.0f, host ? "HOST A GAME" : "SKIRMISH", 235, 238, 245);
+                y += 40.0f;
+
+                ui.Choice(left, y, w, h, "MODE", Modes, modeIndex);
+                y += 42.0f;
+                ui.Choice(left, y, w, h, "MAP", Sizes, request.MapSize);
+                y += 42.0f;
+                ui.Choice(left, y, w, h, "DIFFICULTY", Difficulties, request.Difficulty);
+                y += 42.0f;
+                ui.TextField(left, y, w, h, "SEED (BLANK = RANDOM)", seedText, 10);
+                y += 42.0f;
+
+                if (host)
+                {
+                    ui.TextField(left, y, w, h, "PORT", portText, 5);
+                    y += 42.0f;
+                }
+
+                ui.Text(left, y + 4.0f, 1.5f, modeIndex == 0
+                    ? "DESTROY THE ENEMY BRAIN. KEEP YOURS ALIVE."
+                    : "HOLD OUT AGAINST ENDLESS WAVES.", 170, 176, 190);
+                y += 30.0f;
+
+                if (ui.Button(left, y, 240.0f, bh, host ? "HOST" : "START"))
+                    start = startMatch(host ? LaunchMode::Host : LaunchMode::Offline);
+
+                if (ui.Button(left + 260.0f, y, 200.0f, bh, "BACK"))
+                    screen = Screen::Main;
+
+                break;
+            }
+
+            case Screen::Join:
+            {
+                float y = y0 - 20.0f;
+
+                ui.Text(left, y, 3.0f, "JOIN A GAME", 235, 238, 245);
+                y += 40.0f;
+
+                ui.TextField(left, y, 520.0f, 34.0f, "ADDRESS[:PORT]", joinText, 60);
+                y += 42.0f;
+
+                ui.Text(left, y + 4.0f, 1.5f,
+                    "THE HOST PICKS THE MAP AND MODE. DEFAULT PORT " + std::to_string(DefaultPort) + ".",
+                    170, 176, 190);
+                y += 30.0f;
+
+                if (ui.Button(left, y, 240.0f, bh, "JOIN") && !joinText.empty())
+                {
+                    request.Mode = LaunchMode::Join;
+                    request.Address = joinText;
+                    request.Port = DefaultPort;
+
+                    const std::size_t colon = joinText.rfind(':');
+
+                    if (colon != std::string::npos)
+                    {
+                        const long port = std::strtol(joinText.c_str() + colon + 1, nullptr, 10);
+                        request.Address = joinText.substr(0, colon);
+
+                        if (port > 0 && port <= 65535)
+                            request.Port = static_cast<std::uint16_t>(port);
+                    }
+
+                    m_Settings.JoinAddress = joinText;
+                    m_Settings.Save();
+                    start = true;
+                }
+
+                if (ui.Button(left + 260.0f, y, 200.0f, bh, "BACK"))
+                    screen = Screen::Main;
+
+                break;
+            }
+
+            case Screen::Settings:
+                if (DrawSettings(ui, left, y0 - 20.0f))
+                    screen = Screen::Main;
+                break;
+
+            case Screen::Controls:
+            {
+                static const char* Rows[][2] =
+                {
+                    { "A / D", "MOVE" },
+                    { "SPACE", "JUMP" },
+                    { "W / SHIFT", "JETPACK" },
+                    { "S", "CROUCH" },
+                    { "MOUSE", "AIM" },
+                    { "LEFT MOUSE", "FIRE" },
+                    { "RIGHT MOUSE", "THROW GRENADE" },
+                    { "1-5 / WHEEL", "SMG, SHOTGUN, RIFLE, DIGGER, SHOVEL" },
+                    { "R", "RELOAD" },
+                    { "TAB (HOLD)", "BUY MENU: ORDER BODIES, WEAPONS, SUPPLIES" },
+                    { "Q", "SWITCH TO THE NEXT FRIENDLY BODY" },
+                    { "Z / X / C", "SQUAD: DEFEND / FOLLOW / ATTACK" },
+                    { "ESC", "PAUSE" },
+                };
+
+                float y = y0 - 20.0f;
+                ui.Text(left, y, 3.0f, "CONTROLS", 235, 238, 245);
+                y += 40.0f;
+
+                for (const auto& row : Rows)
+                {
+                    ui.Text(left, y, 2.0f, row[0], 255, 236, 170);
+                    ui.Text(left + 200.0f, y, 2.0f, row[1], 220, 224, 232);
+                    y += 22.0f;
+                }
+
+                y += 12.0f;
+
+                if (ui.Button(left, y, 200.0f, bh, "BACK"))
+                    screen = Screen::Main;
+
+                break;
+            }
+            }
+
+            if (!error.empty())
+                ui.Text(left, static_cast<float>(ViewHeight) - 60.0f, 2.0f, error, 255, 120, 100);
+
+            ui.Text(static_cast<float>(ViewWidth) - 16.0f, static_cast<float>(ViewHeight) - 20.0f, 1.5f,
+                "V0.6.0", 120, 124, 140, 2);
+
+            ui.End();
+
+            DrawPointer(m_Window, Input::GetMouseX(), Input::GetMouseY());
+            m_Window.EndFrame();
+
+            if (start)
+            {
+                m_Window.SetTextInput(false);
+                return true;
+            }
+        }
+    }
+
+
+    MatchExit Application::RunMatch(const MatchRequest& request)
+    {
         Camera camera;
         m_Window.SetCamera(&camera);
 
@@ -258,17 +767,19 @@ namespace Atlas
         sceneIni.Load(ResolveAssetPath("Assets/scene.ini"));
 
         WorldConfig worldConfig;
-        worldConfig.Mode = m_Options.Survival ? GameMode::Survival : GameMode::BrainAssault;
+        worldConfig.Mode = request.Survival ? GameMode::Survival : GameMode::BrainAssault;
+        worldConfig.Difficulty = request.Difficulty;
 
-        worldConfig.Width = std::max(
-            ViewWidth,
-            sceneIni.GetInt("World", "Width", DefaultWorldWidth));
-        worldConfig.Height = std::max(
-            ViewHeight,
-            sceneIni.GetInt("World", "Height", DefaultWorldHeight));
+        static constexpr int MapWidths[3] = { DefaultWorldWidth, 3072, 4096 };
+        static constexpr int MapHeights[3] = { DefaultWorldHeight, 1152, 1280 };
+        const int mapSize = std::clamp(request.MapSize, 0, 2);
 
-        unsigned int seed = static_cast<unsigned int>(
-            sceneIni.GetInt("World", "Seed", 0));
+        worldConfig.Width = std::max(ViewWidth, MapWidths[mapSize]);
+        worldConfig.Height = std::max(ViewHeight, MapHeights[mapSize]);
+
+        unsigned int seed = request.Seed != 0
+            ? request.Seed
+            : static_cast<unsigned int>(sceneIni.GetInt("World", "Seed", 0));
 
         if (seed == 0)
             seed = static_cast<unsigned int>(SDL_GetPerformanceCounter());
@@ -286,16 +797,16 @@ namespace Atlas
         // what the World reports.
         Session session;
 
-        switch (m_Options.Mode)
+        switch (request.Mode)
         {
         case LaunchMode::Offline:
             session.StartOffline(worldConfig, weaponsIni);
             break;
         case LaunchMode::Host:
-            session.StartHost(worldConfig, weaponsIni, m_Options.Port);
+            session.StartHost(worldConfig, weaponsIni, request.Port);
             break;
         case LaunchMode::Join:
-            session.StartClient(m_Options.Address, m_Options.Port);
+            session.StartClient(request.Address, request.Port);
             break;
         }
 
@@ -308,7 +819,12 @@ namespace Atlas
             while (session.GetState() != SessionState::Running)
             {
                 if (!m_Window.PollEvents())
-                    return;
+                    return MatchExit::Quit;
+
+                Input::Update();
+
+                if (Input::WasKeyPressed(SDL_SCANCODE_ESCAPE))
+                    return MatchExit::ToMenu;
 
                 const Uint64 now = SDL_GetPerformanceCounter();
                 const float dt = std::min(
@@ -323,7 +839,7 @@ namespace Atlas
                     failTimer += dt;
 
                     if (failTimer > 6.0f)
-                        return;
+                        return MatchExit::ToMenu;
                 }
                 else
                 {
@@ -358,7 +874,7 @@ namespace Atlas
             }
 
             if (!session.HasWorld())
-                return;
+                return MatchExit::ToMenu;
         }
 
         World& world = session.GetWorld();
@@ -369,7 +885,7 @@ namespace Atlas
         Terrain& terrain = world.GetTerrain();
 
         if (!terrain.CreateTexture(m_Window.GetRenderer()))
-            return;
+            return MatchExit::ToMenu;
 
         Background background;
         background.Create(seed);
@@ -743,6 +1259,17 @@ namespace Atlas
 
         bool running = true;
 
+        // Esc menu, its settings page, and the end-of-match screen.
+        Ui ui(m_Window);
+        bool paused = false;
+        bool pauseSettings = false;
+        float resultsTimer = 0.0f;
+        bool resultsHidden = false;
+        int shownFps = 0;
+
+        bool exitNow = false;
+        MatchExit exitTo = MatchExit::ToMenu;
+
         Uint64 lastCounter = SDL_GetPerformanceCounter();
         const Uint64 frequency = SDL_GetPerformanceFrequency();
 
@@ -776,6 +1303,7 @@ namespace Atlas
                     << " - " << particles.GetActiveCount() << " particles";
                 m_Window.SetTitle(title.str());
 
+                shownFps = frames;
                 fpsTimer = 0.0;
                 frames = 0;
             }
@@ -783,6 +1311,22 @@ namespace Atlas
             running = m_Window.PollEvents();
 
             Input::Update();
+
+            if (Input::WasKeyPressed(SDL_SCANCODE_ESCAPE))
+            {
+                if (pauseSettings)
+                    pauseSettings = false;
+                else
+                    paused = !paused;
+            }
+
+            if (world.GetOutcome() != MatchOutcome::InProgress)
+                resultsTimer += frameTime;
+
+            const bool resultsShown = resultsTimer > 3.0f && !resultsHidden;
+
+            // A menu is up: the game gets no input (and offline, no time).
+            const bool modal = paused || resultsShown;
 
             // Weapon switching (1-5 or scroll wheel) and reload are
             // edge-triggered per frame and latched for the next tick.
@@ -851,13 +1395,13 @@ namespace Atlas
                 mouseScreenY <= BotsButtonY + BotsButtonH;
 
             if (Input::WasMouseButtonPressed(SDL_BUTTON_LEFT) &&
-                botsButtonHovered)
+                botsButtonHovered && !modal)
             {
                 session.SetBotsEnabled(!world.IsBotsEnabled());
             }
 
             const bool menuHeld =
-                player.IsAlive() && Input::IsKeyDown(SDL_SCANCODE_TAB);
+                player.IsAlive() && !modal && Input::IsKeyDown(SDL_SCANCODE_TAB);
 
             if (!menuHeld)
                 buyPanelOpen = false;
@@ -1123,10 +1667,23 @@ namespace Atlas
             input.SwitchBodyPressed = switchQueued;
             input.AllyOrder = static_cast<std::int8_t>(allyOrderQueued);
 
+            if (modal)
+            {
+                const float aimX = input.AimX;
+                const float aimY = input.AimY;
+                input = PlayerInput{};
+                input.AimX = aimX;
+                input.AimY = aimY;
+                orderQueued = false;
+            }
+
             // Fixed-timestep simulation, run by the session. Hit-stop
             // holds back the frame's sim time, freezing the world for a
             // beat while rendering carries on.
             float simTime = frameTime;
+
+            if (paused && request.Mode == LaunchMode::Offline)
+                simTime = 0.0f;
 
             if (hitStop > 0.0f)
             {
@@ -1227,7 +1784,7 @@ namespace Atlas
                 camSmoothX += (targetX - camSmoothX) * blend;
                 camSmoothY += (targetY - camSmoothY) * blend;
 
-                const float amp = trauma * trauma * 26.0f;
+                const float amp = m_Settings.ScreenShake ? trauma * trauma * 26.0f : 0.0f;
 
                 const float shakeX = amp *
                     (0.6f * std::sin(timeSeconds * 41.0f) +
@@ -2122,7 +2679,7 @@ namespace Atlas
                 }
                 else if (session.GetRole() == SessionRole::Host)
                 {
-                    status = "HOST :" + std::to_string(m_Options.Port) + " - " +
+                    status = "HOST :" + std::to_string(request.Port) + " - " +
                         std::to_string(world.GetPlayerCount()) + " PLAYERS";
                 }
                 else
@@ -2269,9 +2826,149 @@ namespace Atlas
                     240, 240, 240, 220);
             }
 
+            if (m_Settings.ShowFps)
+            {
+                PixelFont::Draw(m_Window, 12.0f, static_cast<float>(ViewHeight) - 18.0f, 1.5f,
+                    std::to_string(shownFps) + " FPS", 200, 210, 220);
+            }
+
+            // --- Pause menu / end-of-match screen ---
+            if (modal)
+            {
+                ui.Begin(timeSeconds);
+
+                m_Window.DrawScreenRect(0.0f, 0.0f,
+                    static_cast<float>(ViewWidth), static_cast<float>(ViewHeight), 4, 5, 10, 150);
+
+                const float panelW = 600.0f;
+                const float panelX = (static_cast<float>(ViewWidth) - panelW) * 0.5f;
+                const bool offline = request.Mode == LaunchMode::Offline;
+
+                if (pauseSettings)
+                {
+                    ui.Panel(panelX, 150.0f, panelW, 330.0f);
+
+                    if (DrawSettings(ui, panelX + 40.0f, 180.0f))
+                        pauseSettings = false;
+                }
+                else if (paused)
+                {
+                    ui.Panel(panelX, 160.0f, panelW, 360.0f);
+                    ui.Text(static_cast<float>(ViewWidth) * 0.5f, 190.0f, 5.0f, "PAUSED", 240, 236, 225, 1);
+
+                    if (!offline)
+                    {
+                        ui.Text(static_cast<float>(ViewWidth) * 0.5f, 225.0f, 1.5f,
+                            "THE MATCH GOES ON WITHOUT YOU", 255, 170, 150, 1);
+                    }
+
+                    const float bx = static_cast<float>(ViewWidth) * 0.5f - 150.0f;
+                    float by = 250.0f;
+
+                    if (ui.Button(bx, by, 300.0f, 38.0f, "RESUME"))
+                        paused = false;
+                    by += 46.0f;
+
+                    if (ui.Button(bx, by, 300.0f, 38.0f, "SETTINGS"))
+                        pauseSettings = true;
+                    by += 46.0f;
+
+                    if (ui.Button(bx, by, 300.0f, 38.0f, "RESTART", offline))
+                    {
+                        exitNow = true;
+                        exitTo = MatchExit::Restart;
+                    }
+                    by += 46.0f;
+
+                    if (ui.Button(bx, by, 300.0f, 38.0f, "MAIN MENU"))
+                    {
+                        exitNow = true;
+                        exitTo = MatchExit::ToMenu;
+                    }
+                    by += 46.0f;
+
+                    if (ui.Button(bx, by, 300.0f, 38.0f, "QUIT GAME"))
+                    {
+                        exitNow = true;
+                        exitTo = MatchExit::Quit;
+                    }
+                }
+                else
+                {
+                    const bool won = world.GetOutcome() == MatchOutcome::Victory;
+                    const MatchStats& stats = world.GetStats();
+
+                    ui.Panel(panelX, 140.0f, panelW, 400.0f);
+                    ui.Text(static_cast<float>(ViewWidth) * 0.5f, 170.0f, 8.0f,
+                        won ? "VICTORY" : "DEFEAT",
+                        won ? 140 : 255, won ? 235 : 90, won ? 150 : 80, 1);
+                    ui.Text(static_cast<float>(ViewWidth) * 0.5f, 220.0f, 2.0f,
+                        won ? "THE ENEMY BRAIN IS DESTROYED" : "YOUR BRAIN IS DESTROYED",
+                        220, 224, 232, 1);
+
+                    const int seconds = static_cast<int>(stats.EndTick / 120u);
+                    const std::string clock = std::to_string(seconds / 60) + ":" +
+                        (seconds % 60 < 10 ? "0" : "") + std::to_string(seconds % 60);
+
+                    const std::pair<std::string, std::string> rows[] =
+                    {
+                        { "MATCH TIME", clock },
+                        { "ENEMIES KILLED", std::to_string(stats.EnemiesKilled) },
+                        { "BODIES LOST", std::to_string(stats.BodiesLost) },
+                        { "BODIES ORDERED", std::to_string(stats.BodiesOrdered) },
+                        { "GOLD MINED", std::to_string(stats.GoldMined) },
+                    };
+
+                    float ry = 262.0f;
+
+                    for (const auto& row : rows)
+                    {
+                        ui.Text(panelX + 140.0f, ry, 2.0f, row.first, 170, 176, 190);
+                        ui.Text(panelX + panelW - 140.0f, ry, 2.0f, row.second, 255, 236, 170, 2);
+                        ry += 26.0f;
+                    }
+
+                    const float by = 410.0f;
+
+                    if (offline && ui.Button(panelX + 40.0f, by, 160.0f, 38.0f, "PLAY AGAIN"))
+                    {
+                        exitNow = true;
+                        exitTo = MatchExit::Restart;
+                    }
+
+                    if (ui.Button(panelX + 220.0f, by, 160.0f, 38.0f, "MAIN MENU"))
+                    {
+                        exitNow = true;
+                        exitTo = MatchExit::ToMenu;
+                    }
+
+                    if (ui.Button(panelX + 400.0f, by, 160.0f, 38.0f, "WATCH"))
+                        resultsHidden = true;
+
+                    ui.Text(static_cast<float>(ViewWidth) * 0.5f, by + 60.0f, 1.5f,
+                        "ESC FOR THE MENU", 140, 144, 160, 1);
+                }
+
+                ui.End();
+
+                // The menu pointer over the crosshair.
+                for (int row = 0; row < 12; row++)
+                {
+                    const float width = static_cast<float>(std::min(row, 8)) + 1.0f;
+                    m_Window.DrawScreenRect(Input::GetMouseX() - 1.0f, Input::GetMouseY() + static_cast<float>(row) - 1.0f,
+                        width + 2.0f, 1.0f, 10, 10, 14, 220);
+                    m_Window.DrawScreenRect(Input::GetMouseX(), Input::GetMouseY() + static_cast<float>(row),
+                        width, 1.0f, 240, 242, 248, 255);
+                }
+            }
+
             m_Window.EndFrame();
+
+            if (exitNow)
+                return exitTo;
         }
 
-        Audio::Shutdown();
+        return MatchExit::Quit;
     }
 }
+

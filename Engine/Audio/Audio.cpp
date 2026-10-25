@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -14,6 +15,7 @@ namespace Atlas
         constexpr int StreamPoolSize = 10;
 
         bool g_Available = false;
+        float g_MasterVolume = 1.0f;
         SDL_AudioStream* g_Streams[StreamPoolSize] = {};
         std::vector<float> g_Buffers[static_cast<int>(Sfx::Count)];
 
@@ -329,9 +331,19 @@ namespace Atlas
         g_Available = false;
     }
 
+    void Audio::SetMasterVolume(float volume)
+    {
+        g_MasterVolume = std::clamp(volume, 0.0f, 1.0f);
+    }
+
     void Audio::Play(Sfx sfx, float volume)
     {
         if (!g_Available)
+            return;
+
+        volume *= g_MasterVolume;
+
+        if (volume <= 0.001f)
             return;
 
         const std::vector<float>* bufferPtr =

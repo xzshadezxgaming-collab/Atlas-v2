@@ -4,7 +4,14 @@ A 2D game engine inspired by the technology behind **Cortex Command**:
 fully destructible per-pixel terrain, pixel-level physics, and
 material-driven gameplay — rebuilt on modern C++ and SDL3.
 
-## Current features (v0.5.0)
+## Current features (v0.6.0)
+
+- **Menus and screens** — a main menu over a live AI battle, skirmish
+  and host setup (mode, map size, difficulty, seed, port), a join
+  screen, settings (volume, screen shake, fullscreen, FPS counter,
+  saved between runs), a controls page, an Esc pause menu (restart,
+  settings, back to menu), and a victory/defeat screen with match
+  stats. `--host`, `--join` and `--survival` still jump straight in.
 
 - **Brain assault** — the default match, Cortex Command's core loop.
   Each side has a brain in a glass jar inside a concrete bunker at its
@@ -166,6 +173,7 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
 | Tab (hold) | Open the buy menu |
 | Q | Switch to the next friendly body |
 | Z / X / C | Squad order: defend / follow / attack |
+| Esc | Pause menu |
 
 ## Multiplayer
 
@@ -286,6 +294,7 @@ Debug with AddressSanitizer + UBSan) and on Windows with MSVC.
   lava/water reactions, caves and pools, bedrock
 - [x] **Core loop**: brains and bunkers, enemy drop ships and attack
   waves, body switching, squad orders, team funds, victory and defeat
+- [x] **Menus**: main menu, match setup, settings, pause, results
 - [ ] **Networking, next**: client-side prediction (or rollback) to hide
   input delay, snapshot-based join for long matches, reconnects,
   cross-platform float determinism

@@ -103,6 +103,7 @@ namespace Atlas
         m_Outcome(MatchOutcome::InProgress),
         m_TeamGold{},
         m_BrainAlarmTimer(0.0f),
+        m_Difficulty(1),
         m_AllyOrder(AllyOrder::Defend),
         m_AllyOrderPlayer(0)
     {
@@ -143,6 +144,7 @@ namespace Atlas
         m_AllyWeapon = FindWeapon("SMG");
 
         m_Mode = config.Mode;
+        m_Difficulty = std::clamp(config.Difficulty, 0, 2);
 
         if (m_Mode == GameMode::BrainAssault)
         {
@@ -151,7 +153,8 @@ namespace Atlas
             BuildBase(0, std::floor(width * 0.12f));
             BuildBase(1, std::floor(width * 0.88f));
 
-            m_TeamGold[0] = StartingGold;
+            static constexpr int GoldByDifficulty[3] = { 500, StartingGold, 200 };
+            m_TeamGold[0] = GoldByDifficulty[m_Difficulty];
             m_TeamGold[1] = StartingGold;
 
             // A few guards at the enemy base from the start.
@@ -160,7 +163,7 @@ namespace Atlas
             SpawnEnemy(enemyBase.X - 190.0f, false);
             SpawnEnemy(enemyBase.X + 60.0f, false);
 
-            m_WaveTimer = FirstEnemyDropTime;
+            m_WaveTimer = FirstEnemyDropTime + (m_Difficulty == 0 ? 10.0f : 0.0f);
         }
 
         return true;
@@ -397,6 +400,7 @@ namespace Atlas
             if (m_Outcome == MatchOutcome::InProgress)
             {
                 m_Outcome = team == 0 ? MatchOutcome::Defeat : MatchOutcome::Victory;
+                m_Stats.EndTick = m_Tick;
 
                 SimEvent over;
                 over.Type = SimEventType::MatchOver;
@@ -817,6 +821,8 @@ namespace Atlas
 
         for (const WeaponDef* weapon : order.Bodies)
             queueDelivery(DeliveryKind::Reinforcement, weapon);
+
+        m_Stats.BodiesOrdered += static_cast<int>(order.Bodies.size());
 
         for (const WeaponDef* weapon : order.LooseWeapons)
             queueDelivery(DeliveryKind::WeaponPickup, weapon);
@@ -1341,6 +1347,7 @@ namespace Atlas
         {
             if (!player.Body->IsAlive() && !player.Gibbed)
             {
+                m_Stats.BodiesLost++;
                 player.Body->Gib(m_Particles);
                 EmitSound(Sfx::Gib);
                 player.RespawnTimer = RespawnTime;
@@ -1358,6 +1365,7 @@ namespace Atlas
                 EmitSound(Sfx::Gib, 0.8f);
 
                 m_TeamGold[0] += KillBounty;
+                m_Stats.EnemiesKilled++;
 
                 SimEvent kill;
                 kill.Type = SimEventType::EnemyKilled;
@@ -1384,6 +1392,7 @@ namespace Atlas
         {
             if (!m_Allies[i].Body->IsAlive())
             {
+                m_Stats.BodiesLost++;
                 m_Allies[i].Body->Gib(m_Particles);
                 EmitSound(Sfx::Gib, 0.8f);
 
@@ -1460,12 +1469,17 @@ namespace Atlas
                 m_Wave++;
 
                 const int room = MaxEnemies - static_cast<int>(m_Enemies.size());
-                const int count = std::min(room, std::min(2 + m_Wave / 2, 6));
+                const int size = 2 + m_Wave / 2 + (m_Difficulty - 1);
+                const int count = std::min(room, std::clamp(size, 1, 4 + m_Difficulty * 2));
 
                 if (count > 0)
                     SpawnEnemyDrop(count);
 
-                m_WaveTimer = std::max(18.0f, 34.0f - static_cast<float>(m_Wave));
+                static constexpr float Interval[3] = { 40.0f, 34.0f, 28.0f };
+                static constexpr float MinInterval[3] = { 26.0f, 18.0f, 13.0f };
+
+                m_WaveTimer = std::max(MinInterval[m_Difficulty],
+                    Interval[m_Difficulty] - static_cast<float>(m_Wave));
 
                 SimEvent wave;
                 wave.Type = SimEventType::WaveStarted;
@@ -1592,6 +1606,16 @@ namespace Atlas
         m_Tick++;
     }
 
+    void World::AddAlly(float x, const WeaponDef* weapon)
+    {
+        SpawnAlly(x, weapon);
+    }
+
+    void World::SetAllyOrder(AllyOrder order)
+    {
+        m_AllyOrder = order;
+    }
+
     void World::SetBotsEnabled(bool enabled)
     {
         m_BotsEnabled = enabled;
@@ -1617,6 +1641,9 @@ namespace Atlas
         h.Int(static_cast<std::int64_t>(m_Outcome));
         h.Int(static_cast<std::int64_t>(m_AllyOrder));
         h.Int(m_AllyOrderPlayer);
+        h.Int(m_Difficulty);
+        h.Int(m_Stats.EnemiesKilled);
+        h.Int(m_Stats.BodiesLost);
 
         for (int team = 0; team < TeamCount; team++)
         {
@@ -1754,6 +1781,8 @@ namespace Atlas
     const TeamBase& World::GetBase(int team) const { return m_Bases[std::clamp(team, 0, TeamCount - 1)]; }
     float World::GetWaveTimer() const { return m_WaveTimer; }
     AllyOrder World::GetAllyOrder() const { return m_AllyOrder; }
+    const MatchStats& World::GetStats() const { return m_Stats; }
+    int World::GetDifficulty() const { return m_Difficulty; }
 
     int World::GetTeamGold(int team) const
     {
@@ -1773,6 +1802,9 @@ namespace Atlas
             return;
 
         m_TeamGold[std::clamp(body.GetTeam(), 0, TeamCount - 1)] += gold;
+
+        if (body.GetTeam() == 0 && gold > 0)
+            m_Stats.GoldMined += gold;
         body.AddGold(-gold);
     }
 

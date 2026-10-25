@@ -80,6 +80,9 @@ namespace Atlas
 
             if (event.type == SDL_EVENT_MOUSE_WHEEL)
                 Input::AccumulateWheel(event.wheel.y);
+
+            if (event.type == SDL_EVENT_TEXT_INPUT)
+                Input::AppendText(event.text.text);
         }
 
         return true;
@@ -94,6 +97,23 @@ namespace Atlas
     void Window::EndFrame()
     {
         SDL_RenderPresent(m_Renderer);
+    }
+
+    void Window::SetFullscreen(bool fullscreen)
+    {
+        if (m_Window)
+            SDL_SetWindowFullscreen(m_Window, fullscreen);
+    }
+
+    void Window::SetTextInput(bool enabled)
+    {
+        if (!m_Window)
+            return;
+
+        if (enabled && !SDL_TextInputActive(m_Window))
+            SDL_StartTextInput(m_Window);
+        else if (!enabled && SDL_TextInputActive(m_Window))
+            SDL_StopTextInput(m_Window);
     }
 
     void Window::SetTitle(const std::string& title)

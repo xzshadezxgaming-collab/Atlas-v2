@@ -96,4 +96,19 @@ namespace Atlas
 
         return steps;
     }
+
+    std::string Input::s_Text;
+
+    void Input::AppendText(const char* text)
+    {
+        if (text)
+            s_Text += text;
+    }
+
+    std::string Input::ConsumeText()
+    {
+        std::string text;
+        text.swap(s_Text);
+        return text;
+    }
 }

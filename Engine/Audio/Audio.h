@@ -30,6 +30,9 @@ namespace Atlas
 
         static void Play(Sfx sfx, float volume = 1.0f);
 
+        // Scales every sound played from now on (0..1).
+        static void SetMasterVolume(float volume);
+
         static bool IsAvailable();
     };
 }
