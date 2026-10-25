@@ -11,6 +11,7 @@ namespace Atlas
         float Volume = 0.8f;      // 0..1, every sound
         float MusicVolume = 0.6f; // 0..1, on top of Volume
         int ScreenShake = 1;      // 0 off, 1 subtle, 2 strong
+        bool Lighting = true;     // dynamic lights and dark caves
         bool Fullscreen = false;
         bool ShowFps = false;
 

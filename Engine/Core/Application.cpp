@@ -48,6 +48,99 @@ namespace Atlas
         // runs as fast as it can.
         constexpr float MaxFrameTime = 0.25f;
 
+        // Lights the world drawn so far: open sky is a cool moonlit
+        // ambient, underground fades to a dim cave ambient, molten rock
+        // glows, and the given body carries a soft lamp so the player is
+        // never lost in the dark. Lights from glows (muzzle flashes,
+        // fire, explosions) were collected while drawing.
+        void LightScene(Window& window, const Terrain& terrain,
+            float cameraX, float cameraY, const Actor* lampHolder)
+        {
+            if (!window.IsLightingEnabled())
+                return;
+
+            constexpr float ColumnWidth = 8.0f;
+            constexpr int Columns = ViewWidth / 8 + 4;
+
+            const float firstX = std::floor(cameraX / ColumnWidth) * ColumnWidth - ColumnWidth * 2.0f;
+            float surface[Columns];
+
+            for (int i = 0; i < Columns; i++)
+            {
+                const int x = std::clamp(
+                    static_cast<int>(firstX + (static_cast<float>(i) + 0.5f) * ColumnWidth),
+                    0, terrain.GetWidth() - 1);
+
+                surface[i] = static_cast<float>(terrain.GetSurfaceY(x));
+            }
+
+            // Skylight spills sideways a little under overhangs and
+            // roofs: take the highest opening nearby, then soften, so a
+            // bunker wall or a shaft doesn't cut a hard edge in the light.
+            {
+                float spread[Columns];
+
+                for (int i = 0; i < Columns; i++)
+                {
+                    float best = surface[i];
+
+                    for (int k = -3; k <= 3; k++)
+                    {
+                        const int j = std::clamp(i + k, 0, Columns - 1);
+                        best = std::min(best, surface[j] + static_cast<float>(std::abs(k)) * 18.0f);
+                    }
+
+                    spread[i] = best;
+                }
+
+                for (int i = 0; i < Columns; i++)
+                {
+                    float sum = 0.0f;
+
+                    for (int k = -2; k <= 2; k++)
+                        sum += spread[std::clamp(i + k, 0, Columns - 1)];
+
+                    surface[i] = sum / 5.0f + 6.0f;
+                }
+            }
+
+            // Molten rock lights its surroundings; sampled coarsely.
+            constexpr int LavaStep = 10;
+            const int x0 = std::max(0, static_cast<int>(cameraX) - 40);
+            const int y0 = std::max(0, static_cast<int>(cameraY) - 40);
+            const int x1 = std::min(terrain.GetWidth(), static_cast<int>(cameraX) + ViewWidth + 40);
+            const int y1 = std::min(terrain.GetHeight(), static_cast<int>(cameraY) + ViewHeight + 40);
+
+            for (int y = y0 - y0 % LavaStep; y < y1; y += LavaStep)
+            {
+                for (int x = x0 - x0 % LavaStep; x < x1; x += LavaStep)
+                {
+                    if (terrain.GetMaterial(x, y) == Material::Lava)
+                    {
+                        window.AddLight(static_cast<float>(x), static_cast<float>(y),
+                            46.0f, 255, 120, 40, 0.45f);
+                    }
+                }
+            }
+
+            if (lampHolder && lampHolder->IsAlive())
+            {
+                window.AddLight(lampHolder->GetCenterX(), lampHolder->GetCenterY() - 4.0f,
+                    190.0f, 255, 236, 205, 0.55f);
+            }
+
+            AmbientLight ambient;
+            ambient.SkyAmbient = { 196, 198, 226, 255 };
+            ambient.CaveAmbient = { 74, 76, 100, 255 };
+            ambient.SurfaceY = surface;
+            ambient.Columns = Columns;
+            ambient.ColumnWidth = ColumnWidth;
+            ambient.FirstColumnX = firstX;
+            ambient.Fade = 140.0f;
+
+            window.ApplyLighting(ambient);
+        }
+
         // Bots-spawn toggle button (screen space, top right).
         constexpr float BotsButtonW = 108.0f;
         constexpr float BotsButtonH = 20.0f;
@@ -239,7 +332,7 @@ namespace Atlas
     {
         std::cout << "=================================\n";
         std::cout << "        ATLAS ENGINE\n";
-        std::cout << "           v0.9.0\n";
+        std::cout << "           v0.10.0\n";
         std::cout << "=================================\n\n";
 
         if (!m_Window.Create("Atlas", ViewWidth, ViewHeight))
@@ -311,6 +404,7 @@ namespace Atlas
         Audio::SetMasterVolume(m_Settings.Volume);
         Audio::SetMusicVolume(m_Settings.MusicVolume);
         m_Window.SetFullscreen(m_Settings.Fullscreen);
+        m_Window.SetLightingEnabled(m_Settings.Lighting);
     }
 
     bool Application::DrawSettings(Ui& ui, float x, float y)
@@ -336,6 +430,14 @@ namespace Atlas
         if (ui.Choice(x, y, w, h, "SCREEN SHAKE", { "OFF", "SUBTLE", "STRONG" }, shake))
         {
             m_Settings.ScreenShake = shake;
+            changed = true;
+        }
+        y += gap;
+
+        int lighting = m_Settings.Lighting ? 1 : 0;
+        if (ui.Choice(x, y, w, h, "LIGHTING", { "OFF", "ON" }, lighting))
+        {
+            m_Settings.Lighting = lighting == 1;
             changed = true;
         }
         y += gap;
@@ -485,7 +587,7 @@ namespace Atlas
 
             void Draw(Window& window, Camera& camera, float time)
             {
-                camera.SetPosition(CamX, CamY);
+                camera.SetPosition(std::round(CamX), std::round(CamY));
                 Sky.Draw(window, CamX, CamY, ViewWidth, ViewHeight, time);
                 Sim->GetTerrain().Draw(window);
 
@@ -506,6 +608,8 @@ namespace Atlas
 
                 Sim->GetDeliveries().Draw(window);
                 Sim->GetParticles().Draw(window);
+
+                LightScene(window, Sim->GetTerrain(), camera.GetX(), camera.GetY(), nullptr);
             }
         };
     }
@@ -877,7 +981,7 @@ namespace Atlas
                 ui.Text(left, static_cast<float>(ViewHeight) - 60.0f, 2.0f, error, 255, 120, 100);
 
             ui.Text(static_cast<float>(ViewWidth) - 16.0f, static_cast<float>(ViewHeight) - 20.0f, 1.5f,
-                "V0.9.0", 120, 124, 140, 2);
+                "V0.10.0", 120, 124, 140, 2);
 
             ui.End();
 
@@ -1029,7 +1133,6 @@ namespace Atlas
         Background background;
         background.Create(seed);
 
-        constexpr int LoadoutSize = World::LoadoutSize;
         constexpr int MaxAllies = World::MaxAllies;
         constexpr float RespawnTime = 3.0f;
 
@@ -2385,6 +2488,10 @@ namespace Atlas
             if (player.IsAlive())
                 player.Draw(m_Window);
 
+            particles.Draw(m_Window);
+
+            LightScene(m_Window, terrain, camera.GetX(), camera.GetY(), &player);
+
             // Name tags over the other players.
             for (int slot = 0; slot < world.GetPlayerCount(); slot++)
             {
@@ -2420,7 +2527,6 @@ namespace Atlas
                 }
             }
 
-            particles.Draw(m_Window);
 
             // --- Floating combat text (damage numbers, gold, banners) ---
             for (const Floater& floater : floaters)
@@ -2802,20 +2908,10 @@ namespace Atlas
                 }
             }
 
-            // --- Screen-edge vignette (always) + damage feedback ---
+            // --- Post: vignette, plus a red pulse on damage and at low
+            // health ---
             {
-                const float edge = 90.0f;
-
-                m_Window.DrawScreenRect(0.0f, 0.0f,
-                    static_cast<float>(ViewWidth), edge * 0.5f, 0, 0, 8, 46);
-                m_Window.DrawScreenRect(0.0f,
-                    static_cast<float>(ViewHeight) - edge * 0.5f,
-                    static_cast<float>(ViewWidth), edge * 0.5f, 0, 0, 8, 46);
-                m_Window.DrawScreenRect(0.0f, 0.0f,
-                    edge * 0.5f, static_cast<float>(ViewHeight), 0, 0, 8, 46);
-                m_Window.DrawScreenRect(
-                    static_cast<float>(ViewWidth) - edge * 0.5f, 0.0f,
-                    edge * 0.5f, static_cast<float>(ViewHeight), 0, 0, 8, 46);
+                m_Window.DrawVignette(4, 4, 14, 150);
 
                 float redPulse = hurtVignette / 0.6f;
 
@@ -2824,30 +2920,22 @@ namespace Atlas
                 {
                     redPulse = std::max(
                         redPulse,
-                        0.25f + 0.2f * std::sin(timeSeconds * 6.0f));
+                        0.3f + 0.25f * std::sin(timeSeconds * 6.0f));
                 }
 
                 if (redPulse > 0.0f)
                 {
-                    const Uint8 alpha = static_cast<Uint8>(90.0f * redPulse);
-                    const float band = 70.0f;
-
-                    m_Window.DrawScreenRect(0.0f, 0.0f,
-                        static_cast<float>(ViewWidth), band, 160, 20, 20, alpha);
-                    m_Window.DrawScreenRect(0.0f,
-                        static_cast<float>(ViewHeight) - band,
-                        static_cast<float>(ViewWidth), band, 160, 20, 20, alpha);
-                    m_Window.DrawScreenRect(0.0f, 0.0f,
-                        band, static_cast<float>(ViewHeight), 160, 20, 20, alpha);
-                    m_Window.DrawScreenRect(
-                        static_cast<float>(ViewWidth) - band, 0.0f,
-                        band, static_cast<float>(ViewHeight), 160, 20, 20, alpha);
+                    m_Window.DrawVignette(190, 20, 24,
+                        static_cast<Uint8>(std::min(1.0f, redPulse) * 200.0f));
                 }
             }
 
             // --- HUD ---
-            const float barWidth = 190.0f;
-            const float barX = 32.0f;
+            //
+            // Vitals bottom left, weapon and items beside them, gold top
+            // left, the match state top right; dark translucent panels
+            // with a soft gradient and rounded corners, crisp 5x7 labels
+            // and chunky numerals for the numbers that matter.
 
             // Screen-space text with a soft drop shadow so it stays
             // readable over any scene.
@@ -2856,244 +2944,220 @@ namespace Atlas
                 const std::string& text,
                 Uint8 r, Uint8 g, Uint8 b)
             {
+                const float shadow = scale < 2.0f ? 1.0f : scale * 0.5f;
+
                 PixelFont::Draw(m_Window,
-                    x + scale * 0.5f, y + scale * 0.5f,
-                    scale, text, 10, 10, 14, 150);
+                    x + shadow, y + shadow,
+                    scale, text, 6, 6, 10, 170);
                 PixelFont::Draw(m_Window, x, y, scale, text, r, g, b);
             };
 
-            // Backing panel with a subtle border and a highlight line.
-            m_Window.DrawScreenRect(8.0f, 8.0f, barWidth + 58.0f, 92.0f,
-                120, 126, 148, 60);
-            m_Window.DrawScreenRect(9.0f, 9.0f, barWidth + 56.0f, 90.0f,
-                12, 12, 18, 195);
-            m_Window.DrawScreenRect(9.0f, 9.0f, barWidth + 56.0f, 1.0f,
-                170, 176, 198, 70);
+            // A rect with its four corner pixels cut.
+            auto roundRect = [&](float x, float y, float w, float h,
+                Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+            {
+                m_Window.DrawScreenRect(x + 1.0f, y, w - 2.0f, h, r, g, b, a);
+                m_Window.DrawScreenRect(x, y + 1.0f, 1.0f, h - 2.0f, r, g, b, a);
+                m_Window.DrawScreenRect(x + w - 1.0f, y + 1.0f, 1.0f, h - 2.0f, r, g, b, a);
+            };
 
+            auto panel = [&](float x, float y, float w, float h)
+            {
+                roundRect(x - 1.0f, y - 1.0f, w + 2.0f, h + 2.0f, 150, 160, 200, 34);
+                m_Window.DrawGradientScreen(x, y, w, h,
+                    { 22, 24, 36, 205 }, { 10, 11, 18, 225 });
+                m_Window.DrawScreenRect(x + 1.0f, y, w - 2.0f, 1.0f, 200, 210, 240, 40);
+            };
+
+            // A bar with a gradient fill, a lingering damage ghost and
+            // optional segment ticks.
             auto drawBar = [&](
-                float y,
+                float x, float y, float w, float h,
                 float fill,
                 Uint8 r, Uint8 g, Uint8 b,
-                float ghost = -1.0f)
+                float ghost = -1.0f,
+                int segments = 0)
             {
-                // Border and inset trough.
-                m_Window.DrawScreenRect(barX - 1.0f, y - 1.0f,
-                    barWidth + 2.0f, 11.0f, 52, 54, 66, 255);
-                m_Window.DrawScreenRect(barX, y, barWidth, 9.0f,
-                    24, 24, 32, 255);
+                fill = std::clamp(fill, 0.0f, 1.0f);
 
-                // Recent damage lingers as a dimmer ghost strip that the
-                // real value visibly ate into.
-                if (ghost > 0.0f)
+                roundRect(x - 1.0f, y - 1.0f, w + 2.0f, h + 2.0f, 4, 4, 8, 200);
+                m_Window.DrawScreenRect(x, y, w, h, 30, 32, 44, 255);
+
+                if (ghost > fill)
                 {
-                    m_Window.DrawScreenRect(
-                        barX, y, barWidth * ghost, 9.0f,
-                        static_cast<Uint8>(r / 2 + 40),
-                        static_cast<Uint8>(g / 3),
-                        static_cast<Uint8>(b / 3),
-                        220);
+                    m_Window.DrawScreenRect(x, y, std::floor(w * ghost), h,
+                        static_cast<Uint8>(std::min(255, r / 2 + 90)),
+                        static_cast<Uint8>(std::min(255, g / 2 + 70)),
+                        static_cast<Uint8>(std::min(255, b / 2 + 60)), 200);
                 }
 
                 if (fill > 0.0f)
                 {
-                    // Fill with a light sheen on the top half and a
-                    // darker base line.
-                    m_Window.DrawScreenRect(barX, y, barWidth * fill, 9.0f,
-                        r, g, b, 255);
-                    m_Window.DrawScreenRect(barX, y, barWidth * fill, 4.0f,
-                        255, 255, 255, 46);
-                    m_Window.DrawScreenRect(barX, y + 8.0f, barWidth * fill,
-                        1.0f, 0, 0, 0, 60);
+                    const float fw = std::max(1.0f, std::floor(w * fill));
+
+                    m_Window.DrawGradientScreen(x, y, fw, h,
+                        { static_cast<Uint8>(std::min(255, r + 50)),
+                          static_cast<Uint8>(std::min(255, g + 50)),
+                          static_cast<Uint8>(std::min(255, b + 50)), 255 },
+                        { static_cast<Uint8>(r * 3 / 4), static_cast<Uint8>(g * 3 / 4),
+                          static_cast<Uint8>(b * 3 / 4), 255 });
+                    m_Window.DrawScreenRect(x, y, fw, 1.0f, 255, 255, 255, 70);
+                }
+
+                for (int i = 1; i < segments; i++)
+                {
+                    m_Window.DrawScreenRect(
+                        std::floor(x + w * static_cast<float>(i) / segments), y, 1.0f, h,
+                        8, 8, 14, 150);
                 }
             };
 
-            // Tiny icons in the gutter left of each bar.
-            if (const SpriteFrame* health = SpriteBank::Find("icon_health"),
-                *fuel = SpriteBank::Find("icon_fuel"),
-                *ammo = SpriteBank::Find("icon_ammo");
-                health && fuel && ammo)
+            const float hudBottom = static_cast<float>(ViewHeight) - 16.0f;
+
+            // Vitals: build, health, jet fuel.
             {
-                m_Window.DrawSpriteScreen(*health, 22.0f - health->Width * 0.5f, 18.5f - health->Height * 0.5f);
-                m_Window.DrawSpriteScreen(*fuel, 22.0f - fuel->Width * 0.5f, 31.5f - fuel->Height * 0.5f);
-                m_Window.DrawSpriteScreen(*ammo, 22.0f - ammo->Width * 0.5f, 44.5f - ammo->Height * 0.5f);
-            }
-            else
-            {
-                // Health: red cross.
-                m_Window.DrawScreenRect(18.0f, 15.0f, 8.0f, 2.0f,
-                    225, 90, 80, 255);
-                m_Window.DrawScreenRect(21.0f, 12.0f, 2.0f, 8.0f,
-                    225, 90, 80, 255);
+                const float px = 16.0f;
+                const float pw = 260.0f;
+                const float ph = 62.0f;
+                const float py = hudBottom - ph;
 
-                // Fuel: small flame.
-                m_Window.DrawScreenRect(20.0f, 26.0f, 4.0f, 6.0f,
-                    240, 160, 70, 255);
-                m_Window.DrawScreenRect(21.0f, 24.0f, 2.0f, 3.0f,
-                    255, 210, 120, 255);
+                panel(px, py, pw, ph);
 
-                // Ammo: bullet on its side.
-                m_Window.DrawScreenRect(18.0f, 41.0f, 6.0f, 4.0f,
-                    214, 178, 86, 255);
-                m_Window.DrawScreenRect(24.0f, 42.0f, 2.0f, 2.0f,
-                    150, 150, 160, 255);
-            }
+                const int health = std::max(0, player.GetHealth());
+                const float healthFill = health / static_cast<float>(player.GetMaxHealth());
+                const bool low = healthFill < 0.3f;
 
-            drawBar(14.0f,
-                std::max(0, player.GetHealth()) /
-                    static_cast<float>(player.GetMaxHealth()),
-                205, 60, 50,
-                healthGhost);
+                drawText(px + 12.0f, py + 9.0f, 1.5f,
+                    GetBodyClassInfo(player.GetBodyClass()).Name, 150, 158, 180);
 
-            drawBar(27.0f, player.GetFuel(), 90, 150, 230);
+                // Health as a big number, its max beside it.
+                const std::string maxText = "/" + std::to_string(player.GetMaxHealth());
+                const std::string healthText = std::to_string(health);
+                const float maxW = PixelFont::Measure(maxText, 1.5f);
+                const float numW = PixelFont::Measure(healthText, 3.0f);
 
-            // Which build this body is, and its health in numbers, inside
-            // the health bar.
-            {
-                const std::string build =
-                    std::string(GetBodyClassInfo(player.GetBodyClass()).Name) + " " +
-                    std::to_string(std::max(0, player.GetHealth())) + "/" +
-                    std::to_string(player.GetMaxHealth());
+                drawText(px + pw - 12.0f - maxW, py + 14.0f, 1.5f, maxText, 120, 126, 146);
+                drawText(px + pw - 16.0f - maxW - numW, py + 6.0f, 3.0f, healthText,
+                    low ? 255 : 240,
+                    low ? 110 : 242,
+                    low ? 100 : 248);
 
-                PixelFont::Draw(m_Window,
-                    barX + barWidth - PixelFont::Measure(build, 1.0f) - 3.0f, 15.0f,
-                    1.0f, build, 240, 236, 236, 220);
+                if (const SpriteFrame* icon = SpriteBank::Find("icon_health"))
+                    m_Window.DrawSpriteScreen(*icon, px + 12.0f, py + 29.0f);
+
+                drawBar(px + 26.0f, py + 29.0f, pw - 38.0f, 8.0f, healthFill,
+                    low ? 230 : 215, low ? 60 : 72, low ? 60 : 64, healthGhost, 10);
+
+                if (const SpriteFrame* icon = SpriteBank::Find("icon_fuel"))
+                    m_Window.DrawSpriteScreen(*icon, px + 12.0f, py + 44.0f);
+
+                drawBar(px + 26.0f, py + 46.0f, pw - 38.0f, 4.0f, player.GetFuel(),
+                    80, 160, 240);
             }
 
-            const Weapon& weapon = player.GetWeapon();
-
-            if (weapon.IsReloading())
-                drawBar(40.0f, weapon.GetReloadProgress(), 230, 150, 60);
-            else if (weapon.GetClipSize() > 0)
-                drawBar(40.0f,
-                    weapon.GetAmmo() /
-                        static_cast<float>(weapon.GetClipSize()),
-                    230, 210, 90);
-            else
-                drawBar(40.0f, 1.0f, 140, 145, 155);
-
-            // Weapon/tool readout: name and ammo state.
-            if (weapon.GetDef())
+            // Weapon: name, ammo, reload, and the body's items.
             {
-                std::string info = weapon.GetDef()->Name;
+                const float px = 288.0f;
+                const float pw = 270.0f;
+                const float ph = 62.0f;
+                const float py = hudBottom - ph;
 
-                for (char& c : info)
-                    c = static_cast<char>(std::toupper(
-                        static_cast<unsigned char>(c)));
+                panel(px, py, pw, ph);
 
-                std::string ammoText;
+                const Weapon& weapon = player.GetWeapon();
 
+                if (weapon.GetDef())
+                {
+                    std::string name = weapon.GetDef()->Name;
+
+                    for (char& c : name)
+                        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+
+                    drawText(px + 12.0f, py + 9.0f, 1.5f, name, 235, 236, 242);
+
+                    // Ammo: big count, clip size small beside it.
+                    if (weapon.IsReloading())
+                    {
+                        const std::string text = "RELOADING";
+                        drawText(px + pw - 12.0f - PixelFont::Measure(text, 1.5f), py + 9.0f, 1.5f,
+                            text, 240, 170, 80);
+                    }
+                    else if (weapon.GetClipSize() > 0)
+                    {
+                        const std::string clip = "/" + std::to_string(weapon.GetClipSize());
+                        const std::string ammo = std::to_string(weapon.GetAmmo());
+                        const float clipW = PixelFont::Measure(clip, 1.5f);
+                        const bool empty = weapon.GetAmmo() * 4 <= weapon.GetClipSize();
+
+                        drawText(px + pw - 12.0f - clipW, py + 14.0f, 1.5f, clip, 120, 126, 146);
+                        drawText(px + pw - 16.0f - clipW - PixelFont::Measure(ammo, 3.0f), py + 6.0f,
+                            3.0f, ammo,
+                            empty ? 255 : 240, empty ? 180 : 242, empty ? 90 : 248);
+                    }
+                    else
+                    {
+                        const std::string text = weapon.IsTool() ? "TOOL" : "INF";
+                        drawText(px + pw - 12.0f - PixelFont::Measure(text, 1.5f), py + 9.0f, 1.5f,
+                            text, 150, 158, 180);
+                    }
+                }
+
+                // A thin ammo / reload line under the header.
                 if (weapon.IsReloading())
-                    ammoText = "RELOADING";
+                    drawBar(px + 12.0f, py + 27.0f, pw - 24.0f, 2.0f, weapon.GetReloadProgress(), 240, 160, 70);
                 else if (weapon.GetClipSize() > 0)
-                    ammoText = std::to_string(weapon.GetAmmo()) + "/" +
-                        std::to_string(weapon.GetClipSize());
-                else if (!weapon.IsTool())
-                    ammoText = "INF";
-                else
-                    ammoText = "TOOL";
+                    drawBar(px + 12.0f, py + 27.0f, pw - 24.0f, 2.0f,
+                        weapon.GetAmmo() / static_cast<float>(weapon.GetClipSize()), 235, 210, 110);
 
-                // Long names shrink to stay clear of the ammo count.
-                const float room = barWidth - PixelFont::Measure(ammoText, 2.0f) - 8.0f;
-                const float infoScale = PixelFont::Measure(info, 2.0f) <= room ? 2.0f : 1.5f;
+                // Item slots: icon, number key; the selected one lit with
+                // an accent underline.
+                constexpr float SlotW = 34.0f;
+                constexpr float SlotH = 20.0f;
+                constexpr float SlotStep = 37.0f;
+                const float slotY = py + 35.0f;
 
-                drawText(barX, infoScale < 2.0f ? 56.0f : 55.0f, infoScale, info, 235, 235, 240);
-
-                drawText(
-                    barX + barWidth - PixelFont::Measure(ammoText, 2.0f),
-                    55.0f,
-                    2.0f,
-                    ammoText,
-                    weapon.IsReloading() ? 230 : 200,
-                    weapon.IsReloading() ? 150 : 205,
-                    weapon.IsReloading() ? 60 : 215);
-            }
-
-            // The body's items, with their number keys.
-            const int shownItems = std::max(LoadoutSize, player.GetItemCount());
-
-            // Item slots show the weapon's icon from the sprite pack, with
-            // the number key in the corner; without the pack, just the key.
-            constexpr float SlotW = 24.0f;
-            constexpr float SlotStep = 25.0f;
-
-            for (int i = 0; i < player.GetItemCount(); i++)
-            {
-                const bool selected = i == player.GetSelectedItem();
-                const float slotX = barX + static_cast<float>(i) * SlotStep;
-
-                m_Window.DrawScreenRect(slotX, 70.0f, SlotW, 16.0f,
-                    28, 28, 36, 255);
-
-                if (selected)
+                for (int i = 0; i < player.GetItemCount(); i++)
                 {
-                    m_Window.DrawScreenRect(slotX, 70.0f, SlotW, 16.0f,
-                        235, 225, 170, 255);
-                    m_Window.DrawScreenRect(slotX + 1.0f, 71.0f,
-                        SlotW - 2.0f, 14.0f, 62, 58, 40, 255);
-                }
+                    const bool selected = i == player.GetSelectedItem();
+                    const float slotX = px + 12.0f + static_cast<float>(i) * SlotStep;
 
-                const WeaponDef* itemDef = player.GetItem(i).GetDef();
-                const SpriteFrame* icon = itemDef
-                    ? SpriteBank::Find("icon_" + WeaponSpriteName(*itemDef))
-                    : nullptr;
+                    roundRect(slotX, slotY, SlotW, SlotH,
+                        selected ? 70 : 34, selected ? 74 : 36, selected ? 96 : 50, selected ? 255 : 220);
 
-                if (icon)
-                {
-                    m_Window.DrawSpriteScreen(*icon,
-                        std::floor(slotX + (SlotW - icon->Width) * 0.5f),
-                        std::floor(79.0f - icon->Height * 0.5f),
-                        1.0f, selected ? 255 : 170);
+                    if (selected)
+                        m_Window.DrawScreenRect(slotX + 2.0f, slotY + SlotH - 2.0f, SlotW - 4.0f, 2.0f,
+                            255, 210, 110, 255);
 
-                    PixelFont::Draw(
-                        m_Window,
-                        slotX + 2.0f,
-                        72.0f,
-                        1.0f,
+                    const WeaponDef* itemDef = player.GetItem(i).GetDef();
+                    const SpriteFrame* icon = itemDef
+                        ? SpriteBank::Find("icon_" + WeaponSpriteName(*itemDef))
+                        : nullptr;
+
+                    if (icon)
+                    {
+                        m_Window.DrawSpriteScreen(*icon,
+                            std::floor(slotX + (SlotW - icon->Width) * 0.5f + 3.0f),
+                            std::floor(slotY + (SlotH - icon->Height) * 0.5f),
+                            1.0f, selected ? 255 : 150);
+                    }
+
+                    PixelFont::Draw(m_Window, slotX + 3.0f, slotY + 2.0f, 1.0f,
                         std::to_string(i + 1),
-                        selected ? 255 : 150,
-                        selected ? 240 : 152,
-                        selected ? 180 : 160);
-                }
-                else
-                {
-                    PixelFont::Draw(
-                        m_Window,
-                        slotX + 9.0f,
-                        73.0f,
-                        2.0f,
-                        std::to_string(i + 1),
-                        selected ? 235 : 130,
-                        selected ? 225 : 132,
-                        selected ? 170 : 140);
+                        selected ? 255 : 120, selected ? 220 : 124, selected ? 140 : 140);
                 }
             }
 
-            // Gold readout: a small nugget icon plus the tally, sitting
-            // to the right of the weapon slots in the same row.
+            // Gold, top left.
             {
-                const float goldX =
-                    barX + static_cast<float>(shownItems) * SlotStep + 6.0f;
+                const std::string goldText = std::to_string(world.GetTeamGold(0));
+                const float pw = 34.0f + PixelFont::Measure(goldText, 2.0f);
+
+                panel(16.0f, 16.0f, pw, 26.0f);
 
                 if (const SpriteFrame* gold = SpriteBank::Find("icon_gold"))
-                {
-                    m_Window.DrawSpriteScreen(*gold, goldX - 1.0f, 73.0f);
-                }
-                else
-                {
-                    m_Window.DrawScreenRect(goldX, 73.0f, 8.0f, 8.0f,
-                        24, 22, 27, 255);
-                    m_Window.DrawScreenRect(goldX + 1.0f, 74.0f, 6.0f, 6.0f,
-                        218, 176, 56, 255);
-                    m_Window.DrawScreenRect(goldX + 1.0f, 74.0f, 6.0f, 2.0f,
-                        240, 205, 110, 255);
-                }
+                    m_Window.DrawSpriteScreen(*gold, 26.0f, 25.0f);
 
-                drawText(
-                    goldX + 13.0f,
-                    75.0f,
-                    2.0f,
-                    std::to_string(world.GetTeamGold(0)),
-                    230, 200, 110);
+                drawText(40.0f, 24.0f, 2.0f, goldText, 240, 205, 110);
             }
 
             // Wave status (top right): wave number and enemies left.
@@ -3106,60 +3170,47 @@ namespace Atlas
                     16.0f,
                     3.0f,
                     waveText,
-                    235, 235, 240);
+                    240, 242, 248);
 
-                for (std::size_t i = 0; i < enemies.size(); i++)
+                const std::size_t shown = std::min<std::size_t>(enemies.size(), 20);
+
+                for (std::size_t i = 0; i < shown; i++)
                 {
-                    m_Window.DrawScreenRect(
-                        static_cast<float>(ViewWidth) - 22.0f -
-                            static_cast<float>(i) * 14.0f,
-                        36.0f,
-                        10.0f,
-                        10.0f,
-                        255, 118, 106, 255);
+                    roundRect(
+                        static_cast<float>(ViewWidth) - 28.0f - static_cast<float>(i) * 10.0f,
+                        38.0f, 8.0f, 8.0f, 240, 96, 86, 255);
                 }
             }
 
-            // Bots-spawn toggle button (brightens under the cursor so it
-            // reads as clickable).
+            // Bots-spawn toggle (brightens under the cursor so it reads
+            // as clickable).
             {
-                const Uint8 borderShade = botsButtonHovered ? 150 : 28;
+                const bool on = world.IsBotsEnabled();
+                const int hover = botsButtonHovered ? 30 : 0;
 
-                m_Window.DrawScreenRect(
-                    BotsButtonX, BotsButtonY, BotsButtonW, BotsButtonH,
-                    borderShade,
-                    static_cast<Uint8>(borderShade + 4),
-                    static_cast<Uint8>(borderShade + 14),
-                    255);
+                roundRect(BotsButtonX - 1.0f, BotsButtonY - 1.0f, BotsButtonW + 2.0f, BotsButtonH + 2.0f,
+                    static_cast<Uint8>(150 + hover), static_cast<Uint8>(160 + hover),
+                    static_cast<Uint8>(200 + hover / 2), static_cast<Uint8>(40 + hover * 2));
+                m_Window.DrawGradientScreen(BotsButtonX, BotsButtonY, BotsButtonW, BotsButtonH,
+                    { 22, 24, 36, 215 }, { 10, 11, 18, 230 });
 
-                const int hoverBoost = botsButtonHovered ? 22 : 0;
+                // Status light.
+                m_Window.DrawScreenRect(BotsButtonX + 10.0f, BotsButtonY + 7.0f, 6.0f, 6.0f,
+                    on ? 90 : 220, on ? 220 : 80, on ? 120 : 80, 255);
+                m_Window.DrawGlowScreen(BotsButtonX + 13.0f, BotsButtonY + 10.0f, 7.0f,
+                    on ? 90 : 220, on ? 220 : 80, on ? 120 : 80, 40);
 
-                m_Window.DrawScreenRect(
-                    BotsButtonX + 1.0f, BotsButtonY + 1.0f,
-                    BotsButtonW - 2.0f, BotsButtonH - 2.0f,
-                    static_cast<Uint8>((world.IsBotsEnabled() ? 42 : 92) + hoverBoost),
-                    static_cast<Uint8>((world.IsBotsEnabled() ? 120 : 46) + hoverBoost),
-                    static_cast<Uint8>((world.IsBotsEnabled() ? 58 : 46) + hoverBoost),
-                    220);
-
-                const std::string botsLabel =
-                    world.IsBotsEnabled() ? "BOTS: ON" : "BOTS: OFF";
-
-                drawText(
-                    BotsButtonX +
-                        (BotsButtonW - PixelFont::Measure(botsLabel, 2.0f)) *
-                            0.5f,
-                    BotsButtonY + 7.0f,
-                    2.0f,
-                    botsLabel,
-                    235, 235, 240);
+                drawText(BotsButtonX + 24.0f, BotsButtonY + 7.0f, 1.5f,
+                    on ? "BOTS ON" : "BOTS OFF",
+                    static_cast<Uint8>(205 + hover), static_cast<Uint8>(210 + hover),
+                    static_cast<Uint8>(225 + hover / 2));
             }
 
             // Multiplayer status under the bots button.
             if (session.GetRole() != SessionRole::Offline)
             {
                 std::string status;
-                Uint8 r = 200, g = 220, b = 235;
+                Uint8 r = 170, g = 180, b = 205;
 
                 if (session.GetState() == SessionState::Failed)
                 {
@@ -3184,8 +3235,7 @@ namespace Atlas
                 for (char& c : status)
                     c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
 
-                PixelFont::Draw(
-                    m_Window,
+                drawText(
                     static_cast<float>(ViewWidth) - 20.0f -
                         PixelFont::Measure(status, 1.5f),
                     BotsButtonY + BotsButtonH + 8.0f,
@@ -3205,9 +3255,10 @@ namespace Atlas
                 const bool flash = brainAlarm > 0.0f &&
                     std::fmod(timeSeconds, 0.4f) < 0.2f;
 
-                m_Window.DrawScreenRect(panelX - 1.0f, panelY - 1.0f, panelW + 2.0f, 52.0f,
-                    flash ? 200 : 120, flash ? 60 : 126, flash ? 60 : 148, flash ? 160 : 60);
-                m_Window.DrawScreenRect(panelX, panelY, panelW, 50.0f, 12, 12, 18, 195);
+                panel(panelX, panelY, panelW, 50.0f);
+
+                if (flash)
+                    roundRect(panelX - 1.0f, panelY - 1.0f, panelW + 2.0f, 52.0f, 230, 60, 60, 90);
 
                 auto brainBar = [&](float x, const std::string& label, const TeamBase& base,
                     Uint8 r, Uint8 g, Uint8 b)
@@ -3216,14 +3267,7 @@ namespace Atlas
                     const float health = base.GetBrainHealth();
 
                     drawText(x, panelY + 7.0f, 1.5f, label, r, g, b);
-                    m_Window.DrawScreenRect(x - 1.0f, panelY + 19.0f, w + 2.0f, 11.0f, 52, 54, 66, 255);
-                    m_Window.DrawScreenRect(x, panelY + 20.0f, w, 9.0f, 24, 24, 32, 255);
-
-                    if (health > 0.0f)
-                    {
-                        m_Window.DrawScreenRect(x, panelY + 20.0f, w * health, 9.0f, r, g, b, 255);
-                        m_Window.DrawScreenRect(x, panelY + 20.0f, w * health, 4.0f, 255, 255, 255, 46);
-                    }
+                    drawBar(x, panelY + 20.0f, w, 8.0f, health, r, g, b, -1.0f, 10);
                 };
 
                 brainBar(panelX + 12.0f, "YOUR BRAIN", world.GetBase(0), 120, 200, 255);
@@ -3391,22 +3435,24 @@ namespace Atlas
                 }
             }
 
-            // Death overlay.
+            // Death overlay: a dim red wash and the respawn countdown.
             if (!player.IsAlive())
             {
                 m_Window.DrawScreenRect(
                     0.0f, 0.0f,
                     static_cast<float>(ViewWidth),
                     static_cast<float>(ViewHeight),
-                    140, 20, 20, 60);
+                    60, 6, 10, 90);
+                m_Window.DrawVignette(30, 0, 4, 200);
 
-                m_Window.DrawScreenRect(
-                    ViewWidth * 0.5f - 100.0f,
-                    ViewHeight * 0.5f - 6.0f,
-                    200.0f * std::clamp(
-                        1.0f - localSlot().RespawnTimer / RespawnTime, 0.0f, 1.0f),
-                    12.0f,
-                    240, 240, 240, 220);
+                const std::string label = "REDEPLOYING";
+                const float cx = ViewWidth * 0.5f;
+                const float cy = ViewHeight * 0.5f;
+
+                drawText(cx - PixelFont::Measure(label, 3.0f) * 0.5f, cy - 26.0f, 3.0f, label,
+                    240, 236, 236);
+                drawBar(cx - 110.0f, cy + 2.0f, 220.0f, 4.0f,
+                    1.0f - localSlot().RespawnTimer / RespawnTime, 235, 235, 245);
             }
 
             if (m_Settings.ShowFps)
@@ -3429,7 +3475,7 @@ namespace Atlas
 
                 if (pauseSettings)
                 {
-                    ui.Panel(panelX, 150.0f, panelW, 330.0f);
+                    ui.Panel(panelX, 150.0f, panelW, 372.0f);
 
                     if (DrawSettings(ui, panelX + 40.0f, 180.0f))
                         pauseSettings = false;

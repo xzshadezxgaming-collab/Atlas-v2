@@ -66,11 +66,38 @@ namespace Atlas
         PixelFont::Draw(m_Window, x, y, scale, text, r, g, b);
     }
 
+    void Ui::Frame(float x, float y, float w, float h, float lit, bool pressed)
+    {
+        const Uint8 edge = static_cast<Uint8>(40.0f + lit * 120.0f);
+
+        // Border with the corner pixels cut.
+        m_Window.DrawScreenRect(x + 1.0f, y, w - 2.0f, h, edge, static_cast<Uint8>(edge + 6),
+            static_cast<Uint8>(std::min(255, edge + 26)), 255);
+        m_Window.DrawScreenRect(x, y + 1.0f, w, h - 2.0f, edge, static_cast<Uint8>(edge + 6),
+            static_cast<Uint8>(std::min(255, edge + 26)), 255);
+
+        const Uint8 top = static_cast<Uint8>(pressed ? 18.0f : 30.0f + lit * 20.0f);
+        const Uint8 bottom = static_cast<Uint8>(pressed ? 24.0f : 16.0f + lit * 10.0f);
+
+        m_Window.DrawGradientScreen(x + 1.0f, y + 1.0f, w - 2.0f, h - 2.0f,
+            { top, static_cast<Uint8>(top + 3), static_cast<Uint8>(top + 14), 240 },
+            { bottom, static_cast<Uint8>(bottom + 2), static_cast<Uint8>(bottom + 10), 245 });
+        m_Window.DrawScreenRect(x + 1.0f, y + 1.0f, w - 2.0f, 1.0f, 255, 255, 255,
+            static_cast<Uint8>(14.0f + lit * 20.0f));
+
+        if (lit > 0.0f)
+        {
+            m_Window.DrawScreenRect(x + 1.0f, y + 3.0f, 2.0f, h - 6.0f, 255, 200, 110,
+                static_cast<Uint8>(lit * 255.0f));
+        }
+    }
+
     void Ui::Panel(float x, float y, float w, float h)
     {
-        m_Window.DrawScreenRect(x - 1.0f, y - 1.0f, w + 2.0f, h + 2.0f, 120, 126, 148, 70);
-        m_Window.DrawScreenRect(x, y, w, h, 12, 13, 20, 215);
-        m_Window.DrawScreenRect(x, y, w, 1.0f, 170, 176, 198, 80);
+        m_Window.DrawScreenRect(x, y - 1.0f, w, h + 2.0f, 150, 160, 200, 40);
+        m_Window.DrawScreenRect(x - 1.0f, y, w + 2.0f, h, 150, 160, 200, 40);
+        m_Window.DrawGradientScreen(x, y, w, h, { 22, 24, 36, 220 }, { 9, 10, 16, 235 });
+        m_Window.DrawScreenRect(x + 1.0f, y, w - 2.0f, 1.0f, 200, 210, 240, 60);
     }
 
     bool Ui::Button(float x, float y, float w, float h, const std::string& label, bool enabled)
@@ -78,12 +105,7 @@ namespace Atlas
         const bool hover = enabled && Hovered(x, y, w, h);
         const bool pressed = hover && m_MouseDown;
 
-        const Uint8 border = hover ? 170 : 60;
-        m_Window.DrawScreenRect(x, y, w, h, border, static_cast<Uint8>(border + 6), static_cast<Uint8>(border + 20), 255);
-
-        const Uint8 fill = pressed ? 28 : (hover ? 48 : 26);
-        m_Window.DrawScreenRect(x + 1.0f, y + 1.0f, w - 2.0f, h - 2.0f,
-            fill, static_cast<Uint8>(fill + 4), static_cast<Uint8>(fill + 14), 240);
+        Frame(x, y, w, h, hover ? 1.0f : 0.0f, pressed);
 
         if (hover)
         {
@@ -115,10 +137,8 @@ namespace Atlas
         index = std::clamp(index, 0, static_cast<int>(options.size()) - 1);
 
         const bool hover = Hovered(x, y, w, h);
-        const Uint8 border = hover ? 150 : 50;
 
-        m_Window.DrawScreenRect(x, y, w, h, border, static_cast<Uint8>(border + 6), static_cast<Uint8>(border + 20), 255);
-        m_Window.DrawScreenRect(x + 1.0f, y + 1.0f, w - 2.0f, h - 2.0f, 22, 24, 34, 240);
+        Frame(x, y, w, h, hover ? 0.7f : 0.0f);
 
         const float textY = y + (h - 5.0f * LabelScale) * 0.5f;
         Text(x + 12.0f, textY, LabelScale, label, 170, 176, 190);
@@ -143,10 +163,8 @@ namespace Atlas
     bool Ui::Slider(float x, float y, float w, float h, const std::string& label, float& value)
     {
         const bool hover = Hovered(x, y, w, h);
-        const Uint8 border = hover ? 150 : 50;
 
-        m_Window.DrawScreenRect(x, y, w, h, border, static_cast<Uint8>(border + 6), static_cast<Uint8>(border + 20), 255);
-        m_Window.DrawScreenRect(x + 1.0f, y + 1.0f, w - 2.0f, h - 2.0f, 22, 24, 34, 240);
+        Frame(x, y, w, h, hover ? 0.7f : 0.0f);
 
         const float textY = y + (h - 5.0f * LabelScale) * 0.5f;
         Text(x + 12.0f, textY, LabelScale, label, 170, 176, 190);
@@ -170,9 +188,11 @@ namespace Atlas
             value = next;
         }
 
-        m_Window.DrawScreenRect(trackX, trackY, trackW, 6.0f, 40, 42, 54, 255);
-        m_Window.DrawScreenRect(trackX, trackY, trackW * value, 6.0f, 140, 200, 255, 255);
-        m_Window.DrawScreenRect(trackX + trackW * value - 3.0f, trackY - 4.0f, 6.0f, 14.0f, 235, 240, 250, 255);
+        m_Window.DrawScreenRect(trackX, trackY + 1.0f, trackW, 4.0f, 40, 42, 58, 255);
+        m_Window.DrawGradientScreen(trackX, trackY + 1.0f, trackW * value, 4.0f,
+            { 255, 220, 140, 255 }, { 230, 160, 80, 255 });
+        m_Window.DrawScreenRect(trackX + trackW * value - 4.0f, trackY - 3.0f, 8.0f, 12.0f, 20, 20, 28, 255);
+        m_Window.DrawScreenRect(trackX + trackW * value - 3.0f, trackY - 2.0f, 6.0f, 10.0f, 240, 242, 250, 255);
 
         Text(trackX - 14.0f, textY, LabelScale,
             std::to_string(static_cast<int>(std::lround(value * 100.0f))), 255, 236, 170, 2);
@@ -222,9 +242,7 @@ namespace Atlas
             }
         }
 
-        const Uint8 border = focused ? 200 : (hover ? 150 : 50);
-        m_Window.DrawScreenRect(x, y, w, h, border, static_cast<Uint8>(border + 6), static_cast<Uint8>(border + 20), 255);
-        m_Window.DrawScreenRect(x + 1.0f, y + 1.0f, w - 2.0f, h - 2.0f, 16, 18, 26, 245);
+        Frame(x, y, w, h, focused ? 1.0f : (hover ? 0.6f : 0.0f));
 
         const float textY = y + (h - 5.0f * LabelScale) * 0.5f;
         Text(x + 12.0f, textY, LabelScale, label, 170, 176, 190);

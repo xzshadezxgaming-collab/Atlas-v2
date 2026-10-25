@@ -141,12 +141,16 @@ namespace Atlas
     private:
         static constexpr int ChunkSize = 32;
 
+        // How far below a ceiling its contact shadow reaches.
+        static constexpr int ShadowReach = 5;
+
         void Generate(unsigned int seed);
         void Wake(int x, int y);
         void UpdateCell(int x, int y);
         bool CanDisplace(int x, int y, Material mover) const;
         void MoveCell(int fromX, int fromY, int toX, int toY);
         void RebuildAllPixels();
+        void QueueRecolor(int x, int y);
         void WritePixelColor(int x, int y, Material material);
         void MarkDirty(int x, int y);
         void ResetDirtyRegion();
@@ -179,6 +183,11 @@ namespace Atlas
         std::vector<DestroyedPixel> m_Reactions;
 
         bool m_DirtyAll;
+
+        // Pixels waiting to be reshaded (see SetMaterial), deduplicated.
+        std::vector<std::uint32_t> m_RecolorQueue;
+        std::vector<std::uint8_t> m_RecolorQueued;
+        bool m_PixelsStale = false;
         int m_DirtyMinX;
         int m_DirtyMinY;
         int m_DirtyMaxX;

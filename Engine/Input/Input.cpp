@@ -7,6 +7,7 @@ namespace Atlas
     const bool* Input::s_KeyboardState = nullptr;
     bool Input::s_PreviousKeys[SDL_SCANCODE_COUNT] = {};
 
+    SDL_Renderer* Input::s_Renderer = nullptr;
     float Input::s_MouseX = 0.0f;
     float Input::s_MouseY = 0.0f;
     SDL_MouseButtonFlags Input::s_MouseButtons = 0;
@@ -26,6 +27,14 @@ namespace Atlas
 
         s_KeyboardState = SDL_GetKeyboardState(nullptr);
         s_MouseButtons = SDL_GetMouseState(&s_MouseX, &s_MouseY);
+
+        if (s_Renderer)
+            SDL_RenderCoordinatesFromWindow(s_Renderer, s_MouseX, s_MouseY, &s_MouseX, &s_MouseY);
+    }
+
+    void Input::SetRenderer(SDL_Renderer* renderer)
+    {
+        s_Renderer = renderer;
     }
 
     bool Input::IsKeyDown(SDL_Scancode key)

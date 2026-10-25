@@ -18,7 +18,25 @@ a [release](https://github.com/xzshadezxgaming-collab/atlas-v2/releases)
 (`.github/workflows/release.yml`), so that link is always the newest
 build.
 
-## Current features (v0.9.0)
+## Current features (v0.10.0)
+
+- **New look** — dynamic lighting: caves and tunnels are genuinely
+  dark, muzzle flashes, explosions, fire and lava light up the rock
+  around them, and your body carries a soft lamp. Terrain has bevelled,
+  moonlit top edges, shaded undersides and contact shadows inside
+  tunnels. The sky is a smooth dusk gradient with a galaxy band,
+  twinkling stars, a shaded moon and soft drifting clouds over five
+  layers of parallax ridges with haze between them. Smoke and dust are
+  soft puffs, tracers are tapered streaks, blasts send out a smooth
+  shock ring. A cleaner HUD puts vitals and your weapon in panels at the
+  bottom left with segmented bars and big numbers, small text uses a
+  crisp new 5x7 font, menus have a refreshed style, and fullscreen now
+  scales the game instead of leaving it in a corner. Lighting can be
+  turned off in Settings.
+
+- **Steady camera** — screen shake fades out again after a hit (it
+  had been stuck at full strength), is gentler, and can be set to OFF,
+  SUBTLE or STRONG in Settings; the aim lookahead no longer wobbles.
 
 - **Art and sound packs** — every build now has its own hand-pixelled
   body: the **scout** in a soft cap, goggles and khaki with a radio

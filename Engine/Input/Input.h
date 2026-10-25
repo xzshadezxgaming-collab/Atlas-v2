@@ -11,12 +11,17 @@ namespace Atlas
     public:
         static void Update();
 
+        // Mouse positions are reported in this renderer's logical
+        // coordinates (the game's fixed view size, however the window is
+        // scaled or letterboxed).
+        static void SetRenderer(SDL_Renderer* renderer);
+
         static bool IsKeyDown(SDL_Scancode key);
 
         // True only on the frame the key went down.
         static bool WasKeyPressed(SDL_Scancode key);
 
-        // Mouse position in window coordinates.
+        // Mouse position in render (logical view) coordinates.
         static float GetMouseX();
         static float GetMouseY();
 
@@ -37,6 +42,8 @@ namespace Atlas
 
     private:
         static std::string s_Text;
+
+        static SDL_Renderer* s_Renderer;
 
         static float s_WheelAccumulator;
 
