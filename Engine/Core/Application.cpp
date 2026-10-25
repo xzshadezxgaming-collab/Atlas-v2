@@ -332,10 +332,10 @@ namespace Atlas
             changed = true;
         y += gap;
 
-        int shake = m_Settings.ScreenShake ? 1 : 0;
-        if (ui.Choice(x, y, w, h, "SCREEN SHAKE", { "OFF", "ON" }, shake))
+        int shake = m_Settings.ScreenShake;
+        if (ui.Choice(x, y, w, h, "SCREEN SHAKE", { "OFF", "SUBTLE", "STRONG" }, shake))
         {
-            m_Settings.ScreenShake = shake == 1;
+            m_Settings.ScreenShake = shake;
             changed = true;
         }
         y += gap;
@@ -1227,6 +1227,8 @@ namespace Atlas
         float camSmoothX = player.GetCenterX() - ViewWidth * 0.5f;
         float camSmoothY = player.GetCenterY() - ViewHeight * 0.5f;
         float trauma = 0.0f;
+        float camLeadX = 0.0f;
+        float camLeadY = 0.0f;
 
         std::vector<Floater> floaters;
         std::uniform_real_distribution<float> unit(-1.0f, 1.0f);
@@ -1982,23 +1984,49 @@ namespace Atlas
             // --- Camera: smoothed follow with aim lookahead and
             // trauma shake ---
             //
-            // The target leads toward where the player is aiming so the
-            // view shows more of what matters; exponential smoothing
-            // makes every movement ease instead of hard-locking; shake
-            // is smooth multi-frequency noise scaled by trauma^2 rather
-            // than raw per-frame jitter.
+            // The target leads toward the cursor so the view shows more
+            // of what matters. The lead comes from the cursor's SCREEN
+            // offset, never the aim direction: aim is measured in world
+            // space through the camera, so leading by it fed the camera's
+            // own motion back into its target and made it hunt and
+            // wobble. Exponential smoothing eases every move; shake is
+            // smooth multi-frequency noise scaled by trauma^2, and trauma
+            // drains away so a hit is a thump, not a permanent tremor.
             {
-                const float lookX =
-                    player.IsAlive() ? player.GetAimDirX() * 105.0f : 0.0f;
-                const float lookY =
-                    player.IsAlive() ? player.GetAimDirY() * 55.0f : 0.0f;
+                float lookX = 0.0f;
+                float lookY = 0.0f;
+
+                if (player.IsAlive() && !modal)
+                {
+                    const float offX = std::clamp(
+                        (mouseScreenX - ViewWidth * 0.5f) / (ViewWidth * 0.5f), -1.0f, 1.0f);
+                    const float offY = std::clamp(
+                        (mouseScreenY - ViewHeight * 0.5f) / (ViewHeight * 0.5f), -1.0f, 1.0f);
+
+                    // A small dead zone keeps the view still while aiming
+                    // near the body.
+                    auto shape = [](float v)
+                    {
+                        const float a = std::max(0.0f, std::fabs(v) - 0.15f) / 0.85f;
+                        return std::copysign(a * a * (3.0f - 2.0f * a), v);
+                    };
+
+                    lookX = shape(offX) * 150.0f;
+                    lookY = shape(offY) * 80.0f;
+                }
+
+                // The lead eases on its own, slower than the follow, so
+                // flicking the mouse pans instead of jerking.
+                const float leadBlend = 1.0f - std::exp(-frameTime * 3.0f);
+                camLeadX += (lookX - camLeadX) * leadBlend;
+                camLeadY += (lookY - camLeadY) * leadBlend;
 
                 const float targetX = std::clamp(
-                    player.GetCenterX() + lookX - ViewWidth * 0.5f,
+                    player.GetCenterX() + camLeadX - ViewWidth * 0.5f,
                     0.0f,
                     static_cast<float>(worldWidth - ViewWidth));
                 const float targetY = std::clamp(
-                    player.GetCenterY() + lookY - ViewHeight * 0.5f,
+                    player.GetCenterY() + camLeadY - ViewHeight * 0.5f,
                     0.0f,
                     static_cast<float>(worldHeight - ViewHeight));
 
@@ -2012,45 +2040,56 @@ namespace Atlas
                 }
 
                 const float blend =
-                    1.0f - std::exp(-frameTime * 7.0f);
+                    1.0f - std::exp(-frameTime * 8.0f);
 
                 camSmoothX += (targetX - camSmoothX) * blend;
                 camSmoothY += (targetY - camSmoothY) * blend;
 
-                const float amp = m_Settings.ScreenShake ? trauma * trauma * 26.0f : 0.0f;
+                trauma = std::max(0.0f, trauma - frameTime * 1.4f);
+
+                const float maxShake =
+                    m_Settings.ScreenShake == 2 ? 12.0f :
+                    m_Settings.ScreenShake == 1 ? 5.0f : 0.0f;
+                const float amp = trauma * trauma * maxShake;
 
                 const float shakeX = amp *
-                    (0.6f * std::sin(timeSeconds * 41.0f) +
-                     0.4f * std::sin(timeSeconds * 23.7f + 1.3f));
+                    (0.6f * std::sin(timeSeconds * 31.0f) +
+                     0.4f * std::sin(timeSeconds * 17.7f + 1.3f));
                 const float shakeY = amp *
-                    (0.6f * std::sin(timeSeconds * 37.3f + 2.1f) +
-                     0.4f * std::sin(timeSeconds * 19.1f));
+                    (0.6f * std::sin(timeSeconds * 27.3f + 2.1f) +
+                     0.4f * std::sin(timeSeconds * 14.1f));
 
+                // Whole pixels only: a camera at a fractional position
+                // makes the terrain and every sprite round differently
+                // each frame, which shimmers like a vibration.
                 camera.SetPosition(
-                    std::clamp(
+                    std::round(std::clamp(
                         camSmoothX + shakeX,
                         0.0f,
-                        static_cast<float>(worldWidth - ViewWidth)),
-                    std::clamp(
+                        static_cast<float>(worldWidth - ViewWidth))),
+                    std::round(std::clamp(
                         camSmoothY + shakeY,
                         0.0f,
-                        static_cast<float>(worldHeight - ViewHeight)));
+                        static_cast<float>(worldHeight - ViewHeight))));
 
                 // UI anchoring tracks the smoothed position only - no
                 // shake - so menus hold still while the world rocks.
-                uiCamX = std::clamp(
+                uiCamX = std::round(std::clamp(
                     camSmoothX, 0.0f,
-                    static_cast<float>(worldWidth - ViewWidth));
-                uiCamY = std::clamp(
+                    static_cast<float>(worldWidth - ViewWidth)));
+                uiCamY = std::round(std::clamp(
                     camSmoothY, 0.0f,
-                    static_cast<float>(worldHeight - ViewHeight));
+                    static_cast<float>(worldHeight - ViewHeight)));
             }
 
             // Damage feedback: vignette pulse plus a camera thump.
             if (player.GetHealth() < lastPlayerHealth)
             {
-                hurtVignette = 0.6f;
-                trauma = std::min(trauma + 0.3f, 1.0f);
+                // Scaled by the hit, so a burning tick or a stray pellet
+                // barely nudges and a rocket really lands.
+                const float lost = static_cast<float>(lastPlayerHealth - player.GetHealth());
+                hurtVignette = std::min(0.6f, 0.2f + lost * 0.015f);
+                trauma = std::min(trauma + std::min(0.35f, lost * 0.012f), 1.0f);
             }
 
             lastPlayerHealth = player.GetHealth();
