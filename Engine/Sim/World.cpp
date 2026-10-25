@@ -12,6 +12,8 @@ namespace Atlas
     {
         constexpr float GrenadeCooldownTime = 0.9f;
         constexpr float RespawnTime = 3.0f;
+        constexpr std::size_t MaxWeaponPickups = 24;
+        constexpr float DroppedPickupLifetime = 45.0f;
 
         // A dead player whose team has other bodies jumps into one after
         // this long instead of waiting out the respawn.
@@ -100,6 +102,10 @@ namespace Atlas
                 Int(actor.GetSelectedItem());
                 Int(actor.GetWeapon().GetAmmo());
                 Int(actor.IsBurning() ? 1 : 0);
+                Int(actor.GetWoundCount());
+
+                for (int part = 0; part < BodyPartCount; part++)
+                    Int(actor.IsPartDestroyed(static_cast<BodyPartId>(part)) ? 1 : 0);
             }
         };
     }
@@ -1579,6 +1585,32 @@ namespace Atlas
             enemy.LastHealth = health;
         }
 
+        // Weapons let go of (the arm holding one shot off, or the body
+        // dropping dead) land on the field for anyone to grab. Dropped
+        // ones rust away after a while, oldest first past the cap.
+        auto collectDrop = [&](Actor& actor)
+        {
+            float dropX = 0.0f;
+            float dropY = 0.0f;
+
+            if (const WeaponDef* dropped = actor.TakeDroppedItem(dropX, dropY))
+            {
+                if (m_WeaponPickups.size() >= MaxWeaponPickups)
+                    m_WeaponPickups.erase(m_WeaponPickups.begin());
+
+                m_WeaponPickups.push_back({ dropX, dropY, -140.0f, dropped, DroppedPickupLifetime });
+            }
+        };
+
+        for (PlayerSlot& player : m_Players)
+            collectDrop(*player.Body);
+
+        for (Enemy& enemy : m_Enemies)
+            collectDrop(*enemy.Body);
+
+        for (Ally& ally : m_Allies)
+            collectDrop(*ally.Body);
+
         // --- Deaths ---
         for (PlayerSlot& player : m_Players)
         {
@@ -1586,8 +1618,9 @@ namespace Atlas
             {
                 m_Stats.BodiesLost++;
                 m_TeamGold[1] += KillBounty;
-                player.Body->Gib(m_Particles);
-                EmitSoundAt(Sfx::Gib, 1.0f, player.Body->GetCenterX(), player.Body->GetCenterY());
+                const bool gibbed = player.Body->Die(m_Particles);
+                EmitSoundAt(gibbed ? Sfx::Gib : Sfx::Hurt, 1.0f, player.Body->GetCenterX(), player.Body->GetCenterY());
+                collectDrop(*player.Body);
                 player.RespawnTimer = RespawnTime;
                 player.Gibbed = true;
             }
@@ -1599,8 +1632,9 @@ namespace Atlas
 
             if (!body.IsAlive())
             {
-                body.Gib(m_Particles);
-                EmitSoundAt(Sfx::Gib, 0.8f, body.GetCenterX(), body.GetCenterY());
+                const bool gibbed = body.Die(m_Particles);
+                EmitSoundAt(gibbed ? Sfx::Gib : Sfx::Hurt, 0.8f, body.GetCenterX(), body.GetCenterY());
+                collectDrop(body);
 
                 m_TeamGold[0] += KillBounty;
                 m_Stats.EnemiesKilled++;
@@ -1632,8 +1666,9 @@ namespace Atlas
             {
                 m_Stats.BodiesLost++;
                 m_TeamGold[1] += KillBounty;
-                m_Allies[i].Body->Gib(m_Particles);
-                EmitSoundAt(Sfx::Gib, 0.8f, m_Allies[i].Body->GetCenterX(), m_Allies[i].Body->GetCenterY());
+                const bool gibbed = m_Allies[i].Body->Die(m_Particles);
+                EmitSoundAt(gibbed ? Sfx::Gib : Sfx::Hurt, 0.8f, m_Allies[i].Body->GetCenterX(), m_Allies[i].Body->GetCenterY());
+                collectDrop(*m_Allies[i].Body);
 
                 m_Allies.erase(m_Allies.begin() + static_cast<std::ptrdiff_t>(i));
             }
@@ -1822,14 +1857,24 @@ namespace Atlas
             const int taker =
                 settleAndTouch(pickup.X, pickup.Y, pickup.VelY, 30.0f);
 
+            if (pickup.Lifetime > 0.0f)
+            {
+                pickup.Lifetime -= FixedTimeStep;
+
+                if (pickup.Lifetime <= 0.0f)
+                {
+                    m_WeaponPickups.erase(m_WeaponPickups.begin() + static_cast<std::ptrdiff_t>(i));
+                    continue;
+                }
+            }
+
             if (taker >= 0 && pickup.Weapon)
             {
                 m_Players[taker].Body->AddItem(pickup.Weapon);
 
                 EmitSoundAt(Sfx::Pickup, 0.8f, pickup.X, pickup.Y);
 
-                m_WeaponPickups[i] = m_WeaponPickups.back();
-                m_WeaponPickups.pop_back();
+                m_WeaponPickups.erase(m_WeaponPickups.begin() + static_cast<std::ptrdiff_t>(i));
             }
             else
             {

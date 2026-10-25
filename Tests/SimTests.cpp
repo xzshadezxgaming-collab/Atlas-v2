@@ -554,7 +554,7 @@ namespace
             bool sawRocket = false;
             bool sawBlast = false;
 
-            for (int t = 0; t < 240 && guard && guard->IsAlive(); t++)
+            for (int t = 0; t < 240 && guard && !world.GetEnemies().empty(); t++)
             {
                 PlayerInput input;
                 input.AimX = guard->GetCenterX();
@@ -587,7 +587,7 @@ namespace
             bool burned = false;
             const int before = guard ? guard->GetHealth() : 0;
 
-            for (int t = 0; t < 120 && guard && guard->IsAlive(); t++)
+            for (int t = 0; t < 120 && guard && !world.GetEnemies().empty(); t++)
             {
                 PlayerInput input;
                 input.AimX = guard->GetCenterX();
@@ -595,7 +595,7 @@ namespace
                 input.Fire = true;
                 world.Step(&input, 1);
 
-                burned |= guard->IsBurning();
+                burned |= !world.GetEnemies().empty() && guard->IsBurning();
             }
 
             Check(burned, "guard caught fire");
@@ -940,6 +940,211 @@ namespace
             Check(actor.GetVelocityY() < -400.0f, "late jump off a ledge still fires");
         }
     }
+    // Chews at one limb with small hits (healing in between so the body
+    // survives) until it comes off. Returns the hits it took.
+    int ShootOff(Actor& actor, BodyPartId part, ParticleSystem& particles)
+    {
+        int hits = 0;
+
+        while (!actor.IsPartDestroyed(part) && hits < 400)
+        {
+            const float u = static_cast<float>((hits * 37) % 100) / 100.0f;
+            const float v = static_cast<float>((hits * 61) % 100) / 100.0f;
+            actor.TakeLimbDamage(part, 10, u, v, &particles, 0.0f, 0.0f);
+            actor.Heal(1000);
+            hits++;
+        }
+
+        return hits;
+    }
+
+    void TestDismemberment()
+    {
+        std::printf("limbs, wounds and dismemberment\n");
+
+        Terrain terrain;
+        BuildRange(terrain);
+
+        const std::vector<WeaponDef> defs = LoadWeaponDefs(std::string());
+        const WeaponDef* rifle = nullptr;
+        const WeaponDef* shovel = nullptr;
+
+        for (const WeaponDef& def : defs)
+        {
+            if (def.Name == "Rifle")
+                rifle = &def;
+            else if (def.Kind == WeaponKind::Shovel)
+                shovel = &def;
+        }
+
+        Check(rifle && shovel, "rifle and shovel defs exist");
+
+        if (!rifle || !shovel)
+            return;
+
+        const float dt = 1.0f / 60.0f;
+
+        auto settle = [&](Actor& actor, ParticleSystem& particles, int ticks, float move = 0.0f)
+        {
+            for (int t = 0; t < ticks; t++)
+            {
+                actor.Update(terrain, &particles, dt, move, false, false);
+                particles.Update(terrain, dt, nullptr, 0);
+            }
+        };
+
+        // Shooting an arm off: the gun falls, the other arm takes over the
+        // next weapon, and the arm flies off as a piece of its own.
+        {
+            ParticleSystem particles;
+            Actor actor;
+            actor.Spawn(terrain, 200.0f);
+            actor.AddItem(rifle);
+            actor.AddItem(shovel);
+            actor.SelectItem(0);
+            settle(actor, particles, 30);
+
+            ShootOff(actor, BodyPartId::Arm, particles);
+
+            float dropX = 0.0f, dropY = 0.0f;
+            Check(actor.IsPartDestroyed(BodyPartId::Arm), "near arm shot off");
+            Check(actor.IsAlive(), "losing an arm isn't fatal");
+            Check(actor.TakeDroppedItem(dropX, dropY) == rifle, "the gun it held is dropped");
+            Check(std::fabs(dropX - actor.GetCenterX()) < 30.0f, "dropped where the hand was");
+            Check(actor.TakeDroppedItem(dropX, dropY) == nullptr, "a drop is reported once");
+            Check(actor.GetItemCount() == 1 && actor.GetWeapon().GetDef() == shovel,
+                "the other arm picks up what's left");
+            Check(!actor.IsArmDestroyed(), "one arm can still hold things");
+            Check(particles.GetRagdollCount() == 1, "the severed arm is a ragdoll piece");
+
+            ShootOff(actor, BodyPartId::ArmBack, particles);
+            Check(actor.IsArmDestroyed(), "no arms, nothing to hold with");
+            Check(actor.GetItemCount() == 0, "and nothing held");
+            Check(particles.GetRagdollCount() == 2, "second arm flies off too");
+
+            // Pieces fall and come to rest on the ground.
+            settle(actor, particles, 240);
+            Check(particles.GetRagdollCount() == 2, "pieces stay a while");
+        }
+
+        // Losing the legs: one leg hobbles, none leaves it crawling.
+        {
+            ParticleSystem particles;
+            Actor actor;
+            actor.Spawn(terrain, 200.0f);
+            settle(actor, particles, 30);
+
+            ShootOff(actor, BodyPartId::LegFront, particles);
+            Check(actor.IsAlive() && !actor.IsLegless(), "one leg gone, still up");
+
+            const float startX = actor.GetX();
+            settle(actor, particles, 120, 1.0f);
+            const float hobbled = actor.GetX() - startX;
+            Check(hobbled > 10.0f, "hobbles along on one leg (" + std::to_string(hobbled) + "px)");
+
+            ShootOff(actor, BodyPartId::LegBack, particles);
+            Check(actor.IsAlive() && actor.IsLegless(), "both legs gone, still alive");
+
+            settle(actor, particles, 60);
+            const float crawlStart = actor.GetX();
+            settle(actor, particles, 180, 1.0f);
+            const float crawled = actor.GetX() - crawlStart;
+
+            Check(actor.IsGrounded(), "legless torso rests on the ground");
+            Check(actor.GetY() + 40.0f > 300.0f - 4.0f, "and sits down low");
+            Check(crawled > 5.0f && crawled < hobbled * 1.5f,
+                "crawls, slowly (" + std::to_string(crawled) + "px)");
+        }
+
+        // A headshot that kills leaves a corpse, not a gib.
+        {
+            ParticleSystem particles;
+            Actor actor;
+            actor.Spawn(terrain, 200.0f);
+            actor.AddItem(rifle);
+            settle(actor, particles, 10);
+
+            ShootOff(actor, BodyPartId::Head, particles);
+            Check(!actor.IsAlive(), "losing the head kills");
+
+            const int before = particles.GetRagdollCount();
+            Check(!actor.Die(particles), "a headshot kill isn't a gib");
+            Check(particles.GetRagdollCount() == before + 1, "it leaves a corpse");
+
+            float dropX = 0.0f, dropY = 0.0f;
+            Check(actor.TakeDroppedItem(dropX, dropY) == rifle, "the dead drop their gun");
+
+            settle(actor, particles, 300);
+            Check(particles.GetRagdollCount() == before + 1, "the corpse lies there");
+
+            // A rocket into the corpse blows it apart.
+            particles.BlastRagdolls(actor.GetCenterX(),
+                300.0f - 6.0f, 80.0f, 900.0f);
+            settle(actor, particles, 2);
+            Check(particles.GetRagdollCount() < before + 1, "a blast bursts the corpse");
+        }
+
+        // Overkill gibs.
+        {
+            ParticleSystem particles;
+            Actor actor;
+            actor.Spawn(terrain, 200.0f);
+            settle(actor, particles, 10);
+
+            actor.TakeDamage(1000, 0.0f, 0.0f);
+            Check(actor.Die(particles), "overkill gibs");
+        }
+
+        // A grenade at the feet tears the legs off.
+        {
+            ParticleSystem particles;
+            Actor actor;
+            actor.Spawn(terrain, 200.0f);
+            settle(actor, particles, 30);
+
+            actor.TakeBlast(actor.GetCenterX(), 300.0f - 2.0f, 60.0f, 60, &particles);
+            Check(actor.IsPartDestroyed(BodyPartId::LegBack) ||
+                actor.IsPartDestroyed(BodyPartId::LegFront),
+                "a blast at the feet takes a leg");
+            Check(!actor.IsPartDestroyed(BodyPartId::Head), "but not the head");
+            Check(particles.GetRagdollCount() >= 1, "legs fly off");
+        }
+
+        // Wounds bleed until patched up.
+        {
+            ParticleSystem particles;
+            Actor actor;
+            actor.Spawn(terrain, 200.0f);
+            settle(actor, particles, 10);
+
+            actor.TakeLimbDamage(BodyPartId::Torso, 5, 0.5f, 0.5f, &particles, 0.0f, 0.0f);
+            actor.TakeLimbDamage(BodyPartId::LegBack, 5, 0.5f, 0.3f, &particles, 0.0f, 0.0f);
+            Check(actor.GetWoundCount() == 2, "each hit leaves a wound");
+
+            const int afterHits = actor.GetHealth();
+            settle(actor, particles, 600);
+            Check(actor.GetHealth() < afterHits, "wounds bleed health away");
+            Check(actor.IsAlive(), "slowly");
+
+            actor.Heal(1000);
+            Check(actor.GetWoundCount() == 0, "healing closes wounds");
+
+            const int healed = actor.GetHealth();
+            settle(actor, particles, 300);
+            Check(actor.GetHealth() == healed, "no more bleeding");
+
+            // A limb hit hurts less than a body hit, a headshot more.
+            Actor a, b, c;
+            a.Spawn(terrain, 300.0f);
+            b.Spawn(terrain, 340.0f);
+            c.Spawn(terrain, 380.0f);
+            a.TakeLimbDamage(BodyPartId::LegBack, 20, 0.5f, 0.5f, nullptr, 0.0f, 0.0f);
+            b.TakeLimbDamage(BodyPartId::Torso, 20, 0.5f, 0.5f, nullptr, 0.0f, 0.0f);
+            c.TakeLimbDamage(BodyPartId::Head, 20, 0.5f, 0.5f, nullptr, 0.0f, 0.0f);
+            Check(a.GetHealth() > b.GetHealth() && b.GetHealth() > c.GetHealth(),
+                "leg < body < head damage");
+        }
+    }
 }
 
 int main()
@@ -955,6 +1160,7 @@ int main()
     TestAiDigs();
     TestMultiplayerSoak();
     TestActorMovement();
+    TestDismemberment();
 
     if (g_Failures > 0)
     {

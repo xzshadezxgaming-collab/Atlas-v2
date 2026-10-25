@@ -166,7 +166,15 @@ namespace Atlas
 
         bool IsTool() const;
 
+        // How well the hands holding it work: spreadScale widens the
+        // cone of fire, reloadRate below 1 slows reloading (a missing
+        // arm). Set by the actor every tick.
+        void SetHandling(float spreadScale, float reloadRate);
+
     private:
+        float m_SpreadScale = 1.0f;
+        float m_ReloadRate = 1.0f;
+
         bool m_HasLaunch = false;
         PendingLaunch m_Launch;
 

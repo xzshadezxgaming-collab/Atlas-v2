@@ -129,6 +129,26 @@ namespace Atlas
             unsigned char tintG = 255,
             unsigned char tintB = 255) const;
 
+        // Draws a leg from already-solved joint positions (ragdolls and
+        // severed limbs use this; Draw solves the IK first). pitch rolls
+        // the boot (radians, clockwise), bend's sign picks which way the
+        // toe and knee pad face.
+        static void DrawShape(
+            Window& window,
+            float hipX,
+            float hipY,
+            float kneeX,
+            float kneeY,
+            float ankleX,
+            float ankleY,
+            float pitch,
+            float bend,
+            bool nearSide,
+            const LegStyle& style,
+            unsigned char tintR = 255,
+            unsigned char tintG = 255,
+            unsigned char tintB = 255);
+
     private:
         float m_HipOffsetX;
         float m_HipOffsetY;

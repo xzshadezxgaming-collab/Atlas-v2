@@ -93,6 +93,25 @@ namespace Atlas
             float angleDegrees,
             bool flipHorizontal = false);
 
+        // Draws part of a texture (the src rect, in texture pixels) so
+        // that the texture point (pivotX, pivotY) lands at world (x, y),
+        // rotated about it. flipHorizontal mirrors the texture across its
+        // own width first (texWidth), as DrawTextureRotated's flip would,
+        // so pieces cut from a mirrored sprite stay where they were.
+        void DrawTextureRegion(
+            SDL_Texture* texture,
+            float texWidth,
+            float srcX,
+            float srcY,
+            float srcW,
+            float srcH,
+            float pivotX,
+            float pivotY,
+            float x,
+            float y,
+            float angleDegrees,
+            bool flipHorizontal = false);
+
         // Draws a sprite-pack frame with its pivot at (x, y), rotated
         // around the pivot. Art faces right; flipY keeps a weapon upright
         // when it is aimed to the left. flash > 0 adds a white pass on
