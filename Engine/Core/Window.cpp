@@ -1,5 +1,7 @@
 #include "Window.h"
+
 #include "../Graphics/Camera.h"
+#include "../Graphics/SpriteBank.h"
 #include "../Input/Input.h"
 
 #include <algorithm>
@@ -312,6 +314,85 @@ namespace Atlas
             0.0,
             nullptr,
             flipHorizontal ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
+    }
+
+    void Window::DrawSprite(
+        const SpriteFrame& sprite,
+        float x,
+        float y,
+        float angleDegrees,
+        bool flipX,
+        bool flipY,
+        float scale,
+        Uint8 flash)
+    {
+        if (!sprite.Texture)
+            return;
+
+        if (m_Camera)
+        {
+            x -= m_Camera->GetX();
+            y -= m_Camera->GetY();
+        }
+
+        // The pivot is a pixel; aim for its centre. Flipping mirrors the
+        // image inside the destination rect, so the pivot moves with it.
+        const float pivotX = (flipX ? sprite.Width - sprite.PivotX - 1.0f : sprite.PivotX) + 0.5f;
+        const float pivotY = (flipY ? sprite.Height - sprite.PivotY - 1.0f : sprite.PivotY) + 0.5f;
+
+        SDL_FRect destination;
+        destination.x = x - pivotX * scale;
+        destination.y = y - pivotY * scale;
+        destination.w = sprite.Width * scale;
+        destination.h = sprite.Height * scale;
+
+        const SDL_FPoint center = { pivotX * scale, pivotY * scale };
+
+        const SDL_FlipMode flip = static_cast<SDL_FlipMode>(
+            (flipX ? SDL_FLIP_HORIZONTAL : 0) | (flipY ? SDL_FLIP_VERTICAL : 0));
+
+        SDL_RenderTextureRotated(
+            m_Renderer, sprite.Texture, nullptr, &destination,
+            static_cast<double>(angleDegrees), &center, flip);
+
+        if (flash > 0)
+        {
+            Uint8 r = 255, g = 255, b = 255;
+            SDL_GetTextureColorMod(sprite.Texture, &r, &g, &b);
+
+            SDL_SetTextureBlendMode(sprite.Texture, SDL_BLENDMODE_ADD);
+            SDL_SetTextureColorMod(sprite.Texture, 255, 255, 255);
+            SDL_SetTextureAlphaMod(sprite.Texture, flash);
+
+            SDL_RenderTextureRotated(
+                m_Renderer, sprite.Texture, nullptr, &destination,
+                static_cast<double>(angleDegrees), &center, flip);
+
+            SDL_SetTextureBlendMode(sprite.Texture, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureAlphaMod(sprite.Texture, 255);
+            SDL_SetTextureColorMod(sprite.Texture, r, g, b);
+        }
+    }
+
+    void Window::DrawSpriteScreen(
+        const SpriteFrame& sprite,
+        float x,
+        float y,
+        float scale,
+        Uint8 alpha)
+    {
+        if (!sprite.Texture)
+            return;
+
+        SDL_FRect destination;
+        destination.x = x;
+        destination.y = y;
+        destination.w = sprite.Width * scale;
+        destination.h = sprite.Height * scale;
+
+        SDL_SetTextureAlphaMod(sprite.Texture, alpha);
+        SDL_RenderTexture(m_Renderer, sprite.Texture, nullptr, &destination);
+        SDL_SetTextureAlphaMod(sprite.Texture, 255);
     }
 
     SDL_Renderer* Window::GetRenderer() const

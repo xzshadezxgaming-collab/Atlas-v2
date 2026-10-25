@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <iterator>
+#include <string>
 #include <vector>
 
 namespace Atlas
@@ -12,7 +14,7 @@ namespace Atlas
     namespace
     {
         constexpr int SampleRate = 44100;
-        constexpr int StreamPoolSize = 16;
+        constexpr int StreamPoolSize = 24;
 
         bool g_Available = false;
         float g_MasterVolume = 1.0f;
@@ -37,6 +39,46 @@ namespace Atlas
         constexpr int DigVariantCount = 3;
         std::vector<float> g_DigVariants[DigVariantCount];
         int g_DigVariantIndex = 0;
+
+        // Sound pack file names, in Sfx order.
+        constexpr const char* SfxNames[] =
+        {
+            "shot", "shotgun", "rifle", "dig", "explosion", "jump", "land",
+            "hurt", "gib", "throw", "reload", "jetburst", "sniper", "rocket",
+            "flame", "dronedown", "uiclick", "squadorder", "weaponswitch",
+            "bodyswitch", "heal", "pickup", "steam", "alarm", "ordersent",
+            "ship", "victory", "defeat",
+        };
+
+        static_assert(std::size(SfxNames) == static_cast<std::size_t>(Sfx::Count),
+            "every Sfx needs a sound pack name");
+
+        // Takes loaded from the sound pack; an effect with none plays its
+        // synthesized buffer instead.
+        std::vector<std::vector<float>> g_Takes[static_cast<int>(Sfx::Count)];
+        int g_LastTake[static_cast<int>(Sfx::Count)] = {};
+        std::uint32_t g_TakeRng = 0x9e3779b9u;
+
+        // Effects added with the sound pack borrow an older effect's
+        // synthesized sound when there is no pack (they used to play it).
+        Sfx SynthFallback(Sfx sfx)
+        {
+            switch (sfx)
+            {
+            case Sfx::UiClick:
+            case Sfx::SquadOrder:
+            case Sfx::WeaponSwitch:
+            case Sfx::BodySwitch:
+            case Sfx::Heal:
+            case Sfx::Pickup:
+            case Sfx::OrderSent:
+                return Sfx::Reload;
+            case Sfx::Steam:
+                return Sfx::JetBurst;
+            default:
+                return sfx;
+            }
+        }
 
         float NoiseSample()
         {
@@ -577,6 +619,67 @@ namespace Atlas
         return true;
     }
 
+    int Audio::LoadSoundPack(const std::string& folder)
+    {
+        if (!g_Available)
+            return 0;
+
+        SDL_AudioSpec want;
+        want.format = SDL_AUDIO_F32;
+        want.channels = 1;
+        want.freq = SampleRate;
+
+        int loaded = 0;
+
+        for (int i = 0; i < static_cast<int>(Sfx::Count); i++)
+        {
+            g_Takes[i].clear();
+
+            const std::string base = folder + "/" + SfxNames[i];
+
+            for (int take = 0; take <= 16; take++)
+            {
+                const std::string path = take == 0
+                    ? base + ".wav"
+                    : base + "_" + std::to_string(take) + ".wav";
+
+                SDL_AudioSpec spec;
+                Uint8* data = nullptr;
+                Uint32 length = 0;
+
+                if (!SDL_LoadWAV(path.c_str(), &spec, &data, &length))
+                {
+                    if (take > 0)
+                        break;
+                    continue;
+                }
+
+                Uint8* converted = nullptr;
+                int convertedLength = 0;
+
+                if (SDL_ConvertAudioSamples(&spec, data, static_cast<int>(length),
+                    &want, &converted, &convertedLength))
+                {
+                    const float* samples = reinterpret_cast<const float*>(converted);
+                    g_Takes[i].emplace_back(samples,
+                        samples + convertedLength / static_cast<int>(sizeof(float)));
+                    loaded++;
+                    SDL_free(converted);
+                }
+
+                SDL_free(data);
+            }
+        }
+
+        return loaded;
+    }
+
+    const char* Audio::GetSoundName(Sfx sfx)
+    {
+        const int index = static_cast<int>(sfx);
+        return index >= 0 && index < static_cast<int>(Sfx::Count) ? SfxNames[index] : "";
+    }
+
     void Audio::Shutdown()
     {
         for (int i = 0; i < StreamPoolSize; i++)
@@ -669,9 +772,32 @@ namespace Atlas
             return;
 
         const std::vector<float>* bufferPtr =
-            &g_Buffers[static_cast<int>(sfx)];
+            &g_Buffers[static_cast<int>(SynthFallback(sfx))];
 
-        if (sfx == Sfx::Dig)
+        std::vector<std::vector<float>>& takes = g_Takes[static_cast<int>(sfx)];
+
+        if (!takes.empty())
+        {
+            // A random take, never the same one twice running.
+            int& last = g_LastTake[static_cast<int>(sfx)];
+            int take = 0;
+
+            if (takes.size() > 1)
+            {
+                g_TakeRng ^= g_TakeRng << 13;
+                g_TakeRng ^= g_TakeRng >> 17;
+                g_TakeRng ^= g_TakeRng << 5;
+
+                take = static_cast<int>(g_TakeRng % (takes.size() - 1));
+
+                if (take >= last)
+                    take++;
+            }
+
+            last = take;
+            bufferPtr = &takes[static_cast<std::size_t>(take)];
+        }
+        else if (sfx == Sfx::Dig)
         {
             g_DigVariantIndex = (g_DigVariantIndex + 1) % DigVariantCount;
             bufferPtr = &g_DigVariants[g_DigVariantIndex];

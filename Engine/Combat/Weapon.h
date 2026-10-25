@@ -80,7 +80,14 @@ namespace Atlas
         // Launchers: the rocket's blast.
         float BlastRadius = 30.0f;
         int BlastDamage = 110;
+
+        // Art in the sprite pack ("rifle" -> weapon_rifle). Empty picks
+        // one from the weapon's kind and stats.
+        std::string Sprite;
     };
+
+    // The sprite-pack name this weapon is drawn with.
+    std::string WeaponSpriteName(const WeaponDef& def);
 
     // A rocket a Launcher wants fired this tick. Weapons don't own
     // projectiles, so the World collects it and hands it to the

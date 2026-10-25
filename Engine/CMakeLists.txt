@@ -26,6 +26,7 @@ add_library(AtlasEngine STATIC
     Graphics/PixelFont.cpp
     Graphics/Texture2D.cpp
     Graphics/Sprite.cpp
+    Graphics/SpriteBank.cpp
     Graphics/Camera.cpp
     Graphics/MapThumbnail.cpp
 

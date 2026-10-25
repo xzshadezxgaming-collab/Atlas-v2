@@ -35,3 +35,27 @@ if(WIN32)
 endif()
 
 add_test(NAME NetTests COMMAND AtlasNetTests)
+
+add_executable(AtlasAssetTests
+    AssetTests.cpp
+)
+
+target_link_libraries(AtlasAssetTests
+    PRIVATE
+        AtlasEngine
+)
+
+target_compile_definitions(AtlasAssetTests
+    PRIVATE
+        ATLAS_ASSET_DIR="${CMAKE_SOURCE_DIR}/Assets"
+)
+
+if(WIN32)
+    add_custom_command(TARGET AtlasAssetTests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_SOURCE_DIR}/ThirdParty/sdl3/lib/x64/SDL3.dll
+            $<TARGET_FILE_DIR:AtlasAssetTests>
+    )
+endif()
+
+add_test(NAME AssetTests COMMAND AtlasAssetTests)

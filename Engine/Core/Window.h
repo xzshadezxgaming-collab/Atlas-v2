@@ -6,6 +6,7 @@
 namespace Atlas
 {
     class Camera;
+    struct SpriteFrame;
 
     class Window
     {
@@ -90,6 +91,28 @@ namespace Atlas
             float height,
             float angleDegrees,
             bool flipHorizontal = false);
+
+        // Draws a sprite-pack frame with its pivot at (x, y), rotated
+        // around the pivot. Art faces right; flipY keeps a weapon upright
+        // when it is aimed to the left. flash > 0 adds a white pass on
+        // top (hit flashes).
+        void DrawSprite(
+            const SpriteFrame& sprite,
+            float x,
+            float y,
+            float angleDegrees = 0.0f,
+            bool flipX = false,
+            bool flipY = false,
+            float scale = 1.0f,
+            Uint8 flash = 0);
+
+        // Same, in screen space (HUD icons).
+        void DrawSpriteScreen(
+            const SpriteFrame& sprite,
+            float x,
+            float y,
+            float scale = 1.0f,
+            Uint8 alpha = 255);
 
         SDL_Renderer* GetRenderer() const;
 

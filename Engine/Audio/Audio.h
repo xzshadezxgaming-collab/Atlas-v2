@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 namespace Atlas
 {
     enum class Sfx
@@ -20,17 +22,39 @@ namespace Atlas
         Rocket,
         Flame,
         DroneDown,
+        UiClick,
+        SquadOrder,
+        WeaponSwitch,
+        BodySwitch,
+        Heal,
+        Pickup,
+        Steam,
+        Alarm,
+        OrderSent,
+        Ship,
+        Victory,
+        Defeat,
 
         Count
     };
 
-    // Procedurally synthesized retro sound effects on SDL3 audio streams.
-    // If no audio device is available (headless), every call is a no-op.
+    // Sound effects on SDL3 audio streams. Init synthesizes a retro set;
+    // LoadSoundPack then replaces it with recorded takes where the pack
+    // has them. If no audio device is available (headless), every call
+    // is a no-op.
     class Audio
     {
     public:
         static bool Init();
         static void Shutdown();
+
+        // Loads <folder>/<name>.wav or <name>_1.wav, <name>_2.wav, ... for
+        // each effect (names in Audio.cpp); an effect with several takes
+        // plays a different one each time. Returns how many takes loaded.
+        static int LoadSoundPack(const std::string& folder);
+
+        // The effect's file name in the sound pack ("shot", "uiclick").
+        static const char* GetSoundName(Sfx sfx);
 
         // pan: -1 hard left .. +1 hard right.
         static void Play(Sfx sfx, float volume = 1.0f, float pan = 0.0f);

@@ -99,7 +99,7 @@ namespace Atlas
 
         if (hover && m_Clicked)
         {
-            Audio::Play(Sfx::Reload, 0.5f);
+            Audio::Play(Sfx::UiClick, 0.5f);
             return true;
         }
 
@@ -133,7 +133,7 @@ namespace Atlas
             const int count = static_cast<int>(options.size());
             const bool back = m_MouseX < valueCenter;
             index = (index + (back ? count - 1 : 1)) % count;
-            Audio::Play(Sfx::Reload, 0.5f);
+            Audio::Play(Sfx::UiClick, 0.5f);
             return true;
         }
 

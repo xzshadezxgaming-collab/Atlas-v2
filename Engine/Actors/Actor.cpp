@@ -1,6 +1,7 @@
 #include "Actor.h"
 
 #include "../Core/Window.h"
+#include "../Graphics/SpriteBank.h"
 #include "../Particles/ParticleSystem.h"
 #include "../World/Terrain.h"
 
@@ -543,11 +544,21 @@ namespace Atlas
                 m_TintR, m_TintG, m_TintB);
         }
 
-        if (m_BodyTexture)
+        // Each build has its own art in the sprite pack; without one,
+        // every build shares the client's body sprite plus drawn-on gear.
+        const SpriteFrame* buildSprite = SpriteBank::Find(
+            m_Class == BodyClass::Light ? "body_scout"
+            : m_Class == BodyClass::Heavy ? "body_heavy"
+            : "body_rifleman");
+
+        SDL_Texture* const bodyTexture =
+            buildSprite ? buildSprite->Texture : m_BodyTexture;
+
+        if (bodyTexture)
         {
             // The texture is shared between actors, so apply this one's
             // tint every time it is drawn.
-            SDL_SetTextureColorMod(m_BodyTexture, m_TintR, m_TintG, m_TintB);
+            SDL_SetTextureColorMod(bodyTexture, m_TintR, m_TintG, m_TintB);
 
             // Bob while walking, breathe while standing still, lean into
             // the direction of travel, and hunch forward when crouching.
@@ -572,7 +583,7 @@ namespace Atlas
                     m_FacingDir * 2.0f;
 
             window.DrawTextureRotated(
-                m_BodyTexture,
+                bodyTexture,
                 m_X - (SpriteWidth - BodyWidth) * 0.5f,
                 m_Y + bob,
                 SpriteWidth,
@@ -585,7 +596,7 @@ namespace Atlas
             // more clearly than a colored glow around it.
             if (m_HurtFlash > 0.0f)
             {
-                SDL_Texture* texture = m_BodyTexture;
+                SDL_Texture* texture = bodyTexture;
                 const float strength = std::min(1.0f, m_HurtFlash / 0.12f);
 
                 SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_ADD);
@@ -607,7 +618,8 @@ namespace Atlas
                 SDL_SetTextureColorMod(texture, m_TintR, m_TintG, m_TintB);
             }
 
-            DrawBuildDetails(window, m_X - (SpriteWidth - BodyWidth) * 0.5f, m_Y + bob);
+            if (!buildSprite)
+                DrawBuildDetails(window, m_X - (SpriteWidth - BodyWidth) * 0.5f, m_Y + bob);
         }
 
         if (IsPartDestroyed(LegPart(nearLeg)))
@@ -783,29 +795,52 @@ namespace Atlas
         const float elbowX = sx + ux * along - uy * height * m_FacingDir;
         const float elbowY = sy + uy * along + ux * height * m_FacingDir;
 
-        const Uint8 armR = static_cast<Uint8>(92 * m_TintR / 255);
-        const Uint8 armG = static_cast<Uint8>(104 * m_TintG / 255);
-        const Uint8 armB = static_cast<Uint8>(72 * m_TintB / 255);
+        // Sleeve colours follow the build: olive fatigues, the scout's
+        // khaki, the heavy's steel.
+        struct Sleeve { int R, G, B; };
+        const Sleeve sleeve =
+            m_Class == BodyClass::Light ? Sleeve{ 134, 124, 88 }
+            : m_Class == BodyClass::Heavy ? Sleeve{ 92, 98, 112 }
+            : Sleeve{ 92, 104, 72 };
+
+        auto shade = [&](int value, int percent, Uint8 tint)
+        {
+            return static_cast<Uint8>(std::min(255, value * percent / 100) * tint / 255);
+        };
+
+        const Uint8 armR = shade(sleeve.R, 100, m_TintR);
+        const Uint8 armG = shade(sleeve.G, 100, m_TintG);
+        const Uint8 armB = shade(sleeve.B, 100, m_TintB);
 
         DrawArmSegment(window, sx, sy, elbowX, elbowY, armR, armG, armB);
         DrawArmSegment(window, elbowX, elbowY, handX, handY, armR, armG, armB);
 
         // Shoulder pad over the joint.
         DrawPart(window, sx - 3.0f, sy - 3.0f, 6.0f, 6.0f,
-            static_cast<Uint8>(108 * m_TintR / 255),
-            static_cast<Uint8>(120 * m_TintG / 255),
-            static_cast<Uint8>(84 * m_TintB / 255));
+            shade(sleeve.R, 117, m_TintR),
+            shade(sleeve.G, 115, m_TintG),
+            shade(sleeve.B, 117, m_TintB));
         window.DrawFilledRect(sx - 3.0f, sy - 3.0f, 6.0f, 2.0f,
-            static_cast<Uint8>(130 * m_TintR / 255),
-            static_cast<Uint8>(142 * m_TintG / 255),
-            static_cast<Uint8>(102 * m_TintB / 255),
+            shade(sleeve.R, 141, m_TintR),
+            shade(sleeve.G, 137, m_TintG),
+            shade(sleeve.B, 142, m_TintB),
             255);
 
         // --- The weapon ---
         const float muzzleX = handX + m_AimDirX * def.BarrelLength;
         const float muzzleY = handY + m_AimDirY * def.BarrelLength;
 
-        if (def.Kind == WeaponKind::Shovel)
+        const SpriteFrame* weaponSprite = SpriteBank::Find(WeaponSpriteName(def));
+
+        if (weaponSprite)
+        {
+            // Sprite-pack art, gripped at its pivot and turned to the
+            // aim; flipped over when aiming left so it stays upright.
+            window.DrawSprite(*weaponSprite, handX, handY,
+                std::atan2(m_AimDirY, m_AimDirX) * 57.2957795f,
+                false, m_AimDirX < 0.0f);
+        }
+        else if (def.Kind == WeaponKind::Shovel)
         {
             // Shovel: wooden shaft, small grip, steel blade at the end.
             DrawArmSegmentPass(window,
@@ -893,14 +928,6 @@ namespace Atlas
             DrawArmSegmentPass(window, handX, handY, muzzleX, muzzleY, 3.0f, 96, 98, 108);
 
             DrawPart(window, muzzleX - 2.0f, muzzleY - 2.0f, 4.0f, 4.0f, 60, 60, 66);
-
-            const float flicker = 2.0f + std::sin(m_BeamPhase * 37.0f) * 0.8f;
-            window.DrawGlow(muzzleX + m_AimDirX * 3.0f, muzzleY + m_AimDirY * 3.0f,
-                5.0f, 120, 170, 255, 110);
-            window.DrawFilledRect(
-                muzzleX + m_AimDirX * 3.0f - flicker * 0.5f,
-                muzzleY + m_AimDirY * 3.0f - flicker * 0.5f,
-                flicker, flicker, 160, 210, 255, 255);
         }
         else
         {
@@ -954,6 +981,18 @@ namespace Atlas
                     handX + m_AimDirX * 4.0f + m_FacingDir * 4.0f - 1.0f, handY - 7.0f,
                     2.0f, 3.0f, 120, 200, 230, 255);
             }
+        }
+
+        if (def.Kind == WeaponKind::Flamer)
+        {
+            // Pilot light at the nozzle.
+            const float flicker = 2.0f + std::sin(m_BeamPhase * 37.0f) * 0.8f;
+            window.DrawGlow(muzzleX + m_AimDirX * 3.0f, muzzleY + m_AimDirY * 3.0f,
+                5.0f, 120, 170, 255, 110);
+            window.DrawFilledRect(
+                muzzleX + m_AimDirX * 3.0f - flicker * 0.5f,
+                muzzleY + m_AimDirY * 3.0f - flicker * 0.5f,
+                flicker, flicker, 160, 210, 255, 255);
         }
 
         // Glove over the grip.
