@@ -49,7 +49,20 @@ namespace Atlas
         ParticleType Type;
         Material SettleMaterial;
 
-        Actor* Owner; // never collides with its owner; credited for gold mined
+        // Who fired it, by stable actor id rather than pointer: the
+        // shooter may die and be removed while the round is in flight.
+        // Never hits its owner or the owner's team; gold it mines is
+        // credited to the owner. 0 / -1 = no owner.
+        std::uint32_t OwnerId;
+        std::int8_t OwnerTeam;
+    };
+
+    // Gold mined by a bullet, credited to its owner by the caller (who
+    // can resolve the id - the owner may no longer exist).
+    struct GoldCredit
+    {
+        std::uint32_t OwnerId;
+        int Amount;
     };
 
     // One pool for every moving pixel in the game: bullets, debris, blood,
@@ -96,7 +109,8 @@ namespace Atlas
             Terrain& terrain,
             float deltaTime,
             Actor* const* actors,
-            int actorCount);
+            int actorCount,
+            std::vector<GoldCredit>* outGold = nullptr);
 
         void Draw(Window& window) const;
 

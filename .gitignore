@@ -4,6 +4,7 @@
 # CMake
 out/
 build/
+build-*/
 
 # CMake cache
 CMakeFiles/

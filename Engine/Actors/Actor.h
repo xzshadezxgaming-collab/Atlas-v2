@@ -4,10 +4,10 @@
 #include "Limb.h"
 
 #include "../Combat/Weapon.h"
-#include "../Graphics/Texture2D.h"
 
 #include <SDL3/SDL.h>
 
+#include <cstdint>
 #include <string>
 
 namespace Atlas
@@ -41,7 +41,17 @@ namespace Atlas
         Actor(const Actor&) = delete;
         Actor& operator=(const Actor&) = delete;
 
-        bool LoadBodySprite(SDL_Renderer* renderer, const std::string& filename);
+        // The body sprite is owned by whoever draws (the client); the
+        // actor only borrows it, so the simulation never needs a renderer
+        // and many actors can share one texture. Null draws limbs only.
+        void SetBodyTexture(SDL_Texture* texture);
+        SDL_Texture* GetBodyTexture() const;
+
+        // Stable identity assigned by the World. Survives the actor being
+        // removed, so references to it (bullet owners, network messages)
+        // never dangle - they just stop resolving. 0 = unassigned.
+        void SetId(std::uint32_t id);
+        std::uint32_t GetId() const;
 
         // Tints the body sprite and limbs (enemy coloring).
         void SetTint(Uint8 r, Uint8 g, Uint8 b);
@@ -210,7 +220,13 @@ namespace Atlas
 
         void DestroyPart(BodyPartId part, ParticleSystem* particles);
 
-        Texture2D m_BodyTexture;
+        // Cheap per-actor RNG for cosmetic jitter (jet exhaust), seeded
+        // from the id so a simulation replays identically.
+        float FxRandomUnit();
+
+        SDL_Texture* m_BodyTexture;
+        std::uint32_t m_Id;
+        std::uint32_t m_FxRandomState;
 
         float m_X;
         float m_Y;

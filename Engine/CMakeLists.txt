@@ -30,6 +30,8 @@ add_library(AtlasEngine STATIC
 
     Physics/RigidBody.cpp
 
+    Sim/World.cpp
+
     ECS/Transform.cpp
     ECS/Entity.cpp
 )

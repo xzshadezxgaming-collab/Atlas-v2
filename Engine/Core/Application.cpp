@@ -12,7 +12,9 @@
 #include "../Graphics/Camera.h"
 #include "../Graphics/PixelFont.h"
 #include "../Input/Input.h"
+#include "../Graphics/Texture2D.h"
 #include "../Particles/ParticleSystem.h"
+#include "../Sim/World.h"
 #include "../World/Terrain.h"
 
 #include <SDL3/SDL.h>
@@ -36,17 +38,9 @@ namespace Atlas
         constexpr int DefaultWorldWidth = 2048;
         constexpr int DefaultWorldHeight = 1024;
 
-        // Physics runs at a fixed rate; rendering runs as fast as it can.
-        constexpr float FixedTimeStep = 1.0f / 120.0f;
+        // Physics runs at a fixed rate (World::FixedTimeStep); rendering
+        // runs as fast as it can.
         constexpr float MaxFrameTime = 0.25f;
-
-        constexpr float GrenadeCooldownTime = 0.9f;
-        constexpr float RespawnTime = 3.0f;
-        constexpr int MaxEnemies = 8;
-        constexpr int MaxAllies = 4;
-
-        constexpr int SupplyCrateCost = 40;
-        constexpr int ReinforcementCost = 100;
 
         // Bots-spawn toggle button (screen space, top right).
         constexpr float BotsButtonW = 108.0f;
@@ -101,44 +95,6 @@ namespace Atlas
             return relative;
         }
 
-        const WeaponDef* FindWeaponDef(
-            const std::vector<WeaponDef>& defs,
-            const std::string& name)
-        {
-            for (const WeaponDef& def : defs)
-            {
-                if (def.Name == name)
-                    return &def;
-            }
-
-            return defs.empty() ? nullptr : &defs.front();
-        }
-
-        Sfx FireSfxFor(const WeaponDef& def)
-        {
-            if (def.Kind == WeaponKind::Digger ||
-                def.Kind == WeaponKind::Shovel)
-                return Sfx::Dig;
-
-            if (def.Name == "Shotgun")
-                return Sfx::Shotgun;
-
-            if (def.Name == "Rifle")
-                return Sfx::Rifle;
-
-            return Sfx::Shot;
-        }
-
-        struct Enemy
-        {
-            std::unique_ptr<Actor> Body;
-            AIController Brain;
-
-            // Health seen last tick, for spawning floating damage numbers
-            // without plumbing callbacks through the damage paths.
-            int LastHealth = 100;
-        };
-
         // A short-lived piece of floating text: damage numbers, gold
         // popups, wave banners. World-space entries scroll with the
         // camera; screen-space entries (banners) don't.
@@ -153,21 +109,6 @@ namespace Atlas
             std::string Text;
             Uint8 R, G, B;
             bool ScreenSpace;
-        };
-
-        // A purchased reinforcement, once landed: friendly, AI-controlled,
-        // fights whatever enemy is nearest.
-        struct Ally
-        {
-            std::unique_ptr<Actor> Body;
-            AIController Brain;
-        };
-
-        struct HealthPickup
-        {
-            float X;
-            float Y;
-            float VelY;
         };
 
         // --- Buy-menu catalog: what's on offer, Cortex Command style ---
@@ -196,21 +137,6 @@ namespace Atlas
             int RefIndex; // body index, or the loose weapon's first index
         };
 
-        // A weapon crate ordered without an assigned body: sits on the
-        // ground where it landed until the player walks over it, then
-        // equips it (fully loaded) as their current weapon.
-        struct WeaponPickup
-        {
-            float X;
-            float Y;
-            float VelY;
-            const WeaponDef* Weapon;
-        };
-
-        // Off-screen margin the delivery ship starts beyond the camera's
-        // current edge, so it visibly flies in rather than popping into
-        // view already on screen.
-        constexpr float ShipEdgeMargin = 220.0f;
     }
 
     Application::Application()
@@ -245,10 +171,12 @@ namespace Atlas
         IniFile sceneIni;
         sceneIni.Load(ResolveAssetPath("Assets/scene.ini"));
 
-        const int worldWidth = std::max(
+        WorldConfig worldConfig;
+
+        worldConfig.Width = std::max(
             ViewWidth,
             sceneIni.GetInt("World", "Width", DefaultWorldWidth));
-        const int worldHeight = std::max(
+        worldConfig.Height = std::max(
             ViewHeight,
             sceneIni.GetInt("World", "Height", DefaultWorldHeight));
 
@@ -258,78 +186,64 @@ namespace Atlas
         if (seed == 0)
             seed = static_cast<unsigned int>(SDL_GetPerformanceCounter());
 
-        Terrain terrain;
+        worldConfig.Seed = seed;
 
-        if (!terrain.Create(
-            m_Window.GetRenderer(),
-            worldWidth,
-            worldHeight,
-            seed))
-        {
+        // Weapons: data-driven with built-in fallbacks.
+        worldConfig.Weapons =
+            LoadWeaponDefs(ResolveAssetPath("Assets/weapons.ini"));
+
+        // The simulation. Everything below this point is presentation:
+        // it turns SDL input into PlayerInput, steps the World, and draws
+        // what the World reports.
+        World world;
+
+        if (!world.Create(worldConfig))
             return;
-        }
+
+        const int worldWidth = world.GetTerrain().GetWidth();
+        const int worldHeight = world.GetTerrain().GetHeight();
+
+        Terrain& terrain = world.GetTerrain();
+
+        if (!terrain.CreateTexture(m_Window.GetRenderer()))
+            return;
 
         Background background;
         background.Create(seed);
 
-        // Weapons: data-driven with built-in fallbacks.
-        const std::vector<WeaponDef> weaponDefs =
-            LoadWeaponDefs(ResolveAssetPath("Assets/weapons.ini"));
+        constexpr int LoadoutSize = World::LoadoutSize;
+        constexpr int MaxAllies = World::MaxAllies;
+        constexpr float RespawnTime = 3.0f;
 
-        const WeaponDef* loadout[] =
-        {
-            FindWeaponDef(weaponDefs, "SMG"),
-            FindWeaponDef(weaponDefs, "Shotgun"),
-            FindWeaponDef(weaponDefs, "Rifle"),
-            FindWeaponDef(weaponDefs, "Digger"),
-            FindWeaponDef(weaponDefs, "Shovel"),
-        };
+        const WeaponDef* loadout[LoadoutSize];
 
-        constexpr int LoadoutSize = 5;
+        for (int i = 0; i < LoadoutSize; i++)
+            loadout[i] = world.GetLoadoutWeapon(i);
 
-        const WeaponDef* enemyWeapon = FindWeaponDef(weaponDefs, "EnemyGun");
+        const WeaponDef* allyWeapon = world.GetAllyWeapon();
 
-        const std::string playerSprite = ResolveAssetPath("Assets/Player.bmp");
+        // One body sprite, shared by every actor (tinted per team).
+        Texture2D bodyTexture;
 
-        Actor player;
-
-        if (!player.LoadBodySprite(m_Window.GetRenderer(), playerSprite))
+        if (!bodyTexture.Load(
+            m_Window.GetRenderer(), ResolveAssetPath("Assets/Player.bmp")))
         {
             std::cout << "Failed to load Player.bmp\n";
         }
 
-        player.SetTeam(0);
-        player.SetWeaponDef(loadout[0]);
-        player.Spawn(terrain, static_cast<float>(worldWidth) * 0.5f);
+        const int localPlayer = world.AddPlayer();
+        PlayerSlot& localSlot = world.GetPlayer(localPlayer);
+        Actor& player = *localSlot.Body;
 
-        int currentWeapon = 0;
+        const ParticleSystem& particles = world.GetParticles();
+        const GrenadeSystem& grenades = world.GetGrenades();
+        const DeliverySystem& deliveries = world.GetDeliveries();
+        std::vector<Enemy>& enemies = world.GetEnemies();
+        std::vector<Ally>& allies = world.GetAllies();
+        const std::vector<HealthPickup>& pickups = world.GetHealthPickups();
+        const std::vector<WeaponPickup>& weaponPickups =
+            world.GetWeaponPickups();
 
-        ParticleSystem particles;
-        GrenadeSystem grenades;
-
-        std::vector<Enemy> enemies;
-        std::vector<Ally> allies;
-        DeliverySystem deliveries;
-
-        const WeaponDef* allyWeapon = FindWeaponDef(weaponDefs, "SMG");
-
-        // weapon: null falls back to the default rifleman loadout (SMG).
-        auto spawnAlly = [&](float x, const WeaponDef* weapon)
-        {
-            if (static_cast<int>(allies.size()) >= MaxAllies)
-                return;
-
-            Ally ally;
-            ally.Body = std::make_unique<Actor>();
-            ally.Body->LoadBodySprite(m_Window.GetRenderer(), playerSprite);
-            ally.Body->SetTint(120, 170, 255);
-            ally.Body->SetTeam(0);
-            ally.Body->SetWeaponDef(weapon ? weapon : allyWeapon);
-            ally.Body->Spawn(terrain, x);
-            allies.push_back(std::move(ally));
-        };
-
-        std::vector<WeaponPickup> weaponPickups;
         BuyCart cart;
 
         // Catalog is fixed for the whole run (built from the same
@@ -338,7 +252,7 @@ namespace Atlas
         // once rather than every frame.
         std::vector<CatalogEntry> catalog;
         catalog.push_back(
-            { CatalogKind::Body, "RIFLEMAN", ReinforcementCost, allyWeapon });
+            { CatalogKind::Body, "RIFLEMAN", World::ReinforcementCost, allyWeapon });
 
         for (int i = 0; i < LoadoutSize; i++)
         {
@@ -352,7 +266,7 @@ namespace Atlas
         }
 
         catalog.push_back(
-            { CatalogKind::Item, "SUPPLY CRATE", SupplyCrateCost, nullptr });
+            { CatalogKind::Item, "SUPPLY CRATE", World::SupplyCrateCost, nullptr });
 
         std::vector<float> catalogRowOffset(catalog.size());
         constexpr float CatalogStartY = 46.0f;
@@ -460,18 +374,10 @@ namespace Atlas
             return lines;
         };
 
+        // Cosmetic-only randomness (floating text jitter). Simulation
+        // randomness lives in the World and is seeded from the scene.
         std::mt19937 rng(
             static_cast<unsigned int>(SDL_GetPerformanceCounter()));
-
-        int wave = 0;
-        float waveTimer = 2.5f;
-        float grenadeCooldown = 0.0f;
-        float respawnTimer = 0.0f;
-        float jetSoundTimer = 0.0f;
-        float toolSfxTimer = 0.0f;
-        bool playerGibbed = false;
-        bool playerWasGrounded = true;
-        float playerPrevFallSpeed = 0.0f;
 
         // Camera: exponentially-smoothed position with aim lookahead and
         // trauma-based shake (trauma in [0,1]; amplitude scales with its
@@ -480,7 +386,6 @@ namespace Atlas
         float camSmoothY = player.GetCenterY() - ViewHeight * 0.5f;
         float trauma = 0.0f;
 
-        std::vector<HealthPickup> pickups;
         std::vector<Floater> floaters;
         std::uniform_real_distribution<float> unit(-1.0f, 1.0f);
 
@@ -489,9 +394,6 @@ namespace Atlas
         int goldPopupAccum = 0;
         float goldPopupTimer = 0.0f;
         int lastPlayerGold = player.GetGold();
-
-        // Footstep dust needs plant-edge detection per leg.
-        bool prevLegPlanted[2] = { true, true };
 
         // Crosshair blooms open briefly on each shot.
         float crosshairBloom = 0.0f;
@@ -506,6 +408,8 @@ namespace Atlas
         // be silently dropped.
         bool throwQueued = false;
         bool jumpQueued = false;
+        bool reloadQueued = false;
+        int slotQueued = -1;
 
         // The UI (buy menu, HUD anchors) follows the smoothed camera
         // WITHOUT the shake component, so menus don't wobble and clicks
@@ -521,40 +425,99 @@ namespace Atlas
         float hurtVignette = 0.0f;
         int lastPlayerHealth = player.GetHealth();
 
-        // Bots-spawn toggle and the Tab-held buy menu.
-        bool botsEnabled = true;
+        // The Tab-held buy menu.
         bool buyPanelOpen = false;
 
-        auto spawnEnemy = [&](float x)
+        // Turns what the simulation reported this tick into sound,
+        // camera shake, hit-stop and floating text - judged from the
+        // local player's point of view.
+        auto handleEvents = [&]()
         {
-            Enemy enemy;
-            enemy.Body = std::make_unique<Actor>();
-            enemy.Body->LoadBodySprite(m_Window.GetRenderer(), playerSprite);
-            enemy.Body->SetTint(255, 118, 106);
-            enemy.Body->SetTeam(1);
-            enemy.Body->SetWeaponDef(enemyWeapon);
-            enemy.Body->Spawn(terrain, x);
-            enemies.push_back(std::move(enemy));
-        };
-
-        auto spawnWave = [&](int count)
-        {
-            std::uniform_real_distribution<float> position(
-                150.0f, static_cast<float>(worldWidth - 150));
-
-            for (int i = 0; i < count && static_cast<int>(enemies.size()) < MaxEnemies; i++)
+            for (const SimEvent& event : world.GetEvents())
             {
-                float x = position(rng);
-
-                for (int attempt = 0;
-                    attempt < 10 &&
-                    std::fabs(x - player.GetCenterX()) < 380.0f;
-                    attempt++)
+                switch (event.Type)
                 {
-                    x = position(rng);
+                case SimEventType::Sound:
+                    Audio::Play(event.Sound, event.Volume);
+                    break;
+
+                case SimEventType::GunFired:
+                    if (event.Player == localPlayer)
+                        crosshairBloom = 1.0f;
+                    break;
+
+                case SimEventType::HardLanding:
+                    // A camera thump scaled by how hard the fall was.
+                    if (event.Player == localPlayer)
+                        trauma = std::min(
+                            trauma + 0.12f + event.Amount * 0.2f, 1.0f);
+                    break;
+
+                case SimEventType::Explosion:
+                    trauma = std::min(trauma + 0.5f, 1.0f);
+                    break;
+
+                case SimEventType::EnemyKilled:
+                {
+                    // Kill punch: brief hit-stop plus a camera thump -
+                    // but only for kills the player can actually see. An
+                    // ally finishing someone off across the map
+                    // shouldn't freeze the world for no visible reason.
+                    const float killDx = event.X - player.GetCenterX();
+                    const float killDy = event.Y - player.GetCenterY();
+
+                    if (std::fabs(killDx) < 720.0f &&
+                        std::fabs(killDy) < 440.0f)
+                    {
+                        hitStop = std::min(hitStop + 0.05f, 0.09f);
+                        trauma = std::min(trauma + 0.18f, 1.0f);
+                    }
+                    break;
                 }
 
-                spawnEnemy(x);
+                case SimEventType::Damage:
+                    floaters.push_back({
+                        event.X,
+                        event.Y,
+                        -34.0f,
+                        0.75f, 0.75f,
+                        2.0f,
+                        std::to_string(event.Value),
+                        255, 224, 130,
+                        false });
+                    break;
+
+                case SimEventType::WaveStarted:
+                {
+                    // Center-screen wave banner with a sub-line.
+                    const std::string banner =
+                        "WAVE " + std::to_string(event.Value);
+
+                    floaters.push_back({
+                        (static_cast<float>(ViewWidth) -
+                            PixelFont::Measure(banner, 6.0f)) * 0.5f,
+                        170.0f,
+                        -9.0f,
+                        2.2f, 2.2f,
+                        6.0f,
+                        banner,
+                        240, 235, 220,
+                        true });
+
+                    floaters.push_back({
+                        (static_cast<float>(ViewWidth) -
+                            PixelFont::Measure("HOSTILES INBOUND", 2.0f)) *
+                            0.5f,
+                        212.0f,
+                        -9.0f,
+                        2.2f, 2.2f,
+                        2.0f,
+                        "HOSTILES INBOUND",
+                        255, 130, 110,
+                        true });
+                    break;
+                }
+                }
             }
         };
 
@@ -587,7 +550,7 @@ namespace Atlas
             if (fpsTimer >= 1.0)
             {
                 std::stringstream title;
-                title << "Atlas - " << frames << " FPS - wave " << wave
+                title << "Atlas - " << frames << " FPS - wave " << world.GetWave()
                     << " - " << particles.GetActiveCount() << " particles";
                 m_Window.SetTitle(title.str());
 
@@ -600,35 +563,32 @@ namespace Atlas
             Input::Update();
 
             // Weapon switching (1-5 or scroll wheel) and reload are
-            // edge-triggered per frame.
+            // edge-triggered per frame and latched for the next tick.
             if (player.IsAlive())
             {
-                if (Input::WasKeyPressed(SDL_SCANCODE_1)) currentWeapon = 0;
-                if (Input::WasKeyPressed(SDL_SCANCODE_2)) currentWeapon = 1;
-                if (Input::WasKeyPressed(SDL_SCANCODE_3)) currentWeapon = 2;
-                if (Input::WasKeyPressed(SDL_SCANCODE_4)) currentWeapon = 3;
-                if (Input::WasKeyPressed(SDL_SCANCODE_5)) currentWeapon = 4;
+                const int shownSlot =
+                    slotQueued >= 0 ? slotQueued : localSlot.CurrentSlot;
+                int slot = shownSlot;
+
+                if (Input::WasKeyPressed(SDL_SCANCODE_1)) slot = 0;
+                if (Input::WasKeyPressed(SDL_SCANCODE_2)) slot = 1;
+                if (Input::WasKeyPressed(SDL_SCANCODE_3)) slot = 2;
+                if (Input::WasKeyPressed(SDL_SCANCODE_4)) slot = 3;
+                if (Input::WasKeyPressed(SDL_SCANCODE_5)) slot = 4;
 
                 const int wheel = Input::ConsumeWheelSteps();
 
                 if (wheel != 0)
                 {
-                    currentWeapon =
-                        (currentWeapon - wheel % LoadoutSize +
-                            LoadoutSize) % LoadoutSize;
+                    slot = (slot - wheel % LoadoutSize + LoadoutSize) %
+                        LoadoutSize;
                 }
 
-                if (player.GetWeapon().GetDef() != loadout[currentWeapon])
-                {
-                    player.SetWeaponDef(loadout[currentWeapon]);
-                    Audio::Play(Sfx::Reload, 0.7f);
-                }
+                if (slot != shownSlot)
+                    slotQueued = slot;
 
                 if (Input::WasKeyPressed(SDL_SCANCODE_R))
-                {
-                    player.GetWeapon().StartReload();
-                    Audio::Play(Sfx::Reload);
-                }
+                    reloadQueued = true;
             }
 
             const float mouseWorldX = Input::GetMouseX() + camera.GetX();
@@ -657,7 +617,7 @@ namespace Atlas
             if (Input::WasMouseButtonPressed(SDL_BUTTON_LEFT) &&
                 botsButtonHovered)
             {
-                botsEnabled = !botsEnabled;
+                world.SetBotsEnabled(!world.IsBotsEnabled());
             }
 
             const bool menuHeld =
@@ -822,46 +782,24 @@ namespace Atlas
                         if (!cart.IsEmpty() &&
                             player.GetGold() >= cart.GetTotalCost())
                         {
-                            player.AddGold(-cart.GetTotalCost());
-
-                            auto queueDelivery = [&](
-                                DeliveryKind kind, const WeaponDef* weapon)
-                            {
-                                const bool fromLeft = (rng() % 2u) == 0u;
-                                const float shipDir = fromLeft ? 1.0f : -1.0f;
-                                const float shipOrigin = fromLeft
-                                    ? (camera.GetX() - ShipEdgeMargin)
-                                    : (camera.GetX() +
-                                        static_cast<float>(ViewWidth) +
-                                        ShipEdgeMargin);
-
-                                deliveries.Order(
-                                    kind, shipOrigin, shipDir,
-                                    player.GetCenterX(), weapon);
-                            };
+                            OrderRequest order;
 
                             for (const CartBody& body : cart.GetBodies())
-                            {
-                                queueDelivery(
-                                    DeliveryKind::Reinforcement, body.Weapon);
-                            }
+                                order.Bodies.push_back(body.Weapon);
 
                             for (const CartLooseWeapon& loose :
                                 cart.GetLooseWeapons())
                             {
-                                queueDelivery(
-                                    DeliveryKind::WeaponPickup, loose.Weapon);
+                                order.LooseWeapons.push_back(loose.Weapon);
                             }
 
-                            for (int i = 0;
-                                i < cart.GetSupplyCrateCount(); i++)
+                            order.SupplyCrates = cart.GetSupplyCrateCount();
+
+                            if (world.SubmitOrder(localPlayer, order))
                             {
-                                queueDelivery(
-                                    DeliveryKind::SupplyCrate, nullptr);
+                                cart.Clear();
+                                Audio::Play(Sfx::Reload, 0.6f);
                             }
-
-                            cart.Clear();
-                            Audio::Play(Sfx::Reload, 0.6f);
                         }
                     }
 
@@ -919,54 +857,6 @@ namespace Atlas
             // the menu open.
             const bool uiCapturingInput = menuHeld || botsButtonHovered;
 
-            // Digger plasma-beam preview: a raycast every rendered frame
-            // (not tied to the tool's own slower fire-rate ticks) so the
-            // beam tracks the aim smoothly while held down.
-            if (player.IsAlive())
-            {
-                const Weapon& heldWeapon = player.GetWeapon();
-
-                const bool isDigging =
-                    heldWeapon.GetDef() &&
-                    heldWeapon.GetDef()->Kind == WeaponKind::Digger &&
-                    Input::IsMouseButtonDown(SDL_BUTTON_LEFT) &&
-                    !uiCapturingInput &&
-                    !player.IsArmDestroyed();
-
-                if (isDigging)
-                {
-                    const WeaponDef& def = *heldWeapon.GetDef();
-                    const float muzzleX = player.GetMuzzleX();
-                    const float muzzleY = player.GetMuzzleY();
-
-                    float dirX = player.GetAimDirX();
-                    float dirY = player.GetAimDirY();
-                    heldWeapon.GetSweptDirection(
-                        player.GetAimDirX(), player.GetAimDirY(), dirX, dirY);
-
-                    float hitX = 0.0f;
-                    float hitY = 0.0f;
-
-                    if (terrain.RaycastSolid(
-                        muzzleX, muzzleY, dirX, dirY,
-                        def.DigRange, hitX, hitY))
-                    {
-                        player.SetDigBeam(true, hitX, hitY);
-                    }
-                    else
-                    {
-                        player.SetDigBeam(
-                            true,
-                            muzzleX + dirX * def.DigRange,
-                            muzzleY + dirY * def.DigRange);
-                    }
-                }
-                else
-                {
-                    player.SetDigBeam(false, 0.0f, 0.0f);
-                }
-            }
-
             // Fixed-timestep simulation. Hit-stop eats the frame's sim
             // time instead of feeding the accumulator, freezing the
             // world for a beat while rendering carries on.
@@ -977,599 +867,42 @@ namespace Atlas
 
             bool simTicked = false;
 
-            while (accumulator >= FixedTimeStep)
+            while (accumulator >= World::FixedTimeStep)
             {
-                grenadeCooldown -= FixedTimeStep;
-                jetSoundTimer -= FixedTimeStep;
-                toolSfxTimer -= FixedTimeStep;
-
-                // --- Player ---
-                if (player.IsAlive())
-                {
-                    float moveInput = 0.0f;
-
-                    if (Input::IsKeyDown(SDL_SCANCODE_A))
-                        moveInput -= 1.0f;
-
-                    if (Input::IsKeyDown(SDL_SCANCODE_D))
-                        moveInput += 1.0f;
-
-                    const bool jet =
-                        Input::IsKeyDown(SDL_SCANCODE_W) ||
-                        Input::IsKeyDown(SDL_SCANCODE_LSHIFT);
-
-                    const bool crouch = Input::IsKeyDown(SDL_SCANCODE_S);
-
-                    player.SetAim(mouseWorldX, mouseWorldY);
-
-                    if (jumpQueued && player.IsGrounded())
-                        Audio::Play(Sfx::Jump, 0.5f);
-
-                    playerPrevFallSpeed = player.GetVelocityY();
-                    playerWasGrounded = player.IsGrounded();
-
-                    player.Update(
-                        terrain,
-                        &particles,
-                        FixedTimeStep,
-                        moveInput,
-                        Input::IsKeyDown(SDL_SCANCODE_SPACE),
-                        jet,
-                        crouch);
-
-                    if (!playerWasGrounded &&
-                        player.IsGrounded() &&
-                        playerPrevFallSpeed > 320.0f)
-                    {
-                        Audio::Play(Sfx::Land, 0.6f);
-
-                        // Landing kicks up a dust ring and a camera thump
-                        // scaled by how hard the fall was.
-                        const float impact = std::min(
-                            1.0f, playerPrevFallSpeed / 900.0f);
-
-                        trauma = std::min(trauma + 0.12f + impact * 0.2f, 1.0f);
-
-                        for (int i = 0; i < 7; i++)
-                        {
-                            particles.SpawnDust(
-                                player.GetCenterX() + unit(rng) * 10.0f,
-                                player.GetY() + player.GetHeight() + 20.0f,
-                                unit(rng) * 60.0f,
-                                -20.0f - (i % 3) * 12.0f);
-                        }
-                    }
-
-                    // Footstep puffs on each fresh foot plant while
-                    // actually walking.
-                    for (int leg = 0; leg < 2; leg++)
-                    {
-                        const bool planted = player.GetLeg(leg).IsPlanted();
-
-                        if (planted && !prevLegPlanted[leg] &&
-                            std::fabs(player.GetVelocityX()) > 40.0f &&
-                            player.IsGrounded() &&
-                            !player.IsCrouching())
-                        {
-                            particles.SpawnDust(
-                                player.GetLeg(leg).GetFootX(),
-                                player.GetLeg(leg).GetFootY() - 1.0f,
-                                -player.GetVelocityX() * 0.08f,
-                                -16.0f);
-                        }
-
-                        prevLegPlanted[leg] = planted;
-                    }
-
-                    if (player.IsJetting() && jetSoundTimer <= 0.0f)
-                    {
-                        Audio::Play(Sfx::JetBurst, 0.55f);
-                        jetSoundTimer = 0.15f;
-                    }
-
-                    player.GetWeapon().Update(FixedTimeStep);
-
-                    if (Input::IsMouseButtonDown(SDL_BUTTON_LEFT) &&
-                        !uiCapturingInput &&
-                        !player.IsArmDestroyed())
-                    {
-                        if (player.GetWeapon().TryFire(
-                            particles,
-                            terrain,
-                            player.GetMuzzleX(),
-                            player.GetMuzzleY(),
-                            player.GetAimDirX(),
-                            player.GetAimDirY(),
-                            mouseWorldX,
-                            mouseWorldY,
-                            &player))
-                        {
-                            player.NotifyFired();
-
-                            const WeaponDef& def =
-                                *player.GetWeapon().GetDef();
-
-                            if (def.Kind == WeaponKind::Gun)
-                                crosshairBloom = 1.0f;
-
-                            // Dig tools tick fast; don't machine-gun the
-                            // crumble sound.
-                            if (def.Kind == WeaponKind::Gun)
-                            {
-                                Audio::Play(FireSfxFor(def), 0.8f);
-                            }
-                            else if (toolSfxTimer <= 0.0f)
-                            {
-                                Audio::Play(FireSfxFor(def), 0.7f);
-                                toolSfxTimer = 0.1f;
-                            }
-
-                            // The digger can also maim: whatever limb its
-                            // impact point lands on takes LimbDamage. The
-                            // raycast here mirrors what TryFire just did
-                            // internally (same swept direction, no time
-                            // has passed), so the hit point matches.
-                            if (def.Kind == WeaponKind::Digger &&
-                                def.LimbDamage > 0)
-                            {
-                                float sweptDirX = 0.0f;
-                                float sweptDirY = 0.0f;
-                                player.GetWeapon().GetSweptDirection(
-                                    player.GetAimDirX(),
-                                    player.GetAimDirY(),
-                                    sweptDirX,
-                                    sweptDirY);
-
-                                const float reachBehind =
-                                    def.BarrelLength + 4.0f;
-
-                                float digHitX = 0.0f;
-                                float digHitY = 0.0f;
-
-                                if (terrain.RaycastSolid(
-                                    player.GetMuzzleX() -
-                                        sweptDirX * reachBehind,
-                                    player.GetMuzzleY() -
-                                        sweptDirY * reachBehind,
-                                    sweptDirX,
-                                    sweptDirY,
-                                    def.DigRange + reachBehind,
-                                    digHitX,
-                                    digHitY))
-                                {
-                                    for (Enemy& enemy : enemies)
-                                    {
-                                        if (!enemy.Body ||
-                                            !enemy.Body->IsAlive())
-                                            continue;
-
-                                        BodyPartId hitPart =
-                                            BodyPartId::None;
-                                        float local01X = 0.0f;
-                                        float local01Y = 0.0f;
-
-                                        if (enemy.Body->TestLimbHit(
-                                            digHitX, digHitY,
-                                            hitPart, local01X, local01Y))
-                                        {
-                                            enemy.Body->TakeLimbDamage(
-                                                hitPart,
-                                                def.LimbDamage,
-                                                local01X,
-                                                local01Y,
-                                                &particles,
-                                                -sweptDirX * 40.0f,
-                                                -sweptDirY * 40.0f);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if (throwQueued && !uiCapturingInput &&
-                        grenadeCooldown <= 0.0f)
-                    {
-                        grenades.Throw(
-                            player.GetHandX(),
-                            player.GetHandY(),
-                            player.GetAimDirX() * 520.0f +
-                                player.GetVelocityX() * 0.4f,
-                            player.GetAimDirY() * 520.0f - 60.0f);
-
-                        grenadeCooldown = GrenadeCooldownTime;
-
-                        Audio::Play(Sfx::Throw, 0.7f);
-                    }
-                }
-                else
-                {
-                    respawnTimer -= FixedTimeStep;
-
-                    if (respawnTimer <= 0.0f)
-                    {
-                        player.ResetVitals();
-                        player.Spawn(terrain, static_cast<float>(worldWidth) * 0.5f);
-                        playerGibbed = false;
-                    }
-                }
-
-                // --- Actor roster for collisions ---
-                Actor* actorPtrs[MaxEnemies + MaxAllies + 1];
-                int actorCount = 0;
-
-                if (player.IsAlive())
-                    actorPtrs[actorCount++] = &player;
-
-                for (Enemy& enemy : enemies)
-                    actorPtrs[actorCount++] = enemy.Body.get();
-
-                for (Ally& ally : allies)
-                    actorPtrs[actorCount++] = ally.Body.get();
-
-                // --- Enemies ---
-                for (Enemy& enemy : enemies)
-                {
-                    enemy.Brain.Update(
-                        *enemy.Body,
-                        player.IsAlive() ? &player : nullptr,
-                        terrain,
-                        particles,
-                        terrain,
-                        FixedTimeStep);
-                }
-
-                // --- Allies: each fights whichever enemy is nearest ---
-                for (Ally& ally : allies)
-                {
-                    Actor* nearestEnemy = nullptr;
-                    float nearestDistSquared = 0.0f;
-
-                    for (Enemy& enemy : enemies)
-                    {
-                        if (!enemy.Body->IsAlive())
-                            continue;
-
-                        const float dx = enemy.Body->GetCenterX() -
-                            ally.Body->GetCenterX();
-                        const float dy = enemy.Body->GetCenterY() -
-                            ally.Body->GetCenterY();
-                        const float distSquared = dx * dx + dy * dy;
-
-                        if (!nearestEnemy || distSquared < nearestDistSquared)
-                        {
-                            nearestEnemy = enemy.Body.get();
-                            nearestDistSquared = distSquared;
-                        }
-                    }
-
-                    ally.Brain.Update(
-                        *ally.Body,
-                        nearestEnemy,
-                        terrain,
-                        particles,
-                        terrain,
-                        FixedTimeStep);
-                }
-
-                // --- Grenades and particles ---
-                grenades.Update(
-                    terrain,
-                    particles,
-                    actorPtrs,
-                    actorCount,
-                    FixedTimeStep);
-
-                if (grenades.ExplodedThisFrame())
-                {
-                    Audio::Play(Sfx::Explosion);
-                    trauma = std::min(trauma + 0.5f, 1.0f);
-                }
-
-                trauma = std::max(0.0f, trauma - 1.6f * FixedTimeStep);
-
-                particles.Update(
-                    terrain,
-                    FixedTimeStep,
-                    actorPtrs,
-                    actorCount);
-
-                // Floating damage numbers: compare each enemy's health to
-                // last tick's - catches every damage source (bullets,
-                // explosions, digger limb damage) without any plumbing.
-                for (Enemy& enemy : enemies)
-                {
-                    const int health = enemy.Body->GetHealth();
-
-                    if (health < enemy.LastHealth)
-                    {
-                        // The killing blow counts too - clamp the shown
-                        // damage to the health that actually remained
-                        // (a 9999 both-legs-gone kill shouldn't print
-                        // "9999").
-                        const int delta =
-                            enemy.LastHealth - std::max(0, health);
-
-                        if (delta > 0)
-                        {
-                            floaters.push_back({
-                                enemy.Body->GetCenterX() +
-                                    unit(rng) * 5.0f,
-                                enemy.Body->GetY() - 8.0f,
-                                -34.0f,
-                                0.75f, 0.75f,
-                                2.0f,
-                                std::to_string(delta),
-                                255, 224, 130,
-                                false });
-                        }
-                    }
-
-                    enemy.LastHealth = health;
-                }
-
-                // Gold popups, batched: while gold keeps arriving the
-                // window extends; once it goes quiet the total pops up.
-                {
-                    const int gold = player.GetGold();
-
-                    if (gold > lastPlayerGold)
-                    {
-                        goldPopupAccum += gold - lastPlayerGold;
-                        goldPopupTimer = 0.4f;
-                    }
-
-                    lastPlayerGold = gold;
-
-                    if (goldPopupTimer > 0.0f)
-                    {
-                        goldPopupTimer -= FixedTimeStep;
-
-                        if (goldPopupTimer <= 0.0f && goldPopupAccum > 0)
-                        {
-                            floaters.push_back({
-                                player.GetCenterX(),
-                                player.GetY() - 14.0f,
-                                -30.0f,
-                                1.0f, 1.0f,
-                                2.0f,
-                                "+" + std::to_string(goldPopupAccum) + "G",
-                                235, 200, 90,
-                                false });
-
-                            goldPopupAccum = 0;
-                        }
-                    }
-                }
-
-                // --- Deaths ---
-                if (!player.IsAlive() && !playerGibbed)
-                {
-                    player.Gib(particles);
-                    Audio::Play(Sfx::Gib);
-                    respawnTimer = RespawnTime;
-                    playerGibbed = true;
-                }
-
-                for (std::size_t i = 0; i < enemies.size(); )
-                {
-                    if (!enemies[i].Body->IsAlive())
-                    {
-                        enemies[i].Body->Gib(particles);
-                        Audio::Play(Sfx::Gib, 0.8f);
-
-                        // Kill punch: brief hit-stop plus a camera
-                        // thump - but only for kills the player can
-                        // actually see. An ally finishing someone off
-                        // across the map shouldn't freeze the world for
-                        // no visible reason.
-                        const float killDx =
-                            enemies[i].Body->GetCenterX() -
-                            player.GetCenterX();
-                        const float killDy =
-                            enemies[i].Body->GetCenterY() -
-                            player.GetCenterY();
-
-                        if (std::fabs(killDx) < 720.0f &&
-                            std::fabs(killDy) < 440.0f)
-                        {
-                            hitStop = std::min(hitStop + 0.05f, 0.09f);
-                            trauma = std::min(trauma + 0.18f, 1.0f);
-                        }
-
-                        // Sometimes drop a medkit.
-                        if (unit(rng) > 0.2f)
-                        {
-                            pickups.push_back({
-                                enemies[i].Body->GetCenterX(),
-                                enemies[i].Body->GetCenterY(),
-                                -120.0f });
-                        }
-
-                        enemies.erase(enemies.begin() +
-                            static_cast<std::ptrdiff_t>(i));
-                    }
-                    else
-                    {
-                        i++;
-                    }
-                }
-
-                for (std::size_t i = 0; i < allies.size(); )
-                {
-                    if (!allies[i].Body->IsAlive())
-                    {
-                        allies[i].Body->Gib(particles);
-                        Audio::Play(Sfx::Gib, 0.8f);
-
-                        allies.erase(allies.begin() +
-                            static_cast<std::ptrdiff_t>(i));
-                    }
-                    else
-                    {
-                        i++;
-                    }
-                }
-
-                // --- Medkit pickups ---
-                for (std::size_t i = 0; i < pickups.size(); )
-                {
-                    HealthPickup& pickup = pickups[i];
-
-                    pickup.VelY += 900.0f * FixedTimeStep;
-
-                    const float fall = pickup.VelY * FixedTimeStep;
-
-                    if (!terrain.IsSolid(pickup.X, pickup.Y + fall + 4.0f))
-                        pickup.Y += fall;
-                    else
-                        pickup.VelY = 0.0f;
-
-                    const float dx = pickup.X - player.GetCenterX();
-                    const float dy = pickup.Y - player.GetCenterY();
-
-                    if (player.IsAlive() &&
-                        dx * dx + dy * dy < 34.0f * 34.0f)
-                    {
-                        player.Heal(30);
-                        Audio::Play(Sfx::Reload, 0.9f);
-
-                        pickups[i] = pickups.back();
-                        pickups.pop_back();
-                    }
-                    else
-                    {
-                        i++;
-                    }
-                }
-
-                // --- Waves ---
-                if (botsEnabled && enemies.empty())
-                {
-                    waveTimer -= FixedTimeStep;
-
-                    if (waveTimer <= 0.0f)
-                    {
-                        wave++;
-                        spawnWave(std::min(1 + wave, MaxEnemies));
-                        waveTimer = 4.0f;
-
-                        // Center-screen wave banner with a sub-line.
-                        const std::string banner =
-                            "WAVE " + std::to_string(wave);
-
-                        floaters.push_back({
-                            (static_cast<float>(ViewWidth) -
-                                PixelFont::Measure(banner, 6.0f)) * 0.5f,
-                            170.0f,
-                            -9.0f,
-                            2.2f, 2.2f,
-                            6.0f,
-                            banner,
-                            240, 235, 220,
-                            true });
-
-                        floaters.push_back({
-                            (static_cast<float>(ViewWidth) -
-                                PixelFont::Measure("HOSTILES INBOUND", 2.0f)) *
-                                0.5f,
-                            212.0f,
-                            -9.0f,
-                            2.2f, 2.2f,
-                            2.0f,
-                            "HOSTILES INBOUND",
-                            255, 130, 110,
-                            true });
-                    }
-                }
-
-                // --- Deliveries: drop ship flies in, payload parachutes
-                // down, then delivers its contents on landing. The
-                // system only owns the flight/fall physics; the actual
-                // gameplay effect happens here, where Actor/player
-                // context is available.
-                {
-                    std::vector<const Delivery*> landed;
-                    std::vector<const Delivery*> delivered;
-
-                    deliveries.Update(terrain, FixedTimeStep, landed, delivered);
-
-                    if (!landed.empty())
-                        Audio::Play(Sfx::Land, 0.7f);
-
-                    for (const Delivery* delivery : delivered)
-                    {
-                        switch (delivery->Kind)
-                        {
-                        case DeliveryKind::SupplyCrate:
-                            if (player.IsAlive())
-                            {
-                                player.Heal(50);
-                                player.GetWeapon().Refill();
-                            }
-                            break;
-
-                        case DeliveryKind::Reinforcement:
-                            spawnAlly(delivery->PayloadX, delivery->Weapon);
-                            break;
-
-                        case DeliveryKind::WeaponPickup:
-                            weaponPickups.push_back({
-                                delivery->PayloadX,
-                                delivery->PayloadY,
-                                0.0f,
-                                delivery->Weapon });
-                            break;
-                        }
-                    }
-                }
-
-                // --- Weapon field pickups: settle to the ground, then
-                // wait for the player to walk over them ---
-                for (std::size_t i = 0; i < weaponPickups.size(); )
-                {
-                    WeaponPickup& pickup = weaponPickups[i];
-
-                    pickup.VelY += 900.0f * FixedTimeStep;
-
-                    const float fall = pickup.VelY * FixedTimeStep;
-
-                    if (!terrain.IsSolid(pickup.X, pickup.Y + fall + 4.0f))
-                        pickup.Y += fall;
-                    else
-                        pickup.VelY = 0.0f;
-
-                    const float dx = pickup.X - player.GetCenterX();
-                    const float dy = pickup.Y - player.GetCenterY();
-
-                    if (player.IsAlive() && pickup.Weapon &&
-                        dx * dx + dy * dy < 30.0f * 30.0f)
-                    {
-                        player.SetWeaponDef(pickup.Weapon);
-
-                        // Keep the number-key loadout and HUD slot
-                        // highlight in sync with whatever got equipped.
-                        for (int slot = 0; slot < LoadoutSize; slot++)
-                        {
-                            if (loadout[slot] == pickup.Weapon)
-                            {
-                                currentWeapon = slot;
-                                break;
-                            }
-                        }
-
-                        Audio::Play(Sfx::Reload, 0.8f);
-
-                        weaponPickups[i] = weaponPickups.back();
-                        weaponPickups.pop_back();
-                    }
-                    else
-                    {
-                        i++;
-                    }
-                }
-
-                accumulator -= FixedTimeStep;
+                // This frame's input for the local player. Latched edges
+                // go to the first tick only.
+                PlayerInput input;
+
+                if (Input::IsKeyDown(SDL_SCANCODE_A))
+                    input.MoveX -= 1.0f;
+
+                if (Input::IsKeyDown(SDL_SCANCODE_D))
+                    input.MoveX += 1.0f;
+
+                input.Jump = Input::IsKeyDown(SDL_SCANCODE_SPACE);
+                input.JumpPressed = jumpQueued && !simTicked;
+                input.Jetpack =
+                    Input::IsKeyDown(SDL_SCANCODE_W) ||
+                    Input::IsKeyDown(SDL_SCANCODE_LSHIFT);
+                input.Crouch = Input::IsKeyDown(SDL_SCANCODE_S);
+
+                input.AimX = mouseWorldX;
+                input.AimY = mouseWorldY;
+
+                // No shooting or grenade-throwing through the UI.
+                input.Fire =
+                    Input::IsMouseButtonDown(SDL_BUTTON_LEFT) &&
+                    !uiCapturingInput;
+                input.ThrowPressed =
+                    throwQueued && !simTicked && !uiCapturingInput;
+                input.ReloadPressed = reloadQueued && !simTicked;
+                input.SelectSlot = static_cast<std::int8_t>(
+                    simTicked ? -1 : slotQueued);
+
+                world.Step(&input, 1);
+                handleEvents();
+
+                accumulator -= World::FixedTimeStep;
                 simTicked = true;
             }
 
@@ -1580,8 +913,43 @@ namespace Atlas
             {
                 throwQueued = false;
                 jumpQueued = false;
+                reloadQueued = false;
+                slotQueued = -1;
             }
 
+            // Gold popups, batched: while gold keeps arriving the window
+            // extends; once it goes quiet the total pops up.
+            {
+                const int gold = player.GetGold();
+
+                if (gold > lastPlayerGold)
+                {
+                    goldPopupAccum += gold - lastPlayerGold;
+                    goldPopupTimer = 0.4f;
+                }
+
+                lastPlayerGold = gold;
+
+                if (goldPopupTimer > 0.0f)
+                {
+                    goldPopupTimer -= frameTime;
+
+                    if (goldPopupTimer <= 0.0f && goldPopupAccum > 0)
+                    {
+                        floaters.push_back({
+                            player.GetCenterX(),
+                            player.GetY() - 14.0f,
+                            -30.0f,
+                            1.0f, 1.0f,
+                            2.0f,
+                            "+" + std::to_string(goldPopupAccum) + "G",
+                            235, 200, 90,
+                            false });
+
+                        goldPopupAccum = 0;
+                    }
+                }
+            }
             terrain.Update();
 
             // --- Camera: smoothed follow with aim lookahead and
@@ -1756,6 +1124,23 @@ namespace Atlas
             grenades.Draw(m_Window);
 
             deliveries.Draw(m_Window);
+
+            // Actors spawned by the World borrow the client's shared body
+            // sprite the first time they are drawn.
+            for (Enemy& enemy : enemies)
+            {
+                if (!enemy.Body->GetBodyTexture())
+                    enemy.Body->SetBodyTexture(bodyTexture.GetTexture());
+            }
+
+            for (Ally& ally : allies)
+            {
+                if (!ally.Body->GetBodyTexture())
+                    ally.Body->SetBodyTexture(bodyTexture.GetTexture());
+            }
+
+            if (!player.GetBodyTexture())
+                player.SetBodyTexture(bodyTexture.GetTexture());
 
             for (Enemy& enemy : enemies)
                 enemy.Body->Draw(m_Window);
@@ -2327,7 +1712,7 @@ namespace Atlas
             // Weapon slots with numbers.
             for (int i = 0; i < LoadoutSize; i++)
             {
-                const bool selected = i == currentWeapon;
+                const bool selected = i == localSlot.CurrentSlot;
                 const float slotX = barX + static_cast<float>(i) * 22.0f;
 
                 m_Window.DrawScreenRect(slotX, 70.0f, 18.0f, 16.0f,
@@ -2375,7 +1760,7 @@ namespace Atlas
 
             // Wave status (top right): wave number and enemies left.
             {
-                const std::string waveText = "WAVE " + std::to_string(wave);
+                const std::string waveText = "WAVE " + std::to_string(world.GetWave());
 
                 drawText(
                     static_cast<float>(ViewWidth) - 20.0f -
@@ -2414,13 +1799,13 @@ namespace Atlas
                 m_Window.DrawScreenRect(
                     BotsButtonX + 1.0f, BotsButtonY + 1.0f,
                     BotsButtonW - 2.0f, BotsButtonH - 2.0f,
-                    static_cast<Uint8>((botsEnabled ? 42 : 92) + hoverBoost),
-                    static_cast<Uint8>((botsEnabled ? 120 : 46) + hoverBoost),
-                    static_cast<Uint8>((botsEnabled ? 58 : 46) + hoverBoost),
+                    static_cast<Uint8>((world.IsBotsEnabled() ? 42 : 92) + hoverBoost),
+                    static_cast<Uint8>((world.IsBotsEnabled() ? 120 : 46) + hoverBoost),
+                    static_cast<Uint8>((world.IsBotsEnabled() ? 58 : 46) + hoverBoost),
                     220);
 
                 const std::string botsLabel =
-                    botsEnabled ? "BOTS: ON" : "BOTS: OFF";
+                    world.IsBotsEnabled() ? "BOTS: ON" : "BOTS: OFF";
 
                 drawText(
                     BotsButtonX +
@@ -2445,7 +1830,7 @@ namespace Atlas
                     ViewWidth * 0.5f - 100.0f,
                     ViewHeight * 0.5f - 6.0f,
                     200.0f * std::clamp(
-                        1.0f - respawnTimer / RespawnTime, 0.0f, 1.0f),
+                        1.0f - localSlot.RespawnTimer / RespawnTime, 0.0f, 1.0f),
                     12.0f,
                     240, 240, 240, 220);
             }

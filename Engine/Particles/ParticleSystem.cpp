@@ -66,7 +66,8 @@ namespace Atlas
         p.Size = 2;
         p.Type = ParticleType::Bullet;
         p.SettleMaterial = Material::Air;
-        p.Owner = owner;
+        p.OwnerId = owner ? owner->GetId() : 0u;
+        p.OwnerTeam = owner ? static_cast<std::int8_t>(owner->GetTeam()) : -1;
 
         Push(p);
     }
@@ -94,7 +95,8 @@ namespace Atlas
         p.Size = 1;
         p.Type = ParticleType::Debris;
         p.SettleMaterial = material;
-        p.Owner = nullptr;
+        p.OwnerId = 0u;
+        p.OwnerTeam = -1;
 
         Push(p);
     }
@@ -115,7 +117,8 @@ namespace Atlas
         p.Size = 1;
         p.Type = ParticleType::Blood;
         p.SettleMaterial = Material::Air;
-        p.Owner = nullptr;
+        p.OwnerId = 0u;
+        p.OwnerTeam = -1;
 
         Push(p);
     }
@@ -136,7 +139,8 @@ namespace Atlas
         p.Size = 1;
         p.Type = ParticleType::Spark;
         p.SettleMaterial = Material::Air;
-        p.Owner = nullptr;
+        p.OwnerId = 0u;
+        p.OwnerTeam = -1;
 
         Push(p);
     }
@@ -157,7 +161,8 @@ namespace Atlas
         p.Size = 2;
         p.Type = ParticleType::Smoke;
         p.SettleMaterial = Material::Air;
-        p.Owner = nullptr;
+        p.OwnerId = 0u;
+        p.OwnerTeam = -1;
 
         Push(p);
     }
@@ -178,7 +183,8 @@ namespace Atlas
         p.Size = 3;
         p.Type = ParticleType::Fire;
         p.SettleMaterial = Material::Air;
-        p.Owner = nullptr;
+        p.OwnerId = 0u;
+        p.OwnerTeam = -1;
 
         Push(p);
     }
@@ -200,7 +206,8 @@ namespace Atlas
         p.Size = 1;
         p.Type = ParticleType::Casing;
         p.SettleMaterial = Material::Air;
-        p.Owner = nullptr;
+        p.OwnerId = 0u;
+        p.OwnerTeam = -1;
 
         Push(p);
     }
@@ -228,7 +235,8 @@ namespace Atlas
         p.Size = 2;
         p.Type = ParticleType::Dust;
         p.SettleMaterial = Material::Air;
-        p.Owner = nullptr;
+        p.OwnerId = 0u;
+        p.OwnerTeam = -1;
 
         Push(p);
     }
@@ -246,7 +254,8 @@ namespace Atlas
         p.Size = 2;
         p.Type = ParticleType::Shockwave;
         p.SettleMaterial = Material::Air;
-        p.Owner = nullptr;
+        p.OwnerId = 0u;
+        p.OwnerTeam = -1;
 
         Push(p);
     }
@@ -265,7 +274,8 @@ namespace Atlas
         p.Size = 1;
         p.Type = ParticleType::Flash;
         p.SettleMaterial = Material::Air;
-        p.Owner = nullptr;
+        p.OwnerId = 0u;
+        p.OwnerTeam = -1;
 
         Push(p);
     }
@@ -294,7 +304,8 @@ namespace Atlas
         p.Size = static_cast<std::uint8_t>(std::clamp(size, 1, 4));
         p.Type = ParticleType::Gib;
         p.SettleMaterial = Material::Air;
-        p.Owner = nullptr;
+        p.OwnerId = 0u;
+        p.OwnerTeam = -1;
 
         Push(p);
     }
@@ -333,7 +344,8 @@ namespace Atlas
         Terrain& terrain,
         float deltaTime,
         Actor* const* actors,
-        int actorCount)
+        int actorCount,
+        std::vector<GoldCredit>* outGold)
     {
         const float worldWidth = static_cast<float>(terrain.GetWidth());
         const float worldHeight = static_cast<float>(terrain.GetHeight());
@@ -386,12 +398,13 @@ namespace Atlas
                         {
                             Actor* actor = actors[a];
 
-                            if (!actor || actor == p.Owner || !actor->IsAlive())
+                            if (!actor || !actor->IsAlive() ||
+                                (p.OwnerId != 0u && actor->GetId() == p.OwnerId))
                                 continue;
 
                             // No friendly fire: a bullet only hurts
                             // actors on a different team than its owner.
-                            if (p.Owner && actor->GetTeam() == p.Owner->GetTeam())
+                            if (p.OwnerTeam >= 0 && actor->GetTeam() == p.OwnerTeam)
                                 continue;
 
                             BodyPartId hitPart = BodyPartId::None;
@@ -458,8 +471,8 @@ namespace Atlas
                             terrain.DestroyPixel(px, py);
                             p.Power -= strength;
 
-                            if (value > 0 && p.Owner)
-                                p.Owner->AddGold(value);
+                            if (value > 0 && p.OwnerId != 0u && outGold)
+                                outGold->push_back({ p.OwnerId, value });
 
                             if ((m_RandomState & 3u) == 0u)
                             {
