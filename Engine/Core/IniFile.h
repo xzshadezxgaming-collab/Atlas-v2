@@ -1,5 +1,6 @@
 #pragma once
 
+#include <iosfwd>
 #include <map>
 #include <string>
 #include <vector>
@@ -12,6 +13,9 @@ namespace Atlas
     {
     public:
         bool Load(const std::string& filename);
+
+        // Parses INI text already in memory (e.g. received from a host).
+        void LoadFromString(const std::string& text);
 
         bool HasSection(const std::string& section) const;
 
@@ -34,6 +38,8 @@ namespace Atlas
         const std::vector<std::string>& GetSectionNames() const;
 
     private:
+        void Parse(std::istream& stream);
+
         std::map<std::string, std::map<std::string, std::string>> m_Sections;
         std::vector<std::string> m_SectionOrder;
     };

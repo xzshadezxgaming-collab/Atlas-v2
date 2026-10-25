@@ -32,6 +32,9 @@ add_library(AtlasEngine STATIC
 
     Sim/World.cpp
 
+    Net/Protocol.cpp
+    Net/Session.cpp
+
     ECS/Transform.cpp
     ECS/Entity.cpp
 )
@@ -42,6 +45,21 @@ target_include_directories(AtlasEngine
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
+
+# ENet (vendored in ThirdParty/enet): reliable UDP for multiplayer.
+target_include_directories(AtlasEngine
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/ThirdParty/enet/include
+)
+
+target_link_libraries(AtlasEngine
+    PRIVATE
+        enet
+)
+
+if(WIN32)
+    target_link_libraries(AtlasEngine PRIVATE ws2_32 winmm)
+endif()
 
 if(WIN32)
     # Windows uses the SDL3 binaries vendored in ThirdParty. Drop

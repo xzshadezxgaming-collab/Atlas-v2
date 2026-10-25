@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <fstream>
+#include <sstream>
 
 namespace Atlas
 {
@@ -27,6 +28,18 @@ namespace Atlas
         if (!file.is_open())
             return false;
 
+        Parse(file);
+        return true;
+    }
+
+    void IniFile::LoadFromString(const std::string& text)
+    {
+        std::istringstream stream(text);
+        Parse(stream);
+    }
+
+    void IniFile::Parse(std::istream& file)
+    {
         m_Sections.clear();
         m_SectionOrder.clear();
 
@@ -64,8 +77,6 @@ namespace Atlas
             if (!key.empty())
                 m_Sections[currentSection][key] = value;
         }
-
-        return true;
     }
 
     bool IniFile::HasSection(const std::string& section) const

@@ -141,6 +141,38 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
 | R | Reload |
 | Tab (hold) | Open the buy menu |
 
+## Multiplayer
+
+Up to four players, co-op against the bot waves:
+
+```
+Atlas --host [port]               # host a match (default port 27960)
+Atlas --join <address>[:port]     # join one
+```
+
+Players can join a match in progress. Other players show with their
+own tint and a `P2`/`P3`/`P4` tag; the HUD shows the connection status
+under the bots button. The host controls the bots toggle.
+
+How it works: **deterministic lockstep**, the model Factorio and most
+RTS games use for worlds with too much state to stream. Every peer runs
+the same `World`; only inputs cross the network. Each tick the host
+seals everyone's latest input into a `TickFrame`, applies it, and sends
+it to all clients, who apply the same frames in the same order, so
+dug terrain, debris, AI and particles cost no bandwidth at all. Every
+second the host sends a state hash, and a client that disagrees shows
+`DESYNC`. A late joiner receives the frame history and fast-forwards the
+match from tick 0 before taking control. Transport is
+[ENet](https://github.com/lsalzman/enet) (reliable UDP, vendored in
+`ThirdParty/enet`), wrapped by `Net/Session`; the wire format is in
+`Net/Protocol`.
+
+Current limits: clients feel one round trip of input delay on their
+own actor (no client-side prediction yet), all peers should run the
+same build on the same OS (different compilers' math libraries can
+round differently, which shows up as a desync), and a disconnected
+player's body stays in the match idle.
+
 ## Architecture
 
 The game is split into a **simulation** and a **client**:
@@ -192,7 +224,11 @@ cmake --build build -j
 
 ### Tests
 
-`Tests/SimTests.cpp` runs the simulation headless: a determinism check
+`Tests/NetTests.cpp` plays a real networked match over loopback: a host
+and two clients (one joining mid-match) driving scripted input, checking
+that every peer ends on the same tick with the same state hash, and that
+a fifth player is refused. `Tests/SimTests.cpp` runs the simulation
+headless: a determinism check
 (two worlds, same seed and scripted inputs, hashes compared every half
 second over a simulated minute), an order/ids check, and a five-minute
 four-player soak. Run them with:
@@ -218,8 +254,11 @@ Debug with AddressSanitizer + UBSan) and on Windows with MSVC.
 - [x] **Simulation core**: game state pulled out of the game loop into a
   headless `World`, per-player input commands, stable actor ids, seeded
   deterministic simulation, headless tests and CI
-- [ ] **Networking**: chunked terrain sync, server-authoritative netcode
-  with client prediction, 2-4 players
+- [x] **Networking**: deterministic lockstep co-op for 2-4 players over
+  ENet, late join by replay, desync detection
+- [ ] **Networking, next**: client-side prediction (or rollback) to hide
+  input delay, snapshot-based join for long matches, reconnects,
+  cross-platform float determinism
 - [ ] **Milestone 4 — game layer**: scenes and props from data files,
   inventory/pickups, objectives. The buy menu is now a real order cart
   (bodies, weapons/tools and supply crates, with weapons equippable to
