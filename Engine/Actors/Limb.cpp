@@ -14,13 +14,39 @@ namespace Atlas
         constexpr float FootHalfWidth = 4.0f;
         constexpr float FootDepth = 3.0f;
 
-        void DrawSegment(
+        constexpr float Pi = 3.14159265f;
+
+        // Boot roll through a step: toe-off at lift-off, toe-up just
+        // before the heel strikes (radians, screen space).
+        constexpr float StepRoll = 0.55f;
+
+        // Toes droop while the leg hangs in the air.
+        constexpr float DangleDroop = 0.4f;
+
+        constexpr Uint8 OutlineR = 24;
+        constexpr Uint8 OutlineG = 22;
+        constexpr Uint8 OutlineB = 27;
+
+        Uint8 Scale(int value, int tint)
+        {
+            return static_cast<Uint8>(std::clamp(value, 0, 255) * tint / 255);
+        }
+
+        Uint8 Lighten(Uint8 value, int amount)
+        {
+            return static_cast<Uint8>(std::clamp(value + amount, 0, 255));
+        }
+
+        // A run of square stamps from (x0, y0) to (x1, y1) whose size
+        // tapers from w0 to w1: a limb segment at pixel-art scale.
+        void DrawTaper(
             Window& window,
             float x0,
             float y0,
             float x1,
             float y1,
-            float thickness,
+            float w0,
+            float w1,
             Uint8 r,
             Uint8 g,
             Uint8 b)
@@ -31,17 +57,18 @@ namespace Atlas
 
             const int steps = std::max(
                 1,
-                static_cast<int>(std::ceil(length / (thickness * 0.5f))));
+                static_cast<int>(std::ceil(length / 1.0f)));
 
             for (int i = 0; i <= steps; i++)
             {
                 const float t = static_cast<float>(i) / static_cast<float>(steps);
+                const float w = std::max(1.0f, w0 + (w1 - w0) * t);
 
                 window.DrawFilledRect(
-                    x0 + dx * t - thickness * 0.5f,
-                    y0 + dy * t - thickness * 0.5f,
-                    thickness,
-                    thickness,
+                    std::round(x0 + dx * t - w * 0.5f),
+                    std::round(y0 + dy * t - w * 0.5f),
+                    std::round(w),
+                    std::round(w),
                     r,
                     g,
                     b,
@@ -49,30 +76,79 @@ namespace Atlas
             }
         }
 
-        // A limb segment with a dark outline and a subtle top highlight.
-        void DrawShadedSegment(
+        // Outline, fill, and a highlight strip down the lit (upper,
+        // forward) edge, offset along the segment's normal.
+        void DrawLimbSegment(
             Window& window,
             float x0,
             float y0,
             float x1,
             float y1,
-            float thickness,
+            float w0,
+            float w1,
+            float bend,
             Uint8 r,
             Uint8 g,
             Uint8 b)
         {
-            DrawSegment(window, x0, y0, x1, y1, thickness + 2.0f, 24, 22, 27);
-            DrawSegment(window, x0, y0, x1, y1, thickness, r, g, b);
+            DrawTaper(window, x0, y0, x1, y1, w0 + 2.0f, w1 + 2.0f,
+                OutlineR, OutlineG, OutlineB);
+            DrawTaper(window, x0, y0, x1, y1, w0, w1, r, g, b);
 
-            // Light catches the upper-left edge.
-            DrawSegment(
-                window,
-                x0 - 1.0f, y0 - 1.0f,
-                x1 - 1.0f, y1 - 1.0f,
-                std::max(1.0f, thickness - 3.0f),
-                static_cast<Uint8>(std::min(255, r + 26)),
-                static_cast<Uint8>(std::min(255, g + 26)),
-                static_cast<Uint8>(std::min(255, b + 28)));
+            // Shadow on the trailing side, light on the leading side.
+            const float dx = x1 - x0;
+            const float dy = y1 - y0;
+            const float length = std::max(0.001f, std::sqrt(dx * dx + dy * dy));
+
+            float nx = dy / length;
+            float ny = -dx / length;
+
+            // Normal toward the knee's facing side.
+            if (nx * bend < 0.0f)
+            {
+                nx = -nx;
+                ny = -ny;
+            }
+
+            const float shadeW0 = std::max(1.0f, w0 * 0.34f);
+            const float shadeW1 = std::max(1.0f, w1 * 0.34f);
+            const float off0 = (w0 - shadeW0) * 0.5f;
+            const float off1 = (w1 - shadeW1) * 0.5f;
+
+            DrawTaper(window,
+                x0 - nx * off0, y0 - ny * off0,
+                x1 - nx * off1, y1 - ny * off1,
+                shadeW0, shadeW1,
+                static_cast<Uint8>(r * 3 / 4),
+                static_cast<Uint8>(g * 3 / 4),
+                static_cast<Uint8>(b * 3 / 4));
+
+            DrawTaper(window,
+                x0 + nx * off0, y0 + ny * off0,
+                x1 + nx * off1, y1 + ny * off1,
+                shadeW0, shadeW1,
+                Lighten(r, 24), Lighten(g, 24), Lighten(b, 26));
+        }
+
+        // A point in the boot's frame (x toward the toe, y down) rotated
+        // into the world around the ankle.
+        void BootPoint(
+            float ankleX,
+            float ankleY,
+            float dir,
+            float cosA,
+            float sinA,
+            float scale,
+            float localX,
+            float localY,
+            float& outX,
+            float& outY)
+        {
+            const float x = localX * dir * scale;
+            const float y = localY * scale;
+
+            outX = ankleX + x * cosA - y * sinA;
+            outY = ankleY + x * sinA + y * cosA;
         }
     }
 
@@ -84,8 +160,18 @@ namespace Atlas
         m_FootX(0.0f),
         m_FootY(0.0f),
         m_Planted(false),
+        m_Swinging(false),
+        m_SwingFromX(0.0f),
+        m_SwingFromY(0.0f),
+        m_SwingT(0.0f),
+        m_SwingDirX(1.0f),
         m_VisualFootX(0.0f),
         m_VisualFootY(0.0f),
+        m_SnapOffsetX(0.0f),
+        m_SnapOffsetY(0.0f),
+        m_LastFootX(0.0f),
+        m_LastFootY(0.0f),
+        m_VisualPitch(0.0f),
         m_VisualInitialized(false)
     {
     }
@@ -114,7 +200,7 @@ namespace Atlas
 
     float Limb::GetReach() const
     {
-        return m_Thigh + m_Shin;
+        return m_Thigh + m_Shin + AnkleHeight;
     }
 
     bool Limb::IsPlanted() const
@@ -127,6 +213,8 @@ namespace Atlas
         m_FootX = footX;
         m_FootY = footY;
         m_Planted = true;
+        m_Swinging = false;
+        m_SwingT = 0.0f;
     }
 
     void Limb::Unplant()
@@ -169,49 +257,64 @@ namespace Atlas
         return false;
     }
 
-    bool Limb::SwingToward(
+    bool Limb::AdvanceSwing(
         float targetX,
         float targetY,
-        float speed,
+        float duration,
         float lift,
         float deltaTime)
     {
-        const float dx = targetX - m_FootX;
-        const float dy = targetY - m_FootY;
-        const float distance = std::sqrt(dx * dx + dy * dy);
+        if (!m_Swinging)
+        {
+            m_Swinging = true;
+            m_SwingFromX = m_FootX;
+            m_SwingFromY = m_FootY;
+            m_SwingT = 0.0f;
+        }
 
-        if (distance < 3.0f)
+        m_SwingT = std::min(1.0f, m_SwingT + deltaTime / std::max(0.02f, duration));
+
+        if (targetX != m_SwingFromX)
+            m_SwingDirX = targetX > m_SwingFromX ? 1.0f : -1.0f;
+
+        // Smoothstep along the ground: the foot accelerates off the
+        // ground and decelerates into the next foothold.
+        const float t = m_SwingT;
+        const float ease = t * t * (3.0f - 2.0f * t);
+
+        // Peak height is measured from the higher of the two footholds,
+        // so a step up lifts the toe over the ledge instead of through it.
+        const float baseY = m_SwingFromY + (targetY - m_SwingFromY) * ease;
+        const float climb = std::max(0.0f, baseY - std::min(m_SwingFromY, targetY));
+
+        // Front-loaded arc: the knee drives up early, the foot comes
+        // down onto the foothold rather than skimming into it.
+        const float arc = std::sin(Pi * std::pow(t, 0.8f));
+
+        m_FootX = m_SwingFromX + (targetX - m_SwingFromX) * ease;
+        m_FootY = baseY - (lift + climb) * arc;
+
+        if (m_SwingT >= 1.0f)
         {
             m_FootX = targetX;
             m_FootY = targetY;
             return true;
         }
 
-        // Aim above the foothold while far away so the foot arcs over
-        // small obstacles instead of dragging through them.
-        const float liftAmount = lift * std::min(1.0f, distance / 12.0f);
-
-        float aimX = targetX;
-        float aimY = targetY - liftAmount;
-
-        const float ax = aimX - m_FootX;
-        const float ay = aimY - m_FootY;
-        const float aimDistance = std::sqrt(ax * ax + ay * ay);
-
-        const float step = std::min(speed * deltaTime, aimDistance);
-
-        if (aimDistance > 0.0001f)
-        {
-            m_FootX += ax / aimDistance * step;
-            m_FootY += ay / aimDistance * step;
-        }
-
         return false;
     }
 
-    void Limb::DangleToward(float restX, float restY, float deltaTime)
+    float Limb::GetSwingProgress() const
     {
-        const float blend = std::min(1.0f, 8.0f * deltaTime);
+        return m_Swinging ? m_SwingT : 0.0f;
+    }
+
+    void Limb::DangleToward(float restX, float restY, float rate, float deltaTime)
+    {
+        m_Swinging = false;
+        m_SwingT = 0.0f;
+
+        const float blend = std::min(1.0f, rate * deltaTime);
 
         m_FootX += (restX - m_FootX) * blend;
         m_FootY += (restY - m_FootY) * blend;
@@ -219,161 +322,270 @@ namespace Atlas
 
     void Limb::EaseVisual(float deltaTime)
     {
+        // Boot roll: flat on the ground, rolling through a step, toes
+        // pointed while hanging (the droop is added at draw time, since
+        // which way is "toe" depends on facing).
+        const float targetPitch = m_Swinging
+            ? m_SwingDirX * StepRoll * std::cos(Pi * m_SwingT)
+            : 0.0f;
+
         // The very first call has nothing to ease from yet - snap so the
         // leg doesn't slide in from the origin at spawn.
         if (!m_VisualInitialized)
         {
+            m_LastFootX = m_FootX;
+            m_LastFootY = m_FootY;
             m_VisualFootX = m_FootX;
             m_VisualFootY = m_FootY;
+            m_VisualPitch = targetPitch;
             m_VisualInitialized = true;
             return;
         }
 
-        const float blend = std::min(1.0f, 26.0f * deltaTime);
+        // Ordinary motion (a swing, a dangle carried along with the body)
+        // is drawn exactly; only a jump bigger than any step could make
+        // in one tick counts as a snap, and is smoothed out instead.
+        constexpr float SnapDistance = 5.0f;
 
-        m_VisualFootX += (m_FootX - m_VisualFootX) * blend;
-        m_VisualFootY += (m_FootY - m_VisualFootY) * blend;
+        const float moveX = m_FootX - m_LastFootX;
+        const float moveY = m_FootY - m_LastFootY;
+
+        if (moveX * moveX + moveY * moveY > SnapDistance * SnapDistance)
+        {
+            m_SnapOffsetX -= moveX;
+            m_SnapOffsetY -= moveY;
+        }
+
+        m_LastFootX = m_FootX;
+        m_LastFootY = m_FootY;
+
+        const float decay = std::min(1.0f, 22.0f * deltaTime);
+        m_SnapOffsetX -= m_SnapOffsetX * decay;
+        m_SnapOffsetY -= m_SnapOffsetY * decay;
+
+        m_VisualFootX = m_FootX + m_SnapOffsetX;
+        m_VisualFootY = m_FootY + m_SnapOffsetY;
+
+        const float pitchBlend = std::min(1.0f, 18.0f * deltaTime);
+        m_VisualPitch += (targetPitch - m_VisualPitch) * pitchBlend;
+    }
+
+    void Limb::SolveKnee(
+        float hipX,
+        float hipY,
+        float ankleX,
+        float ankleY,
+        float thigh,
+        float shin,
+        float bend,
+        float& outKneeX,
+        float& outKneeY,
+        float& outAnkleX,
+        float& outAnkleY)
+    {
+        float dx = ankleX - hipX;
+        float dy = ankleY - hipY;
+        float distance = std::sqrt(dx * dx + dy * dy);
+
+        const float maxDistance = thigh + shin - 0.25f;
+        const float minDistance = std::fabs(thigh - shin) + 0.5f;
+
+        if (distance < 0.001f)
+        {
+            dx = 0.0f;
+            dy = 1.0f;
+            distance = 1.0f;
+        }
+
+        const float ux = dx / distance;
+        const float uy = dy / distance;
+
+        distance = std::clamp(distance, minDistance, maxDistance);
+
+        outAnkleX = hipX + ux * distance;
+        outAnkleY = hipY + uy * distance;
+
+        // Law of cosines: how far along the hip-ankle line the knee sits,
+        // and how far off it.
+        const float along =
+            (thigh * thigh - shin * shin + distance * distance) /
+            (2.0f * distance);
+
+        const float height = std::sqrt(std::max(0.0f, thigh * thigh - along * along));
+
+        // The knee goes off the hip-ankle line on the facing side: for a
+        // leg hanging straight down it comes forward, for a leg reaching
+        // ahead it rides up, for a foot trailing behind it drops forward
+        // and down - it never folds backwards. Mirrored for facing left.
+        const float side = bend < 0.0f ? -1.0f : 1.0f;
+        const float px = uy * side;
+        const float py = -ux * side;
+        const float amount = height * std::min(1.0f, std::fabs(bend));
+
+        outKneeX = hipX + ux * along + px * amount;
+        outKneeY = hipY + uy * along + py * amount;
     }
 
     void Limb::Draw(
         Window& window,
         float hipX,
         float hipY,
-        float facingDir,
+        float bend,
         bool nearSide,
+        const LegStyle& style,
         unsigned char tintR,
         unsigned char tintG,
         unsigned char tintB) const
     {
-        // Two-bone IK: place the knee on the circle intersection of thigh
-        // and shin, bent toward the facing direction. Drawn from the
-        // eased visual foot position, not the raw logical one, so an
-        // instantaneous logical reposition (an emergency recovery plant,
-        // a landing catch) reads as a quick slide rather than a pop.
-        float dx = m_VisualFootX - hipX;
-        float dy = m_VisualFootY - hipY;
-        float distance = std::sqrt(dx * dx + dy * dy);
+        // Drawn from the eased visual foot position, not the raw logical
+        // one, so an instantaneous logical reposition (an emergency
+        // recovery plant, a landing catch) reads as a quick slide rather
+        // than a pop.
+        const float facing = bend < 0.0f ? -1.0f : 1.0f;
 
-        const float maxDistance = m_Thigh + m_Shin - 0.5f;
+        float pitch = m_VisualPitch;
 
-        float footX = m_VisualFootX;
-        float footY = m_VisualFootY;
+        if (!m_Planted && !m_Swinging)
+            pitch += DangleDroop * facing;
 
-        if (distance > maxDistance)
+        const float cosA = std::cos(pitch);
+        const float sinA = std::sin(pitch);
+
+        // The ankle sits above the sole, rotated with the boot.
+        float ankleX = 0.0f;
+        float ankleY = 0.0f;
+
         {
-            footX = hipX + dx / distance * maxDistance;
-            footY = hipY + dy / distance * maxDistance;
-            dx = footX - hipX;
-            dy = footY - hipY;
-            distance = maxDistance;
+            // Sole contact point in boot space is (0, AnkleHeight).
+            const float sx = -(-AnkleHeight) * sinA;
+            const float sy = -AnkleHeight * cosA;
+
+            ankleX = m_VisualFootX + sx;
+            ankleY = m_VisualFootY + sy;
         }
 
-        if (distance < 0.001f)
-        {
-            distance = 0.001f;
-            dy = distance;
-        }
+        float kneeX = 0.0f;
+        float kneeY = 0.0f;
 
-        const float ux = dx / distance;
-        const float uy = dy / distance;
+        SolveKnee(hipX, hipY, ankleX, ankleY, m_Thigh, m_Shin, bend,
+            kneeX, kneeY, ankleX, ankleY);
 
-        const float along =
-            (m_Thigh * m_Thigh - m_Shin * m_Shin + distance * distance) /
-            (2.0f * distance);
+        // A deeply folded leg with the foot trailing would put the knee
+        // through the floor; kneel on it instead.
+        kneeY = std::min(kneeY, std::max(hipY, m_VisualFootY - 2.0f));
 
-        const float heightSquared = m_Thigh * m_Thigh - along * along;
-        const float height = std::sqrt(std::max(0.0f, heightSquared));
+        // Far leg is in shadow.
+        const int shade = nearSide ? 0 : -26;
 
-        const float kneeX = hipX + ux * along + uy * height * facingDir;
-        const float kneeY = hipY + uy * along - ux * height * facingDir;
+        const Uint8 pantsR = Scale(style.PantsR + shade, tintR);
+        const Uint8 pantsG = Scale(style.PantsG + shade, tintG);
+        const Uint8 pantsB = Scale(style.PantsB + shade, tintB);
+        const Uint8 bootR = Scale(style.BootR + shade, tintR);
+        const Uint8 bootG = Scale(style.BootG + shade, tintG);
+        const Uint8 bootB = Scale(style.BootB + shade, tintB);
+        const Uint8 padR = Scale(style.PadR + shade, tintR);
+        const Uint8 padG = Scale(style.PadG + shade, tintG);
+        const Uint8 padB = Scale(style.PadB + shade, tintB);
 
-        Uint8 pantsR = 88, pantsG = 92, pantsB = 106;
-        Uint8 bootR = 62, bootG = 50, bootB = 40;
+        const float kneeWidth = (style.ThighWidth + style.ShinWidth) * 0.5f;
 
-        if (!nearSide)
-        {
-            pantsR = 58; pantsG = 61, pantsB = 72;
-            bootR = 44, bootG = 36, bootB = 30;
-        }
-
-        pantsR = static_cast<Uint8>(pantsR * tintR / 255);
-        pantsG = static_cast<Uint8>(pantsG * tintG / 255);
-        pantsB = static_cast<Uint8>(pantsB * tintB / 255);
-        bootR = static_cast<Uint8>(bootR * tintR / 255);
-        bootG = static_cast<Uint8>(bootG * tintG / 255);
-        bootB = static_cast<Uint8>(bootB * tintB / 255);
-
-        // Thigh is beefier than the shin.
-        DrawShadedSegment(
-            window, hipX, hipY, kneeX, kneeY, 6.0f,
-            pantsR, pantsG, pantsB);
-        DrawShadedSegment(
-            window, kneeX, kneeY, footX, footY - 2.0f, 4.0f,
+        // Shin first so the thigh overlaps it at the knee, like cloth
+        // folding over the joint.
+        DrawLimbSegment(window, kneeX, kneeY, ankleX, ankleY,
+            style.ShinWidth, style.ShinWidth - 1.0f, bend,
             pantsR, pantsG, pantsB);
 
-        // Knee pad.
+        if (style.ShinPlate)
         {
-            const Uint8 padR = static_cast<Uint8>(70 * tintR / 255);
-            const Uint8 padG = static_cast<Uint8>(78 * tintG / 255);
-            const Uint8 padB = static_cast<Uint8>(58 * tintB / 255);
+            // Greave down the front of the shin.
+            const float sx = ankleX - kneeX;
+            const float sy = ankleY - kneeY;
+            const float length = std::max(0.001f, std::sqrt(sx * sx + sy * sy));
+            float nx = sy / length;
+            float ny = -sx / length;
 
-            window.DrawFilledRect(kneeX - 3.0f, kneeY - 3.0f, 6.0f, 6.0f,
-                24, 22, 27, 255);
-            window.DrawFilledRect(kneeX - 2.0f, kneeY - 2.0f, 4.0f, 4.0f,
+            if (nx * bend < 0.0f)
+            {
+                nx = -nx;
+                ny = -ny;
+            }
+
+            const float off = style.ShinWidth * 0.3f;
+
+            DrawTaper(window,
+                kneeX + sx * 0.2f + nx * off, kneeY + sy * 0.2f + ny * off,
+                kneeX + sx * 0.8f + nx * off, kneeY + sy * 0.8f + ny * off,
+                2.0f, 2.0f, padR, padG, padB);
+        }
+
+        DrawLimbSegment(window, hipX, hipY, kneeX, kneeY,
+            style.ThighWidth, kneeWidth, bend,
+            pantsR, pantsG, pantsB);
+
+        // Knee: a pad strapped on the front of the joint, or a plate on
+        // armoured legs. Bare knees just show the fold of the cloth.
+        if (style.KneeSize > 0.0f)
+        {
+            const float size = style.KneeSize;
+            const float cx = kneeX + facing * std::max(0.0f, kneeWidth * 0.5f - size * 0.35f);
+            const float cy = kneeY;
+
+            window.DrawFilledRect(
+                std::round(cx - size * 0.5f - 1.0f),
+                std::round(cy - size * 0.5f - 1.0f),
+                std::round(size + 2.0f),
+                std::round(size + 2.0f),
+                OutlineR, OutlineG, OutlineB, 255);
+            window.DrawFilledRect(
+                std::round(cx - size * 0.5f),
+                std::round(cy - size * 0.5f),
+                std::round(size),
+                std::round(size),
                 padR, padG, padB, 255);
-            window.DrawFilledRect(kneeX - 2.0f, kneeY - 2.0f, 4.0f, 1.0f,
-                static_cast<Uint8>(std::min(255, padR + 30)),
-                static_cast<Uint8>(std::min(255, padG + 30)),
-                static_cast<Uint8>(std::min(255, padB + 30)),
-                255);
+            window.DrawFilledRect(
+                std::round(cx - size * 0.5f),
+                std::round(cy - size * 0.5f),
+                std::round(size),
+                1.0f,
+                Lighten(padR, 34), Lighten(padG, 34), Lighten(padB, 34), 255);
         }
 
-        // Boot: upper, forward toe cap, dark sole.
+        // Boot, built in its own frame (x toward the toe, y down from the
+        // ankle) and rolled with the step.
         {
-            const float dir = facingDir;
+            const float s = style.BootScale;
+            const float dir = facing;
 
-            // Outline block.
-            window.DrawFilledRect(
-                footX - 6.0f + (dir > 0.0f ? 0.0f : -2.0f),
-                footY - 5.0f,
-                14.0f,
-                7.0f,
-                24, 22, 27, 255);
+            float hx, hy, tx, ty;
 
-            // Upper.
-            window.DrawFilledRect(
-                footX - 5.0f + (dir > 0.0f ? 0.0f : -1.0f),
-                footY - 4.0f,
-                10.0f,
-                4.0f,
-                bootR, bootG, bootB, 255);
+            // Upper: heel to toe.
+            BootPoint(ankleX, ankleY, dir, cosA, sinA, s, -1.0f, 1.0f, hx, hy);
+            BootPoint(ankleX, ankleY, dir, cosA, sinA, s, 4.0f, 1.5f, tx, ty);
 
-            // Toe cap.
-            window.DrawFilledRect(
-                dir > 0.0f ? footX + 4.0f : footX - 8.0f,
-                footY - 2.0f,
-                4.0f,
-                2.0f,
-                bootR, bootG, bootB, 255);
+            DrawTaper(window, hx, hy, tx, ty, 6.0f * s, 5.0f * s,
+                OutlineR, OutlineG, OutlineB);
+            DrawTaper(window, hx, hy, tx, ty, 4.0f * s, 3.0f * s,
+                bootR, bootG, bootB);
 
-            // Top highlight.
-            window.DrawFilledRect(
-                footX - 5.0f + (dir > 0.0f ? 0.0f : -1.0f),
-                footY - 4.0f,
-                10.0f,
-                1.0f,
-                static_cast<Uint8>(std::min(255, bootR + 28)),
-                static_cast<Uint8>(std::min(255, bootG + 28)),
-                static_cast<Uint8>(std::min(255, bootB + 28)),
-                255);
+            // Shaft up to the ankle.
+            float ax, ay;
+            BootPoint(ankleX, ankleY, dir, cosA, sinA, s, -0.5f, -0.5f, ax, ay);
+            DrawTaper(window, ax, ay, hx, hy, 3.0f * s, 4.0f * s,
+                bootR, bootG, bootB);
+
+            // Lace highlight along the top.
+            float lx, ly;
+            BootPoint(ankleX, ankleY, dir, cosA, sinA, s, 1.0f, 0.0f, lx, ly);
+            BootPoint(ankleX, ankleY, dir, cosA, sinA, s, 3.5f, 0.6f, tx, ty);
+            DrawTaper(window, lx, ly, tx, ty, 1.0f, 1.0f,
+                Lighten(bootR, 30), Lighten(bootG, 28), Lighten(bootB, 26));
 
             // Sole.
-            window.DrawFilledRect(
-                footX - 5.0f + (dir > 0.0f ? 0.0f : -3.0f),
-                footY,
-                12.0f,
-                2.0f,
-                30, 27, 26, 255);
+            float s0x, s0y, s1x, s1y;
+            BootPoint(ankleX, ankleY, dir, cosA, sinA, s, -2.0f, AnkleHeight / s - 0.5f, s0x, s0y);
+            BootPoint(ankleX, ankleY, dir, cosA, sinA, s, 5.5f, AnkleHeight / s - 0.5f, s1x, s1y);
+            DrawTaper(window, s0x, s0y, s1x, s1y, 2.0f, 2.0f,
+                Scale(34, tintR), Scale(30, tintG), Scale(30, tintB));
         }
     }
 }

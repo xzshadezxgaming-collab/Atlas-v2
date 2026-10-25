@@ -757,6 +757,189 @@ namespace
 
         Check(furthest > 120.0f, "dug its way 120px+ east (got " + std::to_string(static_cast<int>(furthest)) + ")");
     }
+
+    // A flat test range: open air above a stone floor at y = 300, which
+    // ends at x = 600 (a drop to y = 420 beyond it).
+    void BuildRange(Terrain& terrain)
+    {
+        terrain.Create(1000, 500);
+
+        for (int x = 0; x < 1000; x++)
+        {
+            const int floorY = x < 600 ? 300 : 420;
+
+            for (int y = 0; y < 500; y++)
+                terrain.SetMaterial(x, y, y >= floorY ? Material::Stone : Material::Air);
+        }
+    }
+
+    void TestActorMovement()
+    {
+        std::printf("actor legs and controller\n");
+
+        // Knees bend the way the body faces, whatever the leg is doing.
+        {
+            float kx, ky, ax, ay;
+
+            Limb::SolveKnee(0.0f, 0.0f, 0.0f, 25.0f, 15.0f, 14.0f, 1.0f, kx, ky, ax, ay);
+            Check(kx > 1.0f && ky > 0.0f && ky < 25.0f, "standing knee points forward (right)");
+
+            Limb::SolveKnee(0.0f, 0.0f, 0.0f, 25.0f, 15.0f, 14.0f, -1.0f, kx, ky, ax, ay);
+            Check(kx < -1.0f, "standing knee points forward (left)");
+
+            // Foot trailing behind: the knee sits ahead of the hip-ankle
+            // line (cross product sign), never folded backwards.
+            Limb::SolveKnee(0.0f, 0.0f, -12.0f, 22.0f, 15.0f, 14.0f, 1.0f, kx, ky, ax, ay);
+            Check((-12.0f) * ky - 22.0f * kx < 0.0f, "trailing leg's knee stays in front");
+
+            // Foot reaching ahead: the knee rides up above the line.
+            Limb::SolveKnee(0.0f, 0.0f, 14.0f, 20.0f, 15.0f, 14.0f, 1.0f, kx, ky, ax, ay);
+            Check(ky < kx * 20.0f / 14.0f, "leading leg's knee lifts");
+
+            // Out of reach: the ankle is pulled in, segment lengths hold.
+            Limb::SolveKnee(0.0f, 0.0f, 0.0f, 80.0f, 15.0f, 14.0f, 1.0f, kx, ky, ax, ay);
+            const float thigh = std::sqrt(kx * kx + ky * ky);
+            const float shin = std::sqrt((ax - kx) * (ax - kx) + (ay - ky) * (ay - ky));
+            Check(std::fabs(thigh - 15.0f) < 0.05f && std::fabs(shin - 14.0f) < 0.05f,
+                "IK keeps bone lengths");
+        }
+
+        Terrain terrain;
+        BuildRange(terrain);
+
+        const float dt = 1.0f / 60.0f;
+
+        // Standing: legs nearly straight, both feet down under the body.
+        {
+            Actor actor;
+            actor.Spawn(terrain, 200.0f);
+
+            for (int t = 0; t < 60; t++)
+                actor.Update(terrain, nullptr, dt, 0.0f, false, false);
+
+            const float hipToSole = 300.0f - (actor.GetY() + 38.0f);
+            const float reach = actor.GetLeg(0).GetReach();
+
+            Check(actor.IsGrounded(), "standing actor is grounded");
+            Check(hipToSole > reach * 0.85f && hipToSole < reach,
+                "standing legs nearly straight (hip-sole " + std::to_string(hipToSole) +
+                " of reach " + std::to_string(reach) + ")");
+            Check(actor.GetLeg(0).IsPlanted() && actor.GetLeg(1).IsPlanted(),
+                "both feet planted at rest");
+        }
+
+        // Walking: smooth ramp-up, alternating steps, feet keep up.
+        {
+            Actor actor;
+            actor.Spawn(terrain, 100.0f);
+
+            actor.Update(terrain, nullptr, dt, 1.0f, false, false);
+            const float firstTick = actor.GetVelocityX();
+            Check(firstTick > 0.0f && firstTick < 60.0f,
+                "walk accelerates rather than snapping (" + std::to_string(firstTick) + ")");
+
+            int plants[2] = { 0, 0 };
+            bool wasPlanted[2] = { true, true };
+            bool alwaysGrounded = true;
+            float worstFoot = 0.0f;
+
+            for (int t = 0; t < 150; t++)
+            {
+                actor.Update(terrain, nullptr, dt, 1.0f, false, false);
+                alwaysGrounded = alwaysGrounded && actor.IsGrounded();
+
+                for (int i = 0; i < 2; i++)
+                {
+                    const bool planted = actor.GetLeg(i).IsPlanted();
+
+                    if (planted && !wasPlanted[i])
+                        plants[i]++;
+
+                    wasPlanted[i] = planted;
+                    worstFoot = std::max(worstFoot,
+                        std::fabs(actor.GetLeg(i).GetFootX() - actor.GetCenterX()));
+                }
+            }
+
+            Check(std::fabs(actor.GetVelocityX() - 170.0f) < 0.5f, "reaches full walk speed");
+            Check(alwaysGrounded, "never stumbles walking on flat ground");
+            Check(plants[0] >= 8 && plants[1] >= 8 && std::abs(plants[0] - plants[1]) <= 1,
+                "legs alternate steps (" + std::to_string(plants[0]) + "/" +
+                std::to_string(plants[1]) + ")");
+            Check(worstFoot < 26.0f,
+                "feet stay under the body, no dragging (" + std::to_string(worstFoot) + ")");
+
+            // Letting go stops within a few frames.
+            int stopTicks = 0;
+
+            while (actor.GetVelocityX() > 0.0f && stopTicks < 60)
+            {
+                actor.Update(terrain, nullptr, dt, 0.0f, false, false);
+                stopTicks++;
+            }
+
+            Check(stopTicks <= 6, "stops crisply (" + std::to_string(stopTicks) + " ticks)");
+
+            // And the feet settle back under the hips.
+            for (int t = 0; t < 60; t++)
+                actor.Update(terrain, nullptr, dt, 0.0f, false, false);
+
+            const float spread = std::fabs(actor.GetLeg(0).GetFootX() - actor.GetLeg(1).GetFootX());
+            Check(actor.GetLeg(0).IsPlanted() && actor.GetLeg(1).IsPlanted() && spread < 12.0f,
+                "feet settle after stopping (spread " + std::to_string(spread) + ")");
+        }
+
+        // Tapping jump hops; holding it jumps full height.
+        {
+            float apex[2] = { 0.0f, 0.0f };
+
+            for (int hold = 0; hold < 2; hold++)
+            {
+                Actor actor;
+                actor.Spawn(terrain, 200.0f);
+
+                for (int t = 0; t < 30; t++)
+                    actor.Update(terrain, nullptr, dt, 0.0f, false, false);
+
+                const float startY = actor.GetY();
+                float minY = startY;
+
+                for (int t = 0; t < 90; t++)
+                {
+                    const bool jump = hold == 1 ? t < 60 : t < 3;
+                    actor.Update(terrain, nullptr, dt, 0.0f, jump, false);
+                    minY = std::min(minY, actor.GetY());
+                }
+
+                apex[hold] = startY - minY;
+            }
+
+            Check(apex[1] > 90.0f, "full jump height (" + std::to_string(apex[1]) + ")");
+            Check(apex[0] < apex[1] * 0.6f && apex[0] > 10.0f,
+                "short hop when tapped (" + std::to_string(apex[0]) + ")");
+        }
+
+        // Coyote time: a jump just after running off the ledge still works.
+        {
+            Actor actor;
+            actor.Spawn(terrain, 540.0f);
+
+            int airTicks = 0;
+
+            for (int t = 0; t < 120 && airTicks < 3; t++)
+            {
+                actor.Update(terrain, nullptr, dt, 1.0f, false, false);
+
+                if (!actor.IsGrounded())
+                    airTicks++;
+            }
+
+            Check(airTicks == 3, "ran off the ledge");
+
+            actor.Update(terrain, nullptr, dt, 1.0f, true, false);
+            Check(actor.GetVelocityY() < -400.0f, "late jump off a ledge still fires");
+        }
+    }
 }
 
 int main()
@@ -771,6 +954,7 @@ int main()
     TestDrones();
     TestAiDigs();
     TestMultiplayerSoak();
+    TestActorMovement();
 
     if (g_Failures > 0)
     {

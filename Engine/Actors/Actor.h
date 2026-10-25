@@ -273,12 +273,22 @@ namespace Atlas
         void UpdateDanglingFeet(float deltaTime);
         void TryLand(const Terrain& terrain);
 
+        // Visual offset of the whole figure (walk bob, breathing, landing
+        // dip), and the sprite's lean in degrees. Rendering only.
+        float VisualBodyOffsetY() const;
+        float VisualLean() const;
+
+        // Hip joint as drawn: follows the body sprite's bob, lean and
+        // mirroring so the legs stay attached to the waist art.
+        void VisualHip(int leg, float& outX, float& outY) const;
+
         void DrawArmAndWeapon(Window& window) const;
         void DrawBuildDetails(Window& window, float spriteX, float spriteY) const;
         void DrawDigBeam(Window& window) const;
 
         float HipWorldX(int leg) const;
         float HipWorldY(int leg) const;
+        float RestFootX(int leg) const;
         float ShoulderX() const;
         float ShoulderY() const;
 
@@ -310,6 +320,12 @@ namespace Atlas
         float m_VelocityX;
         float m_VelocityY;
         float m_KnockVelX; // decaying knockback, added on top of walk speed
+        float m_WalkVel;   // walk speed the controller is accelerating
+
+        // Jump feel: a short grace period to still jump after stepping
+        // off a ledge, and a jump cut when the button is let go early.
+        float m_CoyoteTimer;
+        bool m_JumpRising;
 
         Limb m_Legs[2];
         int m_SwingLeg;
@@ -344,6 +360,9 @@ namespace Atlas
         // Visual-only state.
         float m_BobPhase;
         float m_HurtFlash;
+        float m_VisualFacing; // eased facing: knees swivel when turning
+        float m_HipShift;     // eased hip offset under the mirrored sprite
+        float m_LandSquash;   // pixels the body dips after a landing
 
         bool m_Crouching;
 

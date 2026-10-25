@@ -30,6 +30,7 @@ namespace Atlas
         void SetTextInput(bool enabled);
 
         void SetCamera(const Camera* camera);
+        const Camera* GetCamera() const;
 
         void DrawFilledRect(
             float x,

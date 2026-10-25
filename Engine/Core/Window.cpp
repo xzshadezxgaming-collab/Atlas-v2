@@ -128,6 +128,11 @@ namespace Atlas
         m_Camera = camera;
     }
 
+    const Camera* Window::GetCamera() const
+    {
+        return m_Camera;
+    }
+
     void Window::DrawFilledRect(
         float x,
         float y,
