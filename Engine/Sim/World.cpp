@@ -159,6 +159,18 @@ namespace Atlas
         PlayerSlot player;
         player.Body = std::make_unique<Actor>();
         InitActor(*player.Body, 0);
+
+        // Player 1 keeps the sprite's own colors; the others get a tint
+        // so co-op players can tell each other apart.
+        static constexpr std::uint8_t Tints[MaxPlayers][3] =
+        {
+            { 255, 255, 255 },
+            { 255, 214, 120 },
+            { 150, 255, 205 },
+            { 215, 165, 255 },
+        };
+
+        player.Body->SetTint(Tints[slot][0], Tints[slot][1], Tints[slot][2]);
         player.Body->SetWeaponDef(m_Loadout[0]);
         player.Body->Spawn(m_Terrain, GetSpawnX(slot));
 
@@ -1048,6 +1060,27 @@ namespace Atlas
         }
 
         return m_WeaponDefs.empty() ? nullptr : &m_WeaponDefs.front();
+    }
+
+    int World::GetWeaponIndex(const WeaponDef* def) const
+    {
+        if (!def || m_WeaponDefs.empty())
+            return -1;
+
+        const std::ptrdiff_t index = def - m_WeaponDefs.data();
+
+        if (index < 0 || index >= static_cast<std::ptrdiff_t>(m_WeaponDefs.size()))
+            return -1;
+
+        return static_cast<int>(index);
+    }
+
+    const WeaponDef* World::GetWeaponByIndex(int index) const
+    {
+        if (index < 0 || index >= static_cast<int>(m_WeaponDefs.size()))
+            return nullptr;
+
+        return &m_WeaponDefs[static_cast<std::size_t>(index)];
     }
 
     int World::GetWave() const

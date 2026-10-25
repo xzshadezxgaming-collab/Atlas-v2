@@ -128,12 +128,25 @@ namespace Atlas
 
     std::vector<WeaponDef> LoadWeaponDefs(const std::string& filename)
     {
-        std::vector<WeaponDef> defs = BuiltInWeaponDefs();
-
         IniFile ini;
 
         if (!ini.Load(filename))
-            return defs;
+            return BuiltInWeaponDefs();
+
+        return LoadWeaponDefs(ini);
+    }
+
+    std::vector<WeaponDef> LoadWeaponDefsFromText(const std::string& text)
+    {
+        IniFile ini;
+        ini.LoadFromString(text);
+
+        return LoadWeaponDefs(ini);
+    }
+
+    std::vector<WeaponDef> LoadWeaponDefs(const IniFile& ini)
+    {
+        std::vector<WeaponDef> defs = BuiltInWeaponDefs();
 
         for (const std::string& section : ini.GetSectionNames())
         {

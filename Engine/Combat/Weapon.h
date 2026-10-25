@@ -76,6 +76,13 @@ namespace Atlas
     // Loads weapon definitions from an INI file; returns built-in defaults
     // if the file is missing.
     std::vector<WeaponDef> LoadWeaponDefs(const std::string& filename);
+
+    // Same, from INI text in memory (a network host sends its weapons
+    // file so every peer simulates identical weapons).
+    std::vector<WeaponDef> LoadWeaponDefsFromText(const std::string& text);
+
+    class IniFile;
+    std::vector<WeaponDef> LoadWeaponDefs(const IniFile& ini);
     std::vector<WeaponDef> BuiltInWeaponDefs();
 
     // An instance of a weapon held by an actor: ammo, cooldown, reload.

@@ -14,12 +14,15 @@
 #include "../Input/Input.h"
 #include "../Graphics/Texture2D.h"
 #include "../Particles/ParticleSystem.h"
+#include "../Net/Protocol.h"
+#include "../Net/Session.h"
 #include "../Sim/World.h"
 #include "../World/Terrain.h"
 
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cctype>
 #include <iostream>
 #include <memory>
@@ -95,6 +98,19 @@ namespace Atlas
             return relative;
         }
 
+        std::string ReadTextFile(const std::string& path)
+        {
+            std::size_t size = 0;
+            void* data = SDL_LoadFile(path.c_str(), &size);
+
+            if (!data)
+                return std::string();
+
+            std::string text(static_cast<const char*>(data), size);
+            SDL_free(data);
+            return text;
+        }
+
         // A short-lived piece of floating text: damage numbers, gold
         // popups, wave banners. World-space entries scroll with the
         // camera; screen-space entries (banners) don't.
@@ -139,7 +155,72 @@ namespace Atlas
 
     }
 
-    Application::Application()
+    bool LaunchOptions::Parse(int argc, char** argv)
+    {
+        auto usage = [&]()
+        {
+            std::cout <<
+                "usage: Atlas                    play offline\n"
+                "       Atlas --host [port]      host a multiplayer game\n"
+                "       Atlas --join <address>[:port]\n"
+                "default port " << DefaultPort << "\n";
+            return false;
+        };
+
+        auto parsePort = [](const std::string& text, std::uint16_t& out)
+        {
+            char* end = nullptr;
+            const long value = std::strtol(text.c_str(), &end, 10);
+
+            if (!end || *end != '\0' || value <= 0 || value > 65535)
+                return false;
+
+            out = static_cast<std::uint16_t>(value);
+            return true;
+        };
+
+        Port = DefaultPort;
+
+        for (int i = 1; i < argc; i++)
+        {
+            const std::string arg = argv[i];
+
+            if (arg == "--host")
+            {
+                Mode = LaunchMode::Host;
+
+                if (i + 1 < argc && argv[i + 1][0] != '-')
+                {
+                    if (!parsePort(argv[++i], Port))
+                        return usage();
+                }
+            }
+            else if (arg == "--join" && i + 1 < argc)
+            {
+                Mode = LaunchMode::Join;
+                Address = argv[++i];
+
+                const std::size_t colon = Address.rfind(':');
+
+                if (colon != std::string::npos)
+                {
+                    if (!parsePort(Address.substr(colon + 1), Port))
+                        return usage();
+
+                    Address = Address.substr(0, colon);
+                }
+            }
+            else
+            {
+                return usage();
+            }
+        }
+
+        return true;
+    }
+
+    Application::Application(const LaunchOptions& options)
+        : m_Options(options)
     {
     }
 
@@ -188,17 +269,93 @@ namespace Atlas
 
         worldConfig.Seed = seed;
 
-        // Weapons: data-driven with built-in fallbacks.
-        worldConfig.Weapons =
-            LoadWeaponDefs(ResolveAssetPath("Assets/weapons.ini"));
+        // Weapons: data-driven with built-in fallbacks. The text itself
+        // is what a host shares, so every peer simulates the same guns.
+        const std::string weaponsIni =
+            ReadTextFile(ResolveAssetPath("Assets/weapons.ini"));
 
-        // The simulation. Everything below this point is presentation:
-        // it turns SDL input into PlayerInput, steps the World, and draws
+        // The simulation, run alone, hosted, or joined over the network.
+        // Everything below this point is presentation: it turns SDL
+        // input into PlayerInput, hands it to the session, and draws
         // what the World reports.
-        World world;
+        Session session;
 
-        if (!world.Create(worldConfig))
-            return;
+        switch (m_Options.Mode)
+        {
+        case LaunchMode::Offline:
+            session.StartOffline(worldConfig, weaponsIni);
+            break;
+        case LaunchMode::Host:
+            session.StartHost(worldConfig, weaponsIni, m_Options.Port);
+            break;
+        case LaunchMode::Join:
+            session.StartClient(m_Options.Address, m_Options.Port);
+            break;
+        }
+
+        // Connecting / catching up: a plain status screen until the
+        // local player exists (or the attempt fails).
+        {
+            Uint64 last = SDL_GetPerformanceCounter();
+            float failTimer = 0.0f;
+
+            while (session.GetState() != SessionState::Running)
+            {
+                if (!m_Window.PollEvents())
+                    return;
+
+                const Uint64 now = SDL_GetPerformanceCounter();
+                const float dt = std::min(
+                    MaxFrameTime,
+                    static_cast<float>(
+                        static_cast<double>(now - last) /
+                        static_cast<double>(SDL_GetPerformanceFrequency())));
+                last = now;
+
+                if (session.GetState() == SessionState::Failed)
+                {
+                    failTimer += dt;
+
+                    if (failTimer > 6.0f)
+                        return;
+                }
+                else
+                {
+                    session.Update(dt, PlayerInput{}, nullptr, nullptr);
+                }
+
+                std::string line = session.GetStatusText();
+
+                if (session.GetState() == SessionState::Joining)
+                {
+                    line += " " + std::to_string(static_cast<int>(
+                        session.GetJoinProgress() * 100.0f)) + "%";
+                }
+
+                for (char& c : line)
+                    c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+
+                m_Window.BeginFrame();
+                m_Window.DrawScreenRect(
+                    0.0f, 0.0f,
+                    static_cast<float>(ViewWidth), static_cast<float>(ViewHeight),
+                    14, 16, 24, 255);
+                PixelFont::Draw(
+                    m_Window,
+                    (static_cast<float>(ViewWidth) - PixelFont::Measure(line, 3.0f)) * 0.5f,
+                    static_cast<float>(ViewHeight) * 0.5f - 12.0f,
+                    3.0f, line,
+                    session.GetState() == SessionState::Failed ? 255 : 230,
+                    session.GetState() == SessionState::Failed ? 130 : 230,
+                    session.GetState() == SessionState::Failed ? 110 : 235);
+                m_Window.EndFrame();
+            }
+
+            if (!session.HasWorld())
+                return;
+        }
+
+        World& world = session.GetWorld();
 
         const int worldWidth = world.GetTerrain().GetWidth();
         const int worldHeight = world.GetTerrain().GetHeight();
@@ -231,9 +388,12 @@ namespace Atlas
             std::cout << "Failed to load Player.bmp\n";
         }
 
-        const int localPlayer = world.AddPlayer();
-        PlayerSlot& localSlot = world.GetPlayer(localPlayer);
-        Actor& player = *localSlot.Body;
+        // Players can join mid-game (the slot vector may grow), so the
+        // local slot is looked up afresh rather than held by reference;
+        // the Actor itself never moves.
+        const int localPlayer = session.GetLocalSlot();
+        auto localSlot = [&]() -> PlayerSlot& { return world.GetPlayer(localPlayer); };
+        Actor& player = *localSlot().Body;
 
         const ParticleSystem& particles = world.GetParticles();
         const GrenadeSystem& grenades = world.GetGrenades();
@@ -526,7 +686,9 @@ namespace Atlas
         Uint64 lastCounter = SDL_GetPerformanceCounter();
         const Uint64 frequency = SDL_GetPerformanceFrequency();
 
-        float accumulator = 0.0f;
+        // A buy order waiting for the session to take it.
+        bool orderQueued = false;
+        OrderRequest queuedOrder;
 
         double fpsTimer = 0.0;
         int frames = 0;
@@ -567,7 +729,7 @@ namespace Atlas
             if (player.IsAlive())
             {
                 const int shownSlot =
-                    slotQueued >= 0 ? slotQueued : localSlot.CurrentSlot;
+                    slotQueued >= 0 ? slotQueued : localSlot().CurrentSlot;
                 int slot = shownSlot;
 
                 if (Input::WasKeyPressed(SDL_SCANCODE_1)) slot = 0;
@@ -617,7 +779,7 @@ namespace Atlas
             if (Input::WasMouseButtonPressed(SDL_BUTTON_LEFT) &&
                 botsButtonHovered)
             {
-                world.SetBotsEnabled(!world.IsBotsEnabled());
+                session.SetBotsEnabled(!world.IsBotsEnabled());
             }
 
             const bool menuHeld =
@@ -795,11 +957,12 @@ namespace Atlas
 
                             order.SupplyCrates = cart.GetSupplyCrateCount();
 
-                            if (world.SubmitOrder(localPlayer, order))
-                            {
-                                cart.Clear();
-                                Audio::Play(Sfx::Reload, 0.6f);
-                            }
+                            // The World charges for it on the tick it
+                            // lands (on every peer at once, in multiplayer).
+                            queuedOrder = order;
+                            orderQueued = true;
+                            cart.Clear();
+                            Audio::Play(Sfx::Reload, 0.6f);
                         }
                     }
 
@@ -857,64 +1020,60 @@ namespace Atlas
             // the menu open.
             const bool uiCapturingInput = menuHeld || botsButtonHovered;
 
-            // Fixed-timestep simulation. Hit-stop eats the frame's sim
-            // time instead of feeding the accumulator, freezing the
-            // world for a beat while rendering carries on.
+            // This frame's input for the local player.
+            PlayerInput input;
+
+            if (Input::IsKeyDown(SDL_SCANCODE_A))
+                input.MoveX -= 1.0f;
+
+            if (Input::IsKeyDown(SDL_SCANCODE_D))
+                input.MoveX += 1.0f;
+
+            input.Jump = Input::IsKeyDown(SDL_SCANCODE_SPACE);
+            input.JumpPressed = jumpQueued;
+            input.Jetpack =
+                Input::IsKeyDown(SDL_SCANCODE_W) ||
+                Input::IsKeyDown(SDL_SCANCODE_LSHIFT);
+            input.Crouch = Input::IsKeyDown(SDL_SCANCODE_S);
+
+            input.AimX = mouseWorldX;
+            input.AimY = mouseWorldY;
+
+            // No shooting or grenade-throwing through the UI.
+            input.Fire =
+                Input::IsMouseButtonDown(SDL_BUTTON_LEFT) &&
+                !uiCapturingInput;
+            input.ThrowPressed = throwQueued && !uiCapturingInput;
+            input.ReloadPressed = reloadQueued;
+            input.SelectSlot = static_cast<std::int8_t>(slotQueued);
+
+            // Fixed-timestep simulation, run by the session. Hit-stop
+            // holds back the frame's sim time, freezing the world for a
+            // beat while rendering carries on.
+            float simTime = frameTime;
+
             if (hitStop > 0.0f)
-                hitStop -= frameTime;
-            else
-                accumulator += frameTime;
-
-            bool simTicked = false;
-
-            while (accumulator >= World::FixedTimeStep)
             {
-                // This frame's input for the local player. Latched edges
-                // go to the first tick only.
-                PlayerInput input;
-
-                if (Input::IsKeyDown(SDL_SCANCODE_A))
-                    input.MoveX -= 1.0f;
-
-                if (Input::IsKeyDown(SDL_SCANCODE_D))
-                    input.MoveX += 1.0f;
-
-                input.Jump = Input::IsKeyDown(SDL_SCANCODE_SPACE);
-                input.JumpPressed = jumpQueued && !simTicked;
-                input.Jetpack =
-                    Input::IsKeyDown(SDL_SCANCODE_W) ||
-                    Input::IsKeyDown(SDL_SCANCODE_LSHIFT);
-                input.Crouch = Input::IsKeyDown(SDL_SCANCODE_S);
-
-                input.AimX = mouseWorldX;
-                input.AimY = mouseWorldY;
-
-                // No shooting or grenade-throwing through the UI.
-                input.Fire =
-                    Input::IsMouseButtonDown(SDL_BUTTON_LEFT) &&
-                    !uiCapturingInput;
-                input.ThrowPressed =
-                    throwQueued && !simTicked && !uiCapturingInput;
-                input.ReloadPressed = reloadQueued && !simTicked;
-                input.SelectSlot = static_cast<std::int8_t>(
-                    simTicked ? -1 : slotQueued);
-
-                world.Step(&input, 1);
-                handleEvents();
-
-                accumulator -= World::FixedTimeStep;
-                simTicked = true;
+                hitStop -= frameTime;
+                simTime = 0.0f;
             }
 
-            // Latched input edges are consumed once the sim has actually
-            // seen them; a frame with zero ticks (hit-stop) keeps them
-            // queued for the next real tick.
-            if (simTicked)
+            const bool inputTaken = session.Update(
+                simTime,
+                input,
+                orderQueued ? &queuedOrder : nullptr,
+                handleEvents);
+
+            // Latched input edges are consumed once the session has
+            // actually taken them; a frame with zero ticks (hit-stop)
+            // keeps them queued for the next real tick.
+            if (inputTaken)
             {
                 throwQueued = false;
                 jumpQueued = false;
                 reloadQueued = false;
                 slotQueued = -1;
+                orderQueued = false;
             }
 
             // Gold popups, batched: while gold keeps arriving the window
@@ -1115,8 +1274,9 @@ namespace Atlas
 
                     PixelFont::Draw(
                         m_Window,
-                        pickup.X - PixelFont::Measure(name, 1.5f) * 0.5f,
-                        pickup.Y - 18.0f,
+                        pickup.X - camera.GetX() -
+                            PixelFont::Measure(name, 1.5f) * 0.5f,
+                        pickup.Y - camera.GetY() - 18.0f,
                         1.5f, name, 210, 225, 235);
                 }
             }
@@ -1139,8 +1299,13 @@ namespace Atlas
                     ally.Body->SetBodyTexture(bodyTexture.GetTexture());
             }
 
-            if (!player.GetBodyTexture())
-                player.SetBodyTexture(bodyTexture.GetTexture());
+            for (int slot = 0; slot < world.GetPlayerCount(); slot++)
+            {
+                Actor& body = *world.GetPlayer(slot).Body;
+
+                if (!body.GetBodyTexture())
+                    body.SetBodyTexture(bodyTexture.GetTexture());
+            }
 
             for (Enemy& enemy : enemies)
                 enemy.Body->Draw(m_Window);
@@ -1148,8 +1313,35 @@ namespace Atlas
             for (Ally& ally : allies)
                 ally.Body->Draw(m_Window);
 
+            // Every player, the local one last so it stays on top.
+            for (int slot = 0; slot < world.GetPlayerCount(); slot++)
+            {
+                Actor& body = *world.GetPlayer(slot).Body;
+
+                if (slot != localPlayer && body.IsAlive())
+                    body.Draw(m_Window);
+            }
+
             if (player.IsAlive())
                 player.Draw(m_Window);
+
+            // Name tags over the other players.
+            for (int slot = 0; slot < world.GetPlayerCount(); slot++)
+            {
+                const Actor& body = *world.GetPlayer(slot).Body;
+
+                if (slot == localPlayer || !body.IsAlive())
+                    continue;
+
+                const std::string tag = "P" + std::to_string(slot + 1);
+
+                PixelFont::Draw(
+                    m_Window,
+                    body.GetCenterX() - camera.GetX() -
+                        PixelFont::Measure(tag, 1.5f) * 0.5f,
+                    body.GetY() - camera.GetY() - 16.0f,
+                    1.5f, tag, 235, 235, 240, 220);
+            }
 
             particles.Draw(m_Window);
 
@@ -1712,7 +1904,7 @@ namespace Atlas
             // Weapon slots with numbers.
             for (int i = 0; i < LoadoutSize; i++)
             {
-                const bool selected = i == localSlot.CurrentSlot;
+                const bool selected = i == localSlot().CurrentSlot;
                 const float slotX = barX + static_cast<float>(i) * 22.0f;
 
                 m_Window.DrawScreenRect(slotX, 70.0f, 18.0f, 16.0f,
@@ -1817,6 +2009,43 @@ namespace Atlas
                     235, 235, 240);
             }
 
+            // Multiplayer status under the bots button.
+            if (session.GetRole() != SessionRole::Offline)
+            {
+                std::string status;
+                Uint8 r = 200, g = 220, b = 235;
+
+                if (session.GetState() == SessionState::Failed)
+                {
+                    status = session.GetStatusText();
+                    r = 255; g = 130; b = 110;
+                }
+                else if (session.HasDesynced())
+                {
+                    status = session.GetStatusText();
+                    r = 255; g = 180; b = 90;
+                }
+                else if (session.GetRole() == SessionRole::Host)
+                {
+                    status = "HOST :" + std::to_string(m_Options.Port) + " - " +
+                        std::to_string(world.GetPlayerCount()) + " PLAYERS";
+                }
+                else
+                {
+                    status = "ONLINE - PLAYER " + std::to_string(localPlayer + 1);
+                }
+
+                for (char& c : status)
+                    c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+
+                PixelFont::Draw(
+                    m_Window,
+                    static_cast<float>(ViewWidth) - 20.0f -
+                        PixelFont::Measure(status, 1.5f),
+                    BotsButtonY + BotsButtonH + 8.0f,
+                    1.5f, status, r, g, b);
+            }
+
             // Death overlay.
             if (!player.IsAlive())
             {
@@ -1830,7 +2059,7 @@ namespace Atlas
                     ViewWidth * 0.5f - 100.0f,
                     ViewHeight * 0.5f - 6.0f,
                     200.0f * std::clamp(
-                        1.0f - localSlot.RespawnTimer / RespawnTime, 0.0f, 1.0f),
+                        1.0f - localSlot().RespawnTimer / RespawnTime, 0.0f, 1.0f),
                     12.0f,
                     240, 240, 240, 220);
             }

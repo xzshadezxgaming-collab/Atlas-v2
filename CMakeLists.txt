@@ -14,6 +14,7 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 option(ATLAS_BUILD_TESTS "Build the headless simulation tests" ON)
 
+add_subdirectory(ThirdParty/enet EXCLUDE_FROM_ALL)
 add_subdirectory(Engine)
 add_subdirectory(Game)
 

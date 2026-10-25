@@ -115,8 +115,8 @@ namespace Atlas
 
         bool Create(const WorldConfig& config);
 
-        // Adds a player body (team 0) and returns its slot, or -1 when
-        // full.
+        // Adds a player body (team 0, tinted by slot) and returns its
+        // slot, or -1 when full.
         int AddPlayer();
 
         // Advances one fixed tick. inputs[i] drives player slot i;
@@ -167,6 +167,11 @@ namespace Atlas
         const WeaponDef* GetLoadoutWeapon(int slot) const;
         const WeaponDef* GetAllyWeapon() const;
         const WeaponDef* FindWeapon(const std::string& name) const;
+
+        // Weapons by position in GetWeaponDefs(), for the wire.
+        // -1 / out of range <-> null.
+        int GetWeaponIndex(const WeaponDef* def) const;
+        const WeaponDef* GetWeaponByIndex(int index) const;
 
         int GetWave() const;
         std::uint64_t GetTick() const;
