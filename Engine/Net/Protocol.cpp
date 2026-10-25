@@ -199,6 +199,7 @@ namespace Atlas
         out.U32(info.Seed);
         out.U8(info.Mode);
         out.U8(info.Difficulty);
+        out.U8(info.LandingZone);
         out.String(info.WeaponsIni);
         out.U32(info.HistoryFrames);
     }
@@ -212,6 +213,7 @@ namespace Atlas
         info.Seed = in.U32();
         info.Mode = in.U8();
         info.Difficulty = in.U8();
+        info.LandingZone = in.U8();
         info.WeaponsIni = in.String();
         info.HistoryFrames = in.U32();
         return info;

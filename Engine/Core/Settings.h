@@ -9,6 +9,7 @@ namespace Atlas
     struct Settings
     {
         float Volume = 0.8f;      // 0..1, every sound
+        float MusicVolume = 0.6f; // 0..1, on top of Volume
         bool ScreenShake = true;
         bool Fullscreen = false;
         bool ShowFps = false;

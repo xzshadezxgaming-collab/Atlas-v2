@@ -46,7 +46,9 @@ namespace Atlas
         bool Survival = false;
         int MapSize = 1;     // 0 small, 1 medium, 2 large
         int Difficulty = 1;  // 0 easy, 1 normal, 2 hard
+        int LandingZone = 12; // % of map width from the west
         unsigned int Seed = 0; // 0 = random
+        unsigned int RandomSeed = 0; // the roll for a random map, 0 = roll at start
     };
 
     enum class MatchExit

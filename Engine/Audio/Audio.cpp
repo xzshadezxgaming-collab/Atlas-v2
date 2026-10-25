@@ -12,7 +12,7 @@ namespace Atlas
     namespace
     {
         constexpr int SampleRate = 44100;
-        constexpr int StreamPoolSize = 10;
+        constexpr int StreamPoolSize = 16;
 
         bool g_Available = false;
         float g_MasterVolume = 1.0f;
@@ -20,6 +20,15 @@ namespace Atlas
         std::vector<float> g_Buffers[static_cast<int>(Sfx::Count)];
 
         std::uint32_t g_Noise = 0x1234567u;
+
+        // Music: two loops of the same length, mixed on the fly.
+        SDL_AudioStream* g_MusicStream = nullptr;
+        std::vector<float> g_MusicCalm;
+        std::vector<float> g_MusicCombat;
+        std::size_t g_MusicCursor = 0;
+        float g_MusicVolume = 0.6f;
+        float g_MusicIntensity = 0.0f;
+        bool g_MusicBuilt = false;
 
         // The digger/shovel retrigger their sound roughly 10 times a
         // second while held, so a few slightly different takes are kept
@@ -152,6 +161,210 @@ namespace Atlas
 
             for (float& sample : buffer)
                 sample *= scale;
+        }
+
+        // --- Music ---------------------------------------------------
+
+        float MidiHz(int note)
+        {
+            return 440.0f * std::pow(2.0f, static_cast<float>(note - 69) / 12.0f);
+        }
+
+        enum class Wave { Sine, Saw, Square, Triangle };
+
+        // Adds a note into a looping buffer (writes wrap around, so the
+        // loop is seamless). Attack/release envelope, optional decay.
+        void AddNote(
+            std::vector<float>& loop,
+            float startSeconds,
+            float lengthSeconds,
+            float hz,
+            float amplitude,
+            Wave wave,
+            float attack,
+            float release,
+            float decayRate = 0.0f,
+            float detune = 0.0f)
+        {
+            const std::size_t size = loop.size();
+            const std::size_t start = static_cast<std::size_t>(startSeconds * SampleRate);
+            const std::size_t length = static_cast<std::size_t>((lengthSeconds + release) * SampleRate);
+
+            float phase = 0.0f;
+            float phase2 = 0.37f;
+            float low = 0.0f;
+
+            for (std::size_t i = 0; i < length; i++)
+            {
+                const float t = static_cast<float>(i) / SampleRate;
+
+                float env = 1.0f;
+
+                if (t < attack)
+                    env = t / attack;
+                else if (t > lengthSeconds)
+                    env = std::max(0.0f, 1.0f - (t - lengthSeconds) / std::max(0.001f, release));
+
+                if (decayRate > 0.0f)
+                    env *= std::exp(-t * decayRate);
+
+                phase += hz / SampleRate;
+                phase2 += hz * (1.0f + detune) / SampleRate;
+                phase -= std::floor(phase);
+                phase2 -= std::floor(phase2);
+
+                auto shape = [&](float p)
+                {
+                    switch (wave)
+                    {
+                    case Wave::Saw: return 2.0f * p - 1.0f;
+                    case Wave::Square: return p < 0.5f ? 1.0f : -1.0f;
+                    case Wave::Triangle: return 4.0f * std::fabs(p - 0.5f) - 1.0f;
+                    default: return std::sin(p * 6.28318f);
+                    }
+                };
+
+                float sample = shape(phase);
+
+                if (detune != 0.0f)
+                    sample = 0.5f * (sample + shape(phase2));
+
+                // Soften the buzzy waves.
+                if (wave == Wave::Saw || wave == Wave::Square)
+                {
+                    low += (sample - low) * 0.08f;
+                    sample = low;
+                }
+
+                loop[(start + i) % size] += sample * amplitude * env;
+            }
+        }
+
+        void AddDrum(std::vector<float>& loop, float startSeconds, int kind, float amplitude)
+        {
+            const std::size_t size = loop.size();
+            const std::size_t start = static_cast<std::size_t>(startSeconds * SampleRate);
+
+            // 0 kick, 1 snare, 2 hat.
+            const float length = kind == 0 ? 0.22f : kind == 1 ? 0.16f : 0.04f;
+            const std::size_t samples = static_cast<std::size_t>(length * SampleRate);
+
+            float phase = 0.0f;
+            float low = 0.0f;
+            float previous = 0.0f;
+
+            for (std::size_t i = 0; i < samples; i++)
+            {
+                const float t = static_cast<float>(i) / SampleRate;
+                const float fall = 1.0f - t / length;
+                float sample = 0.0f;
+
+                if (kind == 0)
+                {
+                    phase += (45.0f + 110.0f * std::exp(-t * 30.0f)) / SampleRate;
+                    sample = std::sin(phase * 6.28318f) * fall * fall;
+                }
+                else if (kind == 1)
+                {
+                    phase += 190.0f / SampleRate;
+                    const float noise = NoiseSample();
+                    low += (noise - low) * 0.35f;
+                    sample = (low * 0.8f + std::sin(phase * 6.28318f) * 0.4f) * fall * fall * fall;
+                }
+                else
+                {
+                    const float noise = NoiseSample();
+                    sample = (noise - previous) * 0.5f * fall; // crude highpass
+                    previous = noise;
+                }
+
+                loop[(start + i) % size] += sample * amplitude;
+            }
+        }
+
+        void BuildMusic()
+        {
+            // A minor, 96 bpm, eight bars: Am F C G, two bars each.
+            constexpr float Beat = 60.0f / 96.0f;
+            constexpr float Bar = Beat * 4.0f;
+            constexpr int Bars = 8;
+
+            const std::size_t size = static_cast<std::size_t>(Bar * Bars * SampleRate);
+            g_MusicCalm.assign(size, 0.0f);
+            g_MusicCombat.assign(size, 0.0f);
+
+            struct Chord { int Root; int Third; int Fifth; };
+            const Chord chords[4] =
+            {
+                { 57, 60, 64 }, // Am
+                { 53, 57, 60 }, // F
+                { 48, 52, 55 }, // C
+                { 55, 59, 62 }, // G
+            };
+
+            for (int c = 0; c < 4; c++)
+            {
+                const Chord& chord = chords[c];
+                const float start = static_cast<float>(c) * Bar * 2.0f;
+                const float length = Bar * 2.0f;
+                const int tones[3] = { chord.Root, chord.Third, chord.Fifth };
+
+                // Pad: detuned saws, slow swell, in both loops.
+                for (int tone : tones)
+                {
+                    AddNote(g_MusicCalm, start, length - 0.3f, MidiHz(tone), 0.10f,
+                        Wave::Saw, 0.9f, 0.9f, 0.0f, 0.004f);
+                    AddNote(g_MusicCombat, start, length - 0.3f, MidiHz(tone), 0.06f,
+                        Wave::Saw, 0.4f, 0.6f, 0.0f, 0.004f);
+                }
+
+                // Calm: a deep held root and a slow plucked arpeggio.
+                AddNote(g_MusicCalm, start, length - 0.2f, MidiHz(chord.Root - 24), 0.16f,
+                    Wave::Sine, 0.5f, 0.6f);
+
+                const int arp[8] = { 0, 1, 2, 1, 0, 2, 1, 2 };
+
+                for (int step = 0; step < 8; step++)
+                {
+                    if (step % 2 == 1 && c % 2 == 0)
+                        continue;
+
+                    const int note = tones[arp[step]] + 12;
+                    AddNote(g_MusicCalm, start + static_cast<float>(step) * Beat, Beat * 0.5f,
+                        MidiHz(note), 0.07f, Wave::Triangle, 0.005f, 0.6f, 4.0f);
+                }
+
+                // Combat: driving eighth-note bass, drums, faster arp.
+                for (int eighth = 0; eighth < 16; eighth++)
+                {
+                    const float at = start + static_cast<float>(eighth) * Beat * 0.5f;
+                    const int bassNote = chord.Root - 24 + ((eighth % 8 == 6) ? 7 : 0);
+
+                    AddNote(g_MusicCombat, at, Beat * 0.35f, MidiHz(bassNote), 0.22f,
+                        Wave::Square, 0.004f, 0.05f, 3.0f);
+
+                    AddDrum(g_MusicCombat, at, 2, eighth % 2 == 0 ? 0.10f : 0.06f);
+
+                    if (eighth % 4 == 0)
+                        AddDrum(g_MusicCombat, at, 0, 0.55f);
+                    else if (eighth % 4 == 2)
+                        AddDrum(g_MusicCombat, at, 1, 0.32f);
+
+                    if (eighth == 15)
+                        AddDrum(g_MusicCombat, at + Beat * 0.25f, 0, 0.3f);
+                }
+
+                for (int sixteenth = 0; sixteenth < 32; sixteenth++)
+                {
+                    const int note = tones[(sixteenth * 2 + sixteenth / 4) % 3] + 12 + (sixteenth % 8 == 7 ? 12 : 0);
+                    AddNote(g_MusicCombat, start + static_cast<float>(sixteenth) * Beat * 0.25f,
+                        Beat * 0.12f, MidiHz(note), 0.045f, Wave::Square, 0.003f, 0.08f, 8.0f);
+                }
+            }
+
+            Normalize(g_MusicCalm, 0.5f);
+            Normalize(g_MusicCombat, 0.6f);
+            g_MusicBuilt = true;
         }
 
         void BuildAllSfx()
@@ -325,7 +538,7 @@ namespace Atlas
 
         SDL_AudioSpec spec;
         spec.format = SDL_AUDIO_F32;
-        spec.channels = 1;
+        spec.channels = 2;
         spec.freq = SampleRate;
 
         for (int i = 0; i < StreamPoolSize; i++)
@@ -351,7 +564,14 @@ namespace Atlas
             SDL_ResumeAudioStreamDevice(g_Streams[i]);
         }
 
+        g_MusicStream = SDL_OpenAudioDeviceStream(
+            SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
+
+        if (g_MusicStream)
+            SDL_ResumeAudioStreamDevice(g_MusicStream);
+
         BuildAllSfx();
+        BuildMusic();
 
         g_Available = true;
         return true;
@@ -368,6 +588,12 @@ namespace Atlas
             }
         }
 
+        if (g_MusicStream)
+        {
+            SDL_DestroyAudioStream(g_MusicStream);
+            g_MusicStream = nullptr;
+        }
+
         g_Available = false;
     }
 
@@ -376,7 +602,63 @@ namespace Atlas
         g_MasterVolume = std::clamp(volume, 0.0f, 1.0f);
     }
 
-    void Audio::Play(Sfx sfx, float volume)
+    void Audio::SetMusicVolume(float volume)
+    {
+        g_MusicVolume = std::clamp(volume, 0.0f, 1.0f);
+    }
+
+    void Audio::UpdateMusic(float intensity)
+    {
+        if (!g_Available || !g_MusicStream)
+            return;
+
+        if (!g_MusicBuilt)
+            BuildMusic();
+
+        const float gain = g_MusicVolume * g_MasterVolume;
+        const std::size_t size = g_MusicCalm.size();
+
+        // Keep about a third of a second queued; feed it in small
+        // chunks so the crossfade follows the fighting closely.
+        constexpr int ChunkFrames = SampleRate / 20;
+        const int queuedBytes = SDL_GetAudioStreamQueued(g_MusicStream);
+        const int wantBytes = static_cast<int>(SampleRate / 3 * 2 * sizeof(float));
+
+        if (queuedBytes >= wantBytes)
+            return;
+
+        std::vector<float> chunk(static_cast<std::size_t>(ChunkFrames) * 2);
+
+        for (int frame = 0; frame < ChunkFrames; frame++)
+        {
+            // Swells into combat fast, settles back slowly.
+            const float target = std::clamp(intensity, 0.0f, 1.0f);
+            const float rate = target > g_MusicIntensity ? 1.0f / (SampleRate * 0.8f) : 1.0f / (SampleRate * 4.0f);
+            g_MusicIntensity += std::clamp(target - g_MusicIntensity, -rate, rate);
+
+            const float calm = g_MusicCalm[g_MusicCursor];
+            const float combat = g_MusicCombat[g_MusicCursor];
+            const float mixed = (calm * (1.0f - g_MusicIntensity * 0.65f) + combat * g_MusicIntensity) * gain;
+
+            // A little width: the combat loop leans one way, the calm
+            // pad the other.
+            chunk[static_cast<std::size_t>(frame) * 2] = mixed + (calm - combat) * 0.05f * gain;
+            chunk[static_cast<std::size_t>(frame) * 2 + 1] = mixed - (calm - combat) * 0.05f * gain;
+
+            g_MusicCursor = (g_MusicCursor + 1) % size;
+        }
+
+        SDL_PutAudioStreamData(g_MusicStream, chunk.data(),
+            static_cast<int>(chunk.size() * sizeof(float)));
+    }
+
+    void Audio::StopMusic()
+    {
+        if (g_MusicStream)
+            SDL_ClearAudioStream(g_MusicStream);
+    }
+
+    void Audio::Play(Sfx sfx, float volume, float pan)
     {
         if (!g_Available)
             return;
@@ -415,24 +697,23 @@ namespace Atlas
         if (!stream)
             return;
 
-        if (volume >= 0.99f)
+        // Equal-ish power pan into the stereo stream.
+        const float p = std::clamp(pan, -1.0f, 1.0f);
+        const float left = volume * std::min(1.0f, 1.0f - p * 0.8f);
+        const float right = volume * std::min(1.0f, 1.0f + p * 0.8f);
+
+        std::vector<float> stereo(buffer.size() * 2);
+
+        for (std::size_t i = 0; i < buffer.size(); i++)
         {
-            SDL_PutAudioStreamData(
-                stream,
-                buffer.data(),
-                static_cast<int>(buffer.size() * sizeof(float)));
-            return;
+            stereo[i * 2] = buffer[i] * left;
+            stereo[i * 2 + 1] = buffer[i] * right;
         }
-
-        std::vector<float> scaled(buffer);
-
-        for (float& sample : scaled)
-            sample *= volume;
 
         SDL_PutAudioStreamData(
             stream,
-            scaled.data(),
-            static_cast<int>(scaled.size() * sizeof(float)));
+            stereo.data(),
+            static_cast<int>(stereo.size() * sizeof(float)));
     }
 
     bool Audio::IsAvailable()

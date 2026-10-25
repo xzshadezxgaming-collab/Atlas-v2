@@ -138,6 +138,9 @@ namespace Atlas
         // For the AI: hold the first real weapon, not a dig tool.
         void SelectBestWeapon();
 
+        // Index of the first item of this kind, -1 if none.
+        int FindItem(WeaponKind kind) const;
+
         // The held item.
         Weapon& GetWeapon();
         const Weapon& GetWeapon() const;
@@ -151,6 +154,9 @@ namespace Atlas
 
         // Flashes the muzzle briefly (call after a successful shot).
         void NotifyFired();
+
+        // Shots fired since last asked (for the World's sound events).
+        int TakeShotsFired();
 
         // Drives the digger's plasma-helix beam visual: call every
         // rendered frame while the tool is actively cutting, with the
@@ -320,6 +326,7 @@ namespace Atlas
         int m_ItemCount;
         int m_Selected;
         float m_MuzzleFlash;
+        int m_ShotsFired;
 
         // Vitals
         BodyClass m_Class;

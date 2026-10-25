@@ -30,6 +30,10 @@ namespace Atlas
         m_WobbleTimer(0.0f),
         m_StuckTimer(0.0f),
         m_JetTimer(0.0f),
+        m_ProgressX(-1.0e9f),
+        m_NoProgress(0.0f),
+        m_DigTimer(0.0f),
+        m_DigDir(1.0f),
         m_RandomState(0xC0FFEEu)
     {
     }
@@ -176,6 +180,14 @@ namespace Atlas
 
         float moveInput = 0.0f;
         bool wantsProgress = false; // moving with purpose (stuck detection applies)
+        bool marching = false;      // heading for the goal, nothing to fight
+
+        // A fight interrupts any tunnelling.
+        if ((seesTarget || seesPoint) && m_DigTimer > 0.0f)
+        {
+            m_DigTimer = 0.0f;
+            self.SelectBestWeapon();
+        }
 
         if (seesTarget)
         {
@@ -217,6 +229,7 @@ namespace Atlas
             {
                 moveInput = goalDx > 0.0f ? 0.7f : -0.7f;
                 wantsProgress = true;
+                marching = true;
             }
             else
             {
@@ -259,6 +272,69 @@ namespace Atlas
         {
             m_JetTimer = 0.55f + (RandomUnit() + 1.0f) * 0.2f;
             m_StuckTimer = 0.0f;
+        }
+
+        // Still getting nowhere after jetting: dig through, if this body
+        // carries something to dig with.
+        if (marching)
+        {
+            if (std::fabs(self.GetCenterX() - m_ProgressX) > 24.0f)
+            {
+                m_ProgressX = self.GetCenterX();
+                m_NoProgress = 0.0f;
+            }
+            else
+            {
+                m_NoProgress += deltaTime;
+            }
+
+            if (m_NoProgress > 2.5f && m_DigTimer <= 0.0f)
+            {
+                int tool = self.FindItem(WeaponKind::Digger);
+
+                if (tool < 0)
+                    tool = self.FindItem(WeaponKind::Shovel);
+
+                if (tool >= 0)
+                {
+                    self.SelectItem(tool);
+                    m_DigTimer = 3.0f;
+                    m_DigDir = moveInput >= 0.0f ? 1.0f : -1.0f;
+                }
+
+                m_NoProgress = 0.0f;
+            }
+        }
+        else
+        {
+            m_NoProgress = 0.0f;
+            m_ProgressX = self.GetCenterX();
+        }
+
+        if (m_DigTimer > 0.0f)
+        {
+            m_DigTimer -= deltaTime;
+
+            // Chew a walking-height tunnel: sweep the aim up and down the
+            // face ahead.
+            const float sweep = std::sin(m_DigTimer * 5.0f) * 22.0f;
+            const float aimX = self.GetCenterX() + m_DigDir * 50.0f;
+            const float aimY = self.GetCenterY() + 6.0f + sweep;
+
+            self.SetAim(aimX, aimY);
+
+            if (!self.IsArmDestroyed())
+            {
+                self.GetWeapon().TryFire(particles, mutableTerrain,
+                    self.GetMuzzleX(), self.GetMuzzleY(),
+                    self.GetAimDirX(), self.GetAimDirY(), aimX, aimY, &self);
+            }
+
+            moveInput = m_DigDir * 0.5f;
+            m_JetTimer = 0.0f;
+
+            if (m_DigTimer <= 0.0f)
+                self.SelectBestWeapon();
         }
 
         const bool jet = m_JetTimer > 0.0f;

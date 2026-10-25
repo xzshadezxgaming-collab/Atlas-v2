@@ -717,6 +717,48 @@ namespace
     }
 }
 
+namespace
+{
+    void TestAiDigs()
+    {
+        std::printf("ai: tunnels through what it can't jet over\n");
+
+        World world;
+        world.Create(MakeConfig(51u));
+        world.SetBotsEnabled(false);
+        world.AddPlayer();
+        world.GetEnemies().clear();
+
+        // Bury a unit in a pocket inside solid dirt, then order an attack
+        // (east). It has a shovel; it has to dig out.
+        Terrain& terrain = world.GetTerrain();
+        const int x = static_cast<int>(world.GetBase(0).X) + 500;
+        const int floorY = terrain.GetSurfaceY(x);
+
+        for (int px = x - 40; px <= x + 260; px++)
+        {
+            for (int py = floorY - 260; py < floorY + 6; py++)
+            {
+                const bool pocket = px > x - 18 && px < x + 22 && py > floorY - 70 && py < floorY;
+                terrain.SetMaterial(px, py, pocket ? Material::Air : Material::Dirt);
+            }
+        }
+
+        world.AddAlly(static_cast<float>(x), nullptr);
+        world.SetAllyOrder(AllyOrder::Attack);
+
+        float furthest = 0.0f;
+
+        for (int t = 0; t < 120 * 25 && !world.GetAllies().empty(); t++)
+        {
+            world.Step(nullptr, 0);
+            furthest = std::max(furthest, world.GetAllies().front().Body->GetCenterX() - static_cast<float>(x));
+        }
+
+        Check(furthest > 120.0f, "dug its way 120px+ east (got " + std::to_string(static_cast<int>(furthest)) + ")");
+    }
+}
+
 int main()
 {
     TestDeterminism();
@@ -727,6 +769,7 @@ int main()
     TestBodiesAndInventory();
     TestArsenal();
     TestDrones();
+    TestAiDigs();
     TestMultiplayerSoak();
 
     if (g_Failures > 0)
