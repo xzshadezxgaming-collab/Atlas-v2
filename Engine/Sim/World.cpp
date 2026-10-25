@@ -112,6 +112,7 @@ namespace Atlas
         m_Rocket(nullptr),
         m_Flamer(nullptr),
         m_Shotgun(nullptr),
+        m_Digger(nullptr),
         m_Rng(1337u),
         m_NextActorId(1),
         m_Tick(0),
@@ -166,6 +167,7 @@ namespace Atlas
         m_Rocket = FindWeapon("Rocket Launcher");
         m_Flamer = FindWeapon("Flamethrower");
         m_Shotgun = FindWeapon("Shotgun");
+        m_Digger = FindWeapon("Digger");
 
         m_Mode = config.Mode;
         m_Difficulty = std::clamp(config.Difficulty, 0, 2);
@@ -174,7 +176,8 @@ namespace Atlas
         {
             const float width = static_cast<float>(m_Terrain.GetWidth());
 
-            BuildBase(0, std::floor(width * 0.12f));
+            const float landing = static_cast<float>(std::clamp(config.LandingZone, 6, 42)) / 100.0f;
+            BuildBase(0, std::floor(width * landing));
             BuildBase(1, std::floor(width * 0.88f));
 
             static constexpr int GoldByDifficulty[3] = { 500, StartingGold, 200 };
@@ -658,6 +661,15 @@ namespace Atlas
         enemy.Body->SetTint(255, 118, 106);
         enemy.Body->SetBodyClass(bodyClass);
         enemy.Body->SetWeaponDef(weapon ? weapon : m_EnemyWeapon);
+
+        // Attackers bring a digger to tunnel through what they can't
+        // jet over.
+        if (attacker)
+        {
+            enemy.Body->AddItem(m_Digger);
+            enemy.Body->SelectItem(0);
+        }
+
         enemy.LastHealth = enemy.Body->GetHealth();
 
         // Inside the enemy bunker counts as "from below its roof".
@@ -673,20 +685,25 @@ namespace Atlas
         m_Enemies.push_back(std::move(enemy));
     }
 
-    void World::SpawnEnemyDrop(int count)
+    int World::SpawnEnemyDrop(int maxCount)
     {
         const TeamBase& base = m_Bases[1];
         const float width = static_cast<float>(m_Terrain.GetWidth());
 
-        for (int i = 0; i < count; i++)
-        {
-            // Land on the near side of their bunker, spread out a bit.
-            const float targetX = std::clamp(
-                base.X - 220.0f - static_cast<float>(i) * 36.0f + RandomUnit() * 14.0f,
-                40.0f, width - 40.0f);
+        // The enemy commander shops like a player: each body costs its
+        // build plus its weapon, paid from the team's gold. What it
+        // wants gets nastier as the match goes on; what it gets depends
+        // on what it can afford.
+        int& gold = m_TeamGold[1];
+        int count = 0;
 
-            // Later drops bring heavies with rockets and fast scouts
-            // with shotguns or flamethrowers.
+        auto priceOf = [&](BodyClass build, const WeaponDef* weapon)
+        {
+            return GetBodyClassInfo(build).Cost + (weapon ? weapon->Cost : 0);
+        };
+
+        for (int i = 0; i < maxCount; i++)
+        {
             BodyClass build = BodyClass::Medium;
             const WeaponDef* weapon = nullptr;
 
@@ -703,22 +720,44 @@ namespace Atlas
                 weapon = (m_Wave >= 4 && (m_Wave + i) % 2 == 0) ? m_Flamer : m_Shotgun;
             }
 
+            // Can't afford the fancy one: settle for a plain rifleman.
+            if (priceOf(build, weapon) > gold)
+            {
+                build = BodyClass::Medium;
+                weapon = nullptr;
+            }
+
+            if (priceOf(build, weapon) > gold)
+                break;
+
+            gold -= priceOf(build, weapon);
+
+            // Land on the near side of their bunker, spread out a bit.
+            const float targetX = std::clamp(
+                base.X - 220.0f - static_cast<float>(count) * 36.0f + RandomUnit() * 14.0f,
+                40.0f, width - 40.0f);
+
             m_Deliveries.Order(
                 DeliveryKind::Reinforcement,
-                width + 160.0f + static_cast<float>(i) * 90.0f,
+                width + 160.0f + static_cast<float>(count) * 90.0f,
                 -1.0f,
                 targetX,
                 weapon,
                 -1,
                 1,
                 static_cast<int>(build));
+
+            count++;
         }
 
-        // Air support from the middle of the match on.
-        const int drones = m_Wave >= 3 ? std::min(1 + (m_Wave - 3) / 3 + (m_Difficulty == 2 ? 1 : 0), 3) : 0;
+        // Air support from the middle of the match on, with what's left.
+        const int wantDrones = m_Wave >= 3 ? std::min(1 + (m_Wave - 3) / 3 + (m_Difficulty == 2 ? 1 : 0), 3) : 0;
+        int drones = 0;
 
-        for (int i = 0; i < drones; i++)
+        for (int i = 0; i < wantDrones && gold >= DroneCost; i++)
         {
+            gold -= DroneCost;
+
             m_Deliveries.Order(
                 DeliveryKind::Drone,
                 width + 240.0f + static_cast<float>(count + i) * 90.0f,
@@ -727,13 +766,20 @@ namespace Atlas
                 nullptr,
                 -1,
                 1);
+
+            drones++;
         }
 
-        SimEvent incoming;
-        incoming.Type = SimEventType::EnemyDropIncoming;
-        incoming.Value = count;
-        incoming.X = base.X;
-        Emit(incoming);
+        if (count + drones > 0)
+        {
+            SimEvent incoming;
+            incoming.Type = SimEventType::EnemyDropIncoming;
+            incoming.Value = count;
+            incoming.X = base.X;
+            Emit(incoming);
+        }
+
+        return count + drones;
     }
 
     void World::SpawnWave(int count)
@@ -1539,6 +1585,7 @@ namespace Atlas
             if (!player.Body->IsAlive() && !player.Gibbed)
             {
                 m_Stats.BodiesLost++;
+                m_TeamGold[1] += KillBounty;
                 player.Body->Gib(m_Particles);
                 EmitSoundAt(Sfx::Gib, 1.0f, player.Body->GetCenterX(), player.Body->GetCenterY());
                 player.RespawnTimer = RespawnTime;
@@ -1584,6 +1631,7 @@ namespace Atlas
             if (!m_Allies[i].Body->IsAlive())
             {
                 m_Stats.BodiesLost++;
+                m_TeamGold[1] += KillBounty;
                 m_Allies[i].Body->Gib(m_Particles);
                 EmitSoundAt(Sfx::Gib, 0.8f, m_Allies[i].Body->GetCenterX(), m_Allies[i].Body->GetCenterY());
 
@@ -1655,16 +1703,24 @@ namespace Atlas
         {
             m_WaveTimer -= FixedTimeStep;
 
-            if (m_WaveTimer <= 0.0f)
+            // Their income: a steady trickle, more on harder settings.
+            static constexpr int IncomeTicks[3] = { 22, 15, 10 }; // ticks per gold
+            if (m_Tick % static_cast<std::uint64_t>(IncomeTicks[m_Difficulty]) == 0u)
+                m_TeamGold[1]++;
+
+            const int room = MaxEnemies - static_cast<int>(m_Enemies.size());
+
+            if (m_WaveTimer <= 0.0f && (room <= 0 || m_TeamGold[1] < GetBodyClassInfo(BodyClass::Medium).Cost))
+            {
+                // Full up or broke: look again shortly.
+                m_WaveTimer = 4.0f;
+            }
+            else if (m_WaveTimer <= 0.0f)
             {
                 m_Wave++;
 
-                const int room = MaxEnemies - static_cast<int>(m_Enemies.size());
                 const int size = 2 + m_Wave / 2 + (m_Difficulty - 1);
-                const int count = std::min(room, std::clamp(size, 1, 4 + m_Difficulty * 2));
-
-                if (count > 0)
-                    SpawnEnemyDrop(count);
+                SpawnEnemyDrop(std::min(room, std::clamp(size, 1, 4 + m_Difficulty * 2)));
 
                 static constexpr float Interval[3] = { 40.0f, 34.0f, 28.0f };
                 static constexpr float MinInterval[3] = { 26.0f, 18.0f, 13.0f };

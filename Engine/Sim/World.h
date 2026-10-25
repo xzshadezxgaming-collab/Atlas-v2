@@ -93,6 +93,10 @@ namespace Atlas
         // 0 easy, 1 normal, 2 hard: how hard and how often the enemy
         // drops come, and how much gold you start with.
         int Difficulty = 1;
+
+        // Where the players' bunker goes, in percent of the map width
+        // from the west edge (BrainAssault). Clamped to 6..42.
+        int LandingZone = 12;
     };
 
     // Running totals for the end-of-match screen (the players' side).
@@ -341,7 +345,9 @@ namespace Atlas
         void UpdateBrains();
         void SwitchBody(int slot, bool deadBodyOnly);
         void RespawnPlayer(int slot);
-        void SpawnEnemyDrop(int count);
+        // Buys and ships up to maxCount bodies (and drones) with the
+        // enemy's gold. Returns how many were shipped.
+        int SpawnEnemyDrop(int maxCount);
         int AllyIndexNearest(float x, float y) const;
         void SpawnWave(int count);
         void SpawnAlly(float x, const WeaponDef* weapon, BodyClass bodyClass);
@@ -373,6 +379,7 @@ namespace Atlas
         const WeaponDef* m_Rocket;
         const WeaponDef* m_Flamer;
         const WeaponDef* m_Shotgun;
+        const WeaponDef* m_Digger;
 
         std::vector<SimEvent> m_Events;
         std::vector<GoldCredit> m_GoldCredits;

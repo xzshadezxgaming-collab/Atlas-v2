@@ -1168,6 +1168,17 @@ namespace Atlas
         }
     }
 
+    int Actor::FindItem(WeaponKind kind) const
+    {
+        for (int i = 0; i < m_ItemCount; i++)
+        {
+            if (m_Items[i].GetDef() && m_Items[i].GetDef()->Kind == kind)
+                return i;
+        }
+
+        return -1;
+    }
+
     Weapon& Actor::GetWeapon()
     {
         return m_Items[m_Selected];

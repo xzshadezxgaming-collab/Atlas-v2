@@ -4,7 +4,27 @@ A 2D game engine inspired by the technology behind **Cortex Command**:
 fully destructible per-pixel terrain, pixel-level physics, and
 material-driven gameplay — rebuilt on modern C++ and SDL3.
 
-## Current features (v0.7.0)
+## Current features (v0.8.0)
+
+- **Smarter enemy, your landing zone** — the enemy commander now runs
+  on a real budget: it earns gold over time (faster on harder
+  difficulties) and from every kill, and spends it on the bodies,
+  weapons and drones it ships in, so a winning enemy gets stronger
+  and a starved one sends less. Its attackers carry diggers and, when
+  a wall or hill stops them, they tunnel through it instead of
+  standing still. On the skirmish and host screens you get a preview
+  of the actual map (random seeds are rolled up front so you see what
+  you'll play) and you click it to choose where your bunker lands:
+  further west is safer, further east is closer to the fight. An
+  in-game **minimap** (M) shows the terrain, both brains, every unit
+  and your view.
+
+- **Sound and music** — a procedural soundtrack with a calm loop and a
+  combat loop over the same chords, crossfaded by how much fighting is
+  going on near you, with its own volume slider. Every sound in the
+  world is now positional: it fades with distance from your view and
+  pans left or right, and enemy, ally and drone gunfire is voiced too.
+
 
 - **Arsenal and bodies** — three builds to order: the fast, fragile
   **SCOUT** (70 health, quicker legs and jetpack), the **RIFLEMAN**
@@ -190,6 +210,7 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
 | Tab (hold) | Open the buy menu |
 | Q | Switch to the next friendly body |
 | Z / X / C | Squad order: defend / follow / attack |
+| M | Toggle the minimap |
 | Esc | Pause menu |
 
 ## Multiplayer
@@ -319,8 +340,6 @@ Debug with AddressSanitizer + UBSan) and on Windows with MSVC.
   inventory/pickups, objectives. The buy menu is now a real order cart
   (bodies, weapons/tools and supply crates, with weapons equippable to
   a chosen body or dropped loose as field pickups); still to come:
-  more body classes and order types, direct control over multiple
-  bodies, and choosing your own landing zone instead of always
-  dropping on you.
+  direct control over multiple bodies.
 - [ ] **Milestone 5 — feel and polish**: body pitch and stagger,
   screen shake, parallax background, performance pass, settings

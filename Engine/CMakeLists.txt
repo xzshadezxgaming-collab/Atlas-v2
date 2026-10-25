@@ -27,6 +27,7 @@ add_library(AtlasEngine STATIC
     Graphics/Texture2D.cpp
     Graphics/Sprite.cpp
     Graphics/Camera.cpp
+    Graphics/MapThumbnail.cpp
 
     World/Terrain.cpp
 

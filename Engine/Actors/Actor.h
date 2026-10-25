@@ -138,6 +138,9 @@ namespace Atlas
         // For the AI: hold the first real weapon, not a dig tool.
         void SelectBestWeapon();
 
+        // Index of the first item of this kind, -1 if none.
+        int FindItem(WeaponKind kind) const;
+
         // The held item.
         Weapon& GetWeapon();
         const Weapon& GetWeapon() const;

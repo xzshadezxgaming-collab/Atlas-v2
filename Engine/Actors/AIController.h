@@ -70,6 +70,12 @@ namespace Atlas
         float m_StuckTimer;   // how long progress toward the goal has stalled
         float m_JetTimer;     // > 0: jetting to get over an obstacle
 
+        // Digging through what jetting can't get over.
+        float m_ProgressX;    // where it last made headway
+        float m_NoProgress;   // how long since
+        float m_DigTimer;     // > 0: tunnelling
+        float m_DigDir;
+
         std::uint32_t m_RandomState;
 
         float RandomUnit();

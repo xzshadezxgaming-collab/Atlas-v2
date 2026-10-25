@@ -324,6 +324,7 @@ namespace Atlas
                 info.Seed = Config.Seed;
                 info.Mode = static_cast<std::uint8_t>(Config.Mode);
                 info.Difficulty = static_cast<std::uint8_t>(Config.Difficulty);
+                info.LandingZone = static_cast<std::uint8_t>(Config.LandingZone);
                 info.WeaponsIni = WeaponsIni;
                 info.HistoryFrames = static_cast<std::uint32_t>(OutgoingFirst);
 
@@ -493,6 +494,7 @@ namespace Atlas
                     ? GameMode::Survival
                     : GameMode::BrainAssault;
                 Config.Difficulty = info.Difficulty;
+                Config.LandingZone = info.LandingZone;
                 WeaponsIni = info.WeaponsIni;
                 LocalSlot = info.Slot;
                 HistoryTotal = info.HistoryFrames;

@@ -10,6 +10,7 @@
 #include "../Combat/Weapon.h"
 #include "../Graphics/Background.h"
 #include "../Graphics/Camera.h"
+#include "../Graphics/MapThumbnail.h"
 #include "../Graphics/PixelFont.h"
 #include "../Input/Input.h"
 #include "../Graphics/Texture2D.h"
@@ -237,7 +238,7 @@ namespace Atlas
     {
         std::cout << "=================================\n";
         std::cout << "        ATLAS ENGINE\n";
-        std::cout << "           v0.7.0\n";
+        std::cout << "           v0.8.0\n";
         std::cout << "=================================\n\n";
 
         if (!m_Window.Create("Atlas", ViewWidth, ViewHeight))
@@ -276,6 +277,9 @@ namespace Atlas
                 break;
 
             showMenu = exit == MatchExit::ToMenu;
+
+            // "Play again" on a random map rolls a new one.
+            request.RandomSeed = 0;
         }
 
         m_Settings.Save();
@@ -513,6 +517,25 @@ namespace Atlas
         int modeIndex = request.Survival ? 1 : 0;
         std::string error;
 
+        // Setup-screen map preview. A blank seed means "random", but the
+        // random seed is rolled here so the preview shows the real map.
+        MapThumbnail preview;
+        std::unique_ptr<Terrain> previewTerrain;
+        unsigned int randomSeed = static_cast<unsigned int>(SDL_GetPerformanceCounter() % 999983u) + 1u;
+        unsigned int previewSeed = 0;
+        int previewSize = -1;
+        std::string lastSeedText = seedText;
+        float seedTextStill = 1.0f;
+
+        auto effectiveSeed = [&]()
+        {
+            if (seedText.empty())
+                return randomSeed;
+
+            const unsigned long typed = std::strtoul(seedText.c_str(), nullptr, 10);
+            return typed != 0ul ? static_cast<unsigned int>(typed) : randomSeed;
+        };
+
         Uint64 last = SDL_GetPerformanceCounter();
         float time = 0.0f;
 
@@ -572,6 +595,7 @@ namespace Atlas
                 char* end = nullptr;
                 const unsigned long seed = seedText.empty() ? 0ul : std::strtoul(seedText.c_str(), &end, 10);
                 request.Seed = static_cast<unsigned int>(seed);
+                request.RandomSeed = effectiveSeed();
 
                 if (mode == LaunchMode::Host)
                 {
@@ -648,6 +672,90 @@ namespace Atlas
                     : "HOLD OUT AGAINST ENDLESS WAVES.", 170, 176, 190);
                 y += 30.0f;
 
+                // --- Map preview and landing zone ---
+                {
+                    if (seedText != lastSeedText)
+                    {
+                        lastSeedText = seedText;
+                        seedTextStill = 0.0f;
+                    }
+
+                    seedTextStill += dt;
+
+                    static constexpr int PreviewWidths[3] = { DefaultWorldWidth, 3072, 4096 };
+                    static constexpr int PreviewHeights[3] = { DefaultWorldHeight, 1152, 1280 };
+                    const int size = std::clamp(request.MapSize, 0, 2);
+
+                    // Rebuild once typing has paused.
+                    if ((effectiveSeed() != previewSeed || size != previewSize) && seedTextStill > 0.35f)
+                    {
+                        previewSeed = effectiveSeed();
+                        previewSize = size;
+                        previewTerrain = std::make_unique<Terrain>();
+                        previewTerrain->Create(PreviewWidths[size], PreviewHeights[size], previewSeed);
+
+                        const int thumbHeight = 520 * PreviewHeights[size] / PreviewWidths[size];
+                        preview.Update(m_Window.GetRenderer(), *previewTerrain, 520, thumbHeight);
+                    }
+
+                    const float px = 680.0f;
+                    const float py = y0 + 20.0f;
+                    const float pw = static_cast<float>(preview.GetWidth());
+                    const float ph = static_cast<float>(preview.GetHeight());
+
+                    // Backing panel so the title and hints read over the menu backdrop.
+                    m_Window.DrawScreenRect(px - 14.0f, y0 - 32.0f, pw + 28.0f, ph + 102.0f, 10, 12, 20, 205);
+
+                    ui.Text(px, y0 - 20.0f, 2.0f, seedText.empty()
+                        ? "RANDOM MAP (SEED " + std::to_string(randomSeed) + ")"
+                        : "MAP PREVIEW", 220, 224, 235);
+
+                    m_Window.DrawScreenRect(px - 3.0f, py - 3.0f, pw + 6.0f, ph + 6.0f, 60, 64, 80, 255);
+                    preview.Draw(m_Window.GetRenderer(), px, py);
+
+                    if (modeIndex == 0 && previewTerrain && pw > 0.0f)
+                    {
+                        // Where you may land, and where you will.
+                        const float zoneLeft = px + pw * 0.06f;
+                        const float zoneRight = px + pw * 0.42f;
+                        m_Window.DrawScreenRect(zoneLeft, py, zoneRight - zoneLeft, ph, 90, 160, 255, 30);
+
+                        const float mx = Input::GetMouseX();
+                        const float my = Input::GetMouseY();
+                        const bool overMap = mx >= px && mx <= px + pw && my >= py && my <= py + ph;
+
+                        if (overMap && Input::WasMouseButtonPressed(SDL_BUTTON_LEFT))
+                        {
+                            request.LandingZone = std::clamp(
+                                static_cast<int>(std::lround((mx - px) / pw * 100.0f)), 6, 42);
+                            Audio::Play(Sfx::Reload, 0.4f);
+                        }
+
+                        auto marker = [&](float fraction, Uint8 r, Uint8 g, Uint8 b, const std::string& label)
+                        {
+                            const int worldX = static_cast<int>(fraction * static_cast<float>(previewTerrain->GetWidth()));
+                            const float surface = static_cast<float>(previewTerrain->GetSurfaceY(worldX)) /
+                                static_cast<float>(previewTerrain->GetHeight());
+                            const float mxp = px + fraction * pw;
+                            const float myp = py + surface * ph;
+
+                            m_Window.DrawScreenRect(mxp - 5.0f, myp - 8.0f, 10.0f, 7.0f, 24, 22, 27, 255);
+                            m_Window.DrawScreenRect(mxp - 4.0f, myp - 7.0f, 8.0f, 5.0f, r, g, b, 255);
+                            m_Window.DrawScreenRect(mxp - 0.5f, myp - 24.0f, 1.0f, 16.0f, r, g, b, 200);
+                            PixelFont::Draw(m_Window, mxp - PixelFont::Measure(label, 1.5f) * 0.5f, myp - 36.0f,
+                                1.5f, label, r, g, b);
+                        };
+
+                        marker(static_cast<float>(request.LandingZone) / 100.0f, 110, 180, 255, "YOU");
+                        marker(0.88f, 255, 110, 90, "ENEMY");
+
+                        ui.Text(px, py + ph + 12.0f, 1.5f,
+                            "CLICK THE MAP TO CHOOSE YOUR LANDING ZONE.", 170, 176, 190);
+                        ui.Text(px, py + ph + 28.0f, 1.5f,
+                            "FURTHER EAST IS CLOSER TO THE FIGHT.", 130, 136, 150);
+                    }
+                }
+
                 if (ui.Button(left, y, 240.0f, bh, host ? "HOST" : "START"))
                     start = startMatch(host ? LaunchMode::Host : LaunchMode::Offline);
 
@@ -721,6 +829,7 @@ namespace Atlas
                     { "TAB (HOLD)", "BUY MENU: ORDER BODIES, WEAPONS, SUPPLIES" },
                     { "Q", "SWITCH TO THE NEXT FRIENDLY BODY" },
                     { "Z / X / C", "SQUAD: DEFEND / FOLLOW / ATTACK" },
+                    { "M", "TOGGLE THE MINIMAP" },
                     { "ESC", "PAUSE" },
                 };
 
@@ -748,7 +857,7 @@ namespace Atlas
                 ui.Text(left, static_cast<float>(ViewHeight) - 60.0f, 2.0f, error, 255, 120, 100);
 
             ui.Text(static_cast<float>(ViewWidth) - 16.0f, static_cast<float>(ViewHeight) - 20.0f, 1.5f,
-                "V0.6.0", 120, 124, 140, 2);
+                "V0.8.0", 120, 124, 140, 2);
 
             ui.End();
 
@@ -776,6 +885,7 @@ namespace Atlas
         WorldConfig worldConfig;
         worldConfig.Mode = request.Survival ? GameMode::Survival : GameMode::BrainAssault;
         worldConfig.Difficulty = request.Difficulty;
+        worldConfig.LandingZone = request.LandingZone;
 
         static constexpr int MapWidths[3] = { DefaultWorldWidth, 3072, 4096 };
         static constexpr int MapHeights[3] = { DefaultWorldHeight, 1152, 1280 };
@@ -786,7 +896,9 @@ namespace Atlas
 
         unsigned int seed = request.Seed != 0
             ? request.Seed
-            : static_cast<unsigned int>(sceneIni.GetInt("World", "Seed", 0));
+            : request.RandomSeed != 0
+                ? request.RandomSeed
+                : static_cast<unsigned int>(sceneIni.GetInt("World", "Seed", 0));
 
         if (seed == 0)
             seed = static_cast<unsigned int>(SDL_GetPerformanceCounter());
@@ -1165,6 +1277,11 @@ namespace Atlas
         // How much fighting is going on near the view, for the music.
         float combatHeat = 0.0f;
 
+        // Minimap (M toggles), refreshed from the terrain twice a second.
+        MapThumbnail minimap;
+        float minimapTimer = 0.0f;
+        bool showMinimap = true;
+
         auto handleEvents = [&]()
         {
             const float listenX = camera.GetX() + static_cast<float>(ViewWidth) * 0.5f;
@@ -1435,6 +1552,9 @@ namespace Atlas
             // orders (defend the brain / follow me / attack theirs).
             if (Input::WasKeyPressed(SDL_SCANCODE_Q))
                 switchQueued = true;
+
+            if (Input::WasKeyPressed(SDL_SCANCODE_M))
+                showMinimap = !showMinimap;
 
             if (Input::WasKeyPressed(SDL_SCANCODE_Z))
                 allyOrderQueued = static_cast<int>(AllyOrder::Defend);
@@ -3017,6 +3137,95 @@ namespace Atlas
                     drawText(
                         ax - dir * 12.0f - (dir > 0.0f ? PixelFont::Measure(label, 1.5f) : 0.0f),
                         ay - 4.0f, 1.5f, label, r, g, b);
+                }
+            }
+
+            // Minimap: the whole battlefield in the bottom-right corner.
+            if (showMinimap)
+            {
+                const float mapW = 300.0f;
+                const float worldW = static_cast<float>(terrain.GetWidth());
+                const float worldH = static_cast<float>(terrain.GetHeight());
+                const float mapH = std::floor(mapW * worldH / worldW);
+                const float mapX = static_cast<float>(ViewWidth) - mapW - 14.0f;
+                const float mapY = static_cast<float>(ViewHeight) - mapH - 14.0f;
+
+                minimapTimer -= frameTime;
+
+                if (minimapTimer <= 0.0f || minimap.GetWidth() == 0)
+                {
+                    minimap.Update(m_Window.GetRenderer(), terrain,
+                        static_cast<int>(mapW), static_cast<int>(mapH));
+                    minimapTimer = 0.5f;
+                }
+
+                m_Window.DrawScreenRect(mapX - 2.0f, mapY - 2.0f, mapW + 4.0f, mapH + 4.0f, 52, 54, 66, 230);
+                minimap.Draw(m_Window.GetRenderer(), mapX, mapY);
+
+                auto toMap = [&](float x, float y, float& outX, float& outY)
+                {
+                    outX = mapX + std::clamp(x / worldW, 0.0f, 1.0f) * mapW;
+                    outY = mapY + std::clamp(y / worldH, 0.0f, 1.0f) * mapH;
+                };
+
+                auto dot = [&](float x, float y, float size, Uint8 r, Uint8 g, Uint8 b)
+                {
+                    float mx = 0.0f;
+                    float my = 0.0f;
+                    toMap(x, y, mx, my);
+                    m_Window.DrawScreenRect(mx - size * 0.5f, my - size * 0.5f, size, size, r, g, b, 255);
+                };
+
+                // The view.
+                {
+                    float vx = 0.0f;
+                    float vy = 0.0f;
+                    toMap(camera.GetX(), camera.GetY(), vx, vy);
+                    const float vw = static_cast<float>(ViewWidth) / worldW * mapW;
+                    const float vh = static_cast<float>(ViewHeight) / worldH * mapH;
+
+                    m_Window.DrawScreenRect(vx, vy, vw, 1.0f, 230, 230, 240, 160);
+                    m_Window.DrawScreenRect(vx, vy + vh - 1.0f, vw, 1.0f, 230, 230, 240, 160);
+                    m_Window.DrawScreenRect(vx, vy, 1.0f, vh, 230, 230, 240, 160);
+                    m_Window.DrawScreenRect(vx + vw - 1.0f, vy, 1.0f, vh, 230, 230, 240, 160);
+                }
+
+                for (int team = 0; team < World::TeamCount; team++)
+                {
+                    const TeamBase& base = world.GetBase(team);
+
+                    if (!base.Exists)
+                        continue;
+
+                    const bool blink = !base.BrainAlive || std::fmod(timeSeconds, 1.0f) < 0.75f;
+
+                    if (blink)
+                    {
+                        dot(base.GetBrainCenterX(), base.GetBrainCenterY(), 6.0f,
+                            base.BrainAlive ? (team == 0 ? 120 : 255) : 90,
+                            base.BrainAlive ? (team == 0 ? 200 : 118) : 90,
+                            base.BrainAlive ? (team == 0 ? 255 : 106) : 90);
+                    }
+                }
+
+                for (const Enemy& enemy : enemies)
+                    dot(enemy.Body->GetCenterX(), enemy.Body->GetCenterY(), 3.0f, 255, 90, 80);
+
+                for (const Ally& ally : allies)
+                    dot(ally.Body->GetCenterX(), ally.Body->GetCenterY(), 3.0f, 110, 170, 255);
+
+                for (const Drone& drone : world.GetDrones())
+                {
+                    dot(drone.X, drone.Y, 2.0f,
+                        drone.Team == 0 ? 150 : 255, drone.Team == 0 ? 200 : 140, drone.Team == 0 ? 255 : 120);
+                }
+
+                for (int slot = 0; slot < world.GetPlayerCount(); slot++)
+                {
+                    const Actor& body = *world.GetPlayer(slot).Body;
+
+                    if (body.IsAlive())
+                        dot(body.GetCenterX(), body.GetCenterY(), slot == localPlayer ? 5.0f : 4.0f, 255, 255, 255);
                 }
             }
 
