@@ -19,6 +19,61 @@
 
 namespace Atlas
 {
+    enum class GameMode : std::uint8_t
+    {
+        // Each side has a brain in a concrete bunker; destroy theirs,
+        // keep yours. Enemy reinforcements drop in near their base and
+        // march on yours.
+        BrainAssault,
+
+        // Endless waves of enemies, no bases.
+        Survival,
+    };
+
+    // What a team's AI units do when nobody is driving them.
+    enum class AllyOrder : std::uint8_t
+    {
+        Defend, // hold around the team's brain
+        Follow, // stay with the player who gave the order
+        Attack, // march on the enemy brain
+
+        Count
+    };
+
+    enum class MatchOutcome : std::uint8_t
+    {
+        InProgress,
+        Victory, // the players destroyed the enemy brain
+        Defeat,  // the players' brain was destroyed
+    };
+
+    // A team's base: a concrete bunker with the team's brain inside, in
+    // a glass jar on a pedestal. The brain is made of terrain pixels, so
+    // anything that chews terrain can kill it.
+    struct TeamBase
+    {
+        bool Exists = false;
+
+        float X = 0.0f;  // bunker center
+        int FloorY = 0;  // top of the bunker floor
+
+        // Bounding box of the brain's pixels.
+        int BrainMinX = 0;
+        int BrainMinY = 0;
+        int BrainMaxX = 0;
+        int BrainMaxY = 0;
+
+        int BrainPixelsStart = 0;
+        int BrainPixels = 0;
+        bool BrainAlive = false;
+
+        float GetBrainCenterX() const { return 0.5f * static_cast<float>(BrainMinX + BrainMaxX); }
+        float GetBrainCenterY() const { return 0.5f * static_cast<float>(BrainMinY + BrainMaxY); }
+
+        // 0..1 of the brain left; it dies well before every pixel is gone.
+        float GetBrainHealth() const;
+    };
+
     struct WorldConfig
     {
         int Width = 2048;
@@ -32,6 +87,8 @@ namespace Atlas
         // Weapon definitions (see LoadWeaponDefs). Empty uses the
         // built-in fallbacks.
         std::vector<WeaponDef> Weapons;
+
+        GameMode Mode = GameMode::BrainAssault;
     };
 
     // A player-controlled body plus the per-player bookkeeping that used
@@ -58,6 +115,9 @@ namespace Atlas
     {
         std::unique_ptr<Actor> Body;
         AIController Brain;
+
+        // Attackers march on the players' brain; the rest guard their own.
+        bool Attacker = true;
 
         // Health seen last tick, to report damage events without
         // plumbing callbacks through every damage path.
@@ -101,12 +161,18 @@ namespace Atlas
         static constexpr float FixedTimeStep = 1.0f / 120.0f;
 
         static constexpr int MaxPlayers = 4;
-        static constexpr int MaxEnemies = 8;
-        static constexpr int MaxAllies = 4;
+        static constexpr int MaxEnemies = 12;
+        static constexpr int MaxAllies = 8;
+        static constexpr int TeamCount = 2;
         static constexpr int LoadoutSize = 5;
 
         static constexpr int SupplyCrateCost = 40;
         static constexpr int ReinforcementCost = 100;
+        static constexpr int StartingGold = 300;
+        static constexpr int KillBounty = 10;
+
+        // Below this share of its pixels, a brain is dead.
+        static constexpr float BrainDeathThreshold = 0.35f;
 
         World();
 
@@ -177,6 +243,21 @@ namespace Atlas
         std::uint64_t GetTick() const;
         float GetSpawnX(int playerSlot) const;
 
+        GameMode GetMode() const;
+        MatchOutcome GetOutcome() const;
+        const TeamBase& GetBase(int team) const;
+
+        // Seconds until the next enemy drop (BrainAssault), or the next
+        // wave (Survival).
+        float GetWaveTimer() const;
+
+        // Gold is pooled per team: whatever a body mines goes to its
+        // team, and orders draw on the team's funds.
+        int GetTeamGold(int team) const;
+        void AddTeamGold(int team, int amount);
+
+        AllyOrder GetAllyOrder() const;
+
     private:
         // Uniform in [-1, 1). Hand-rolled on top of mt19937 (whose output
         // the standard pins down) because std distributions may differ
@@ -188,7 +269,13 @@ namespace Atlas
         void EmitSound(Sfx sound, float volume = 1.0f);
 
         void InitActor(Actor& actor, int team);
-        void SpawnEnemy(float x);
+        void SpawnEnemy(float x, bool attacker);
+        void BuildBase(int team, float centerX);
+        void UpdateBrains();
+        void SwitchBody(int slot, bool deadBodyOnly);
+        void RespawnPlayer(int slot);
+        void SpawnEnemyDrop(int count);
+        int AllyIndexNearest(float x, float y) const;
         void SpawnWave(int count);
         void SpawnAlly(float x, const WeaponDef* weapon);
 
@@ -196,6 +283,8 @@ namespace Atlas
         void ApplyTerrainHazards(Actor& actor);
         void ApplyDiggerLimbDamage(Actor& digger);
         Actor* NearestLivingPlayer(float x, float y);
+        Actor* NearestOfTeam(int team, float x, float y);
+        void CollectGold(Actor& body);
 
         Terrain m_Terrain;
         ParticleSystem m_Particles;
@@ -226,5 +315,14 @@ namespace Atlas
         int m_Wave;
         float m_WaveTimer;
         bool m_BotsEnabled;
+
+        GameMode m_Mode;
+        MatchOutcome m_Outcome;
+        TeamBase m_Bases[TeamCount];
+        int m_TeamGold[TeamCount];
+        float m_BrainAlarmTimer;
+
+        AllyOrder m_AllyOrder;
+        int m_AllyOrderPlayer; // who gave a Follow order
     };
 }

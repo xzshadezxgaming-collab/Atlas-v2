@@ -17,6 +17,7 @@ namespace Atlas
             ButtonFire = 1 << 4,
             ButtonThrow = 1 << 5,
             ButtonReload = 1 << 6,
+            ButtonSwitchBody = 1 << 7,
         };
 
         // Upper bound on list lengths read off the wire, so a bad packet
@@ -45,12 +46,14 @@ namespace Atlas
         if (input.Fire) buttons |= ButtonFire;
         if (input.ThrowPressed) buttons |= ButtonThrow;
         if (input.ReloadPressed) buttons |= ButtonReload;
+        if (input.SwitchBodyPressed) buttons |= ButtonSwitchBody;
 
         out.U8(buttons);
         out.F32(input.MoveX);
         out.F32(input.AimX);
         out.F32(input.AimY);
         out.I8(input.SelectSlot);
+        out.I8(input.AllyOrder);
     }
 
     PlayerInput ReadInput(ByteReader& in)
@@ -66,11 +69,13 @@ namespace Atlas
         input.Fire = (buttons & ButtonFire) != 0;
         input.ThrowPressed = (buttons & ButtonThrow) != 0;
         input.ReloadPressed = (buttons & ButtonReload) != 0;
+        input.SwitchBodyPressed = (buttons & ButtonSwitchBody) != 0;
 
         input.MoveX = in.F32();
         input.AimX = in.F32();
         input.AimY = in.F32();
         input.SelectSlot = in.I8();
+        input.AllyOrder = in.I8();
 
         return input;
     }
@@ -182,6 +187,7 @@ namespace Atlas
         out.U32(static_cast<std::uint32_t>(info.Width));
         out.U32(static_cast<std::uint32_t>(info.Height));
         out.U32(info.Seed);
+        out.U8(info.Mode);
         out.String(info.WeaponsIni);
         out.U32(info.HistoryFrames);
     }
@@ -193,6 +199,7 @@ namespace Atlas
         info.Width = static_cast<int>(in.U32());
         info.Height = static_cast<int>(in.U32());
         info.Seed = in.U32();
+        info.Mode = in.U8();
         info.WeaponsIni = in.String();
         info.HistoryFrames = in.U32();
         return info;

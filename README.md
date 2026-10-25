@@ -6,6 +6,20 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
 
 ## Current features (v0.5.0)
 
+- **Brain assault** — the default match, Cortex Command's core loop.
+  Each side has a brain in a glass jar inside a concrete bunker at its
+  end of the map. Destroy theirs, keep yours alive. Enemy drop ships
+  land reinforcements near their base on a timer and march them on
+  your bunker, jetting over whatever is in the way, while guards hold
+  theirs. Your side's bodies are interchangeable: press **Q** to jump
+  into the next one (the body you leave carries on under AI), and when
+  your body dies you take over the nearest survivor. Squad orders
+  (**Z** defend, **X** follow me, **C** attack) direct your AI units.
+  Gold is pooled per team; kills pay a bounty. The brain is made of
+  terrain pixels, so bullets and blasts can kill it, but never your
+  own team's. Concrete stops bullets and shrugs off most of a blast.
+  `--survival` plays the old endless waves instead.
+
 - **Per-pixel destructible terrain** — the world is a material grid
   (grass, dirt, stone, gold veins) paired with a streamed GPU texture.
   Every collision query, dig, and edit works on individual pixels.
@@ -150,6 +164,8 @@ material-driven gameplay — rebuilt on modern C++ and SDL3.
 | 1-5 / scroll wheel | SMG / Shotgun / Rifle / Digger / Shovel |
 | R | Reload |
 | Tab (hold) | Open the buy menu |
+| Q | Switch to the next friendly body |
+| Z / X / C | Squad order: defend / follow / attack |
 
 ## Multiplayer
 
@@ -268,6 +284,8 @@ Debug with AddressSanitizer + UBSan) and on Windows with MSVC.
   ENet, late join by replay, desync detection
 - [x] **Living terrain**: data-driven materials, falling sand, liquids,
   lava/water reactions, caves and pools, bedrock
+- [x] **Core loop**: brains and bunkers, enemy drop ships and attack
+  waves, body switching, squad orders, team funds, victory and defeat
 - [ ] **Networking, next**: client-side prediction (or rollback) to hide
   input delay, snapshot-based join for long matches, reconnects,
   cross-platform float determinism

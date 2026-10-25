@@ -41,6 +41,10 @@ namespace Atlas
         Actor(const Actor&) = delete;
         Actor& operator=(const Actor&) = delete;
 
+        // Movable, so two bodies can trade places (see World::SwitchBody).
+        Actor(Actor&&) = default;
+        Actor& operator=(Actor&&) = default;
+
         // The body sprite is owned by whoever draws (the client); the
         // actor only borrows it, so the simulation never needs a renderer
         // and many actors can share one texture. Null draws limbs only.
@@ -57,7 +61,13 @@ namespace Atlas
         void SetTint(Uint8 r, Uint8 g, Uint8 b);
 
         // Places the actor standing on the terrain surface at the given x.
-        void Spawn(const Terrain& terrain, float centerX);
+        // Stands the actor on the first ground below searchFromY in
+        // column centerX (from the top of the world by default).
+        void Spawn(const Terrain& terrain, float centerX, int searchFromY = 0);
+
+        // False if the body overlaps terrain where it stands (a spawn
+        // under an overhang, say).
+        bool HasRoom(const Terrain& terrain) const;
 
         // moveInput: -1..1 walk input. particles may be null (no effects).
         // crouch folds the legs so the actor fits through low spaces.
@@ -119,6 +129,7 @@ namespace Atlas
 
         void SetTeam(int team);
         int GetTeam() const;
+        float GetFacingDir() const; // +1 right, -1 left
 
         float GetFuel() const;
         bool IsJetting() const;

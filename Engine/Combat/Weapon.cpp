@@ -394,7 +394,8 @@ namespace Atlas
                         const Material material = terrain.GetMaterial(px, py);
                         const MaterialInfo& info = GetMaterialInfo(material);
 
-                        if (!info.Solid)
+                        // Dig tools are for ground, not brains.
+                        if (!info.Solid || material == Material::Brain)
                             continue;
 
                         // Eligibility (can this tool touch it at all) is

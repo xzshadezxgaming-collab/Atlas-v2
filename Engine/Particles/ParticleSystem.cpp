@@ -72,6 +72,33 @@ namespace Atlas
         Push(p);
     }
 
+    void ParticleSystem::SetFriendlyBrainBox(int team, int minX, int minY, int maxX, int maxY)
+    {
+        if (team < 0 || team >= 2)
+            return;
+
+        m_BrainBoxes[team] = { true, minX, minY, maxX, maxY };
+    }
+
+    bool ParticleSystem::GetFriendlyBrainBox(int team, Terrain::Box& out) const
+    {
+        if (team < 0 || team >= 2 || !m_BrainBoxes[team].Set)
+            return false;
+
+        const BrainBox& box = m_BrainBoxes[team];
+        out = { box.MinX, box.MinY, box.MaxX, box.MaxY };
+        return true;
+    }
+
+    bool ParticleSystem::IsFriendlyBrain(int team, int x, int y) const
+    {
+        if (team < 0 || team >= 2 || !m_BrainBoxes[team].Set)
+            return false;
+
+        const BrainBox& box = m_BrainBoxes[team];
+        return x >= box.MinX && x <= box.MaxX && y >= box.MinY && y <= box.MaxY;
+    }
+
     void ParticleSystem::SpawnDebris(
         float x,
         float y,
@@ -463,6 +490,13 @@ namespace Atlas
                             break;
                         }
 
+                        if (material == Material::Brain &&
+                            IsFriendlyBrain(p.OwnerTeam, px, py))
+                        {
+                            alive = false;
+                            break;
+                        }
+
                         if (p.Power >= strength)
                         {
                             // Punch through the pixel, knock it loose.
@@ -522,11 +556,27 @@ namespace Atlas
                         const int settleX = static_cast<int>(std::floor(prevX));
                         const int settleY = static_cast<int>(std::floor(prevY));
 
-                        if (!terrain.IsSolid(prevX, prevY))
+                        // Some things don't pile back up: brain matter
+                        // splatters, glass shatters, concrete crumbles
+                        // to rubble.
+                        Material settle = p.SettleMaterial;
+
+                        if (settle == Material::Brain)
                         {
-                            terrain.SetMaterial(
-                                settleX, settleY, p.SettleMaterial);
+                            terrain.StainPixel(px, py, 190, 70, 90);
+                            settle = Material::Air;
                         }
+                        else if (settle == Material::Glass)
+                        {
+                            settle = Material::Air;
+                        }
+                        else if (settle == Material::Concrete)
+                        {
+                            settle = Material::Gravel;
+                        }
+
+                        if (settle != Material::Air && !terrain.IsSolid(prevX, prevY))
+                            terrain.SetMaterial(settleX, settleY, settle);
 
                         alive = false;
                         break;

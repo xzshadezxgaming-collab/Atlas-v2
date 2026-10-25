@@ -163,6 +163,7 @@ namespace Atlas
                 "usage: Atlas                    play offline\n"
                 "       Atlas --host [port]      host a multiplayer game\n"
                 "       Atlas --join <address>[:port]\n"
+                "       --survival               endless waves, no bases (offline / host)\n"
                 "default port " << DefaultPort << "\n";
             return false;
         };
@@ -194,6 +195,10 @@ namespace Atlas
                     if (!parsePort(argv[++i], Port))
                         return usage();
                 }
+            }
+            else if (arg == "--survival")
+            {
+                Survival = true;
             }
             else if (arg == "--join" && i + 1 < argc)
             {
@@ -253,6 +258,7 @@ namespace Atlas
         sceneIni.Load(ResolveAssetPath("Assets/scene.ini"));
 
         WorldConfig worldConfig;
+        worldConfig.Mode = m_Options.Survival ? GameMode::Survival : GameMode::BrainAssault;
 
         worldConfig.Width = std::max(
             ViewWidth,
@@ -553,7 +559,7 @@ namespace Atlas
         // floater for every mined pixel.
         int goldPopupAccum = 0;
         float goldPopupTimer = 0.0f;
-        int lastPlayerGold = player.GetGold();
+        int lastPlayerGold = world.GetTeamGold(0);
 
         // Crosshair blooms open briefly on each shot.
         float crosshairBloom = 0.0f;
@@ -570,6 +576,11 @@ namespace Atlas
         bool jumpQueued = false;
         bool reloadQueued = false;
         int slotQueued = -1;
+        bool switchQueued = false;
+        int allyOrderQueued = -1;
+
+        // A brain alarm flashes the HUD for a moment.
+        float brainAlarm = 0.0f;
 
         // The UI (buy menu, HUD anchors) follows the smoothed camera
         // WITHOUT the shake component, so menus don't wobble and clicks
@@ -591,6 +602,22 @@ namespace Atlas
         // Turns what the simulation reported this tick into sound,
         // camera shake, hit-stop and floating text - judged from the
         // local player's point of view.
+        // Center-screen banner with an optional sub-line.
+        auto pushBanner = [&](const std::string& banner, const std::string& sub,
+            Uint8 r, Uint8 g, Uint8 b, float life = 2.2f)
+        {
+            floaters.push_back({
+                (static_cast<float>(ViewWidth) - PixelFont::Measure(banner, 6.0f)) * 0.5f,
+                170.0f, -9.0f, life, life, 6.0f, banner, r, g, b, true });
+
+            if (!sub.empty())
+            {
+                floaters.push_back({
+                    (static_cast<float>(ViewWidth) - PixelFont::Measure(sub, 2.0f)) * 0.5f,
+                    212.0f, -9.0f, life, life, 2.0f, sub, 240, 235, 220, true });
+            }
+        };
+
         auto handleEvents = [&]()
         {
             for (const SimEvent& event : world.GetEvents())
@@ -647,8 +674,41 @@ namespace Atlas
                         false });
                     break;
 
+                case SimEventType::BrainUnderAttack:
+                    if (event.Value == 0)
+                    {
+                        brainAlarm = 1.0f;
+                        pushBanner("BRAIN UNDER ATTACK", "DEFEND YOUR BUNKER", 255, 90, 80, 1.8f);
+                    }
+                    break;
+
+                case SimEventType::BrainDestroyed:
+                    trauma = 1.0f;
+                    break;
+
+                case SimEventType::MatchOver:
+                    if (event.Value == 0)
+                        pushBanner("VICTORY", "THE ENEMY BRAIN IS DESTROYED", 140, 235, 150, 6.0f);
+                    else
+                        pushBanner("DEFEAT", "YOUR BRAIN IS DESTROYED", 255, 90, 80, 6.0f);
+                    break;
+
+                case SimEventType::EnemyDropIncoming:
+                    pushBanner("ENEMY DROP", std::to_string(event.Value) + " HOSTILES INBOUND",
+                        255, 130, 110);
+                    break;
+
+                case SimEventType::BodySwitched:
+                    if (event.Player == localPlayer)
+                        trauma = std::min(trauma + 0.1f, 1.0f);
+                    break;
+
                 case SimEventType::WaveStarted:
                 {
+                    // Brain assault announces its drops instead.
+                    if (world.GetMode() == GameMode::BrainAssault)
+                        break;
+
                     // Center-screen wave banner with a sub-line.
                     const std::string banner =
                         "WAVE " + std::to_string(event.Value);
@@ -752,6 +812,20 @@ namespace Atlas
                 if (Input::WasKeyPressed(SDL_SCANCODE_R))
                     reloadQueued = true;
             }
+
+            // Q: jump into the next friendly body. Z / X / C: squad
+            // orders (defend the brain / follow me / attack theirs).
+            if (Input::WasKeyPressed(SDL_SCANCODE_Q))
+                switchQueued = true;
+
+            if (Input::WasKeyPressed(SDL_SCANCODE_Z))
+                allyOrderQueued = static_cast<int>(AllyOrder::Defend);
+
+            if (Input::WasKeyPressed(SDL_SCANCODE_X))
+                allyOrderQueued = static_cast<int>(AllyOrder::Follow);
+
+            if (Input::WasKeyPressed(SDL_SCANCODE_C))
+                allyOrderQueued = static_cast<int>(AllyOrder::Attack);
 
             const float mouseWorldX = Input::GetMouseX() + camera.GetX();
             const float mouseWorldY = Input::GetMouseY() + camera.GetY();
@@ -857,7 +931,7 @@ namespace Atlas
 
                         const CatalogEntry& entry = catalog[i];
 
-                        if (player.GetGold() < cart.GetTotalCost() + entry.Cost)
+                        if (world.GetTeamGold(0) < cart.GetTotalCost() + entry.Cost)
                             break; // can't afford - clicking does nothing
 
                         if (entry.Kind == CatalogKind::Body &&
@@ -942,7 +1016,7 @@ namespace Atlas
                         handled = true;
 
                         if (!cart.IsEmpty() &&
-                            player.GetGold() >= cart.GetTotalCost())
+                            world.GetTeamGold(0) >= cart.GetTotalCost())
                         {
                             OrderRequest order;
 
@@ -1046,6 +1120,8 @@ namespace Atlas
             input.ThrowPressed = throwQueued && !uiCapturingInput;
             input.ReloadPressed = reloadQueued;
             input.SelectSlot = static_cast<std::int8_t>(slotQueued);
+            input.SwitchBodyPressed = switchQueued;
+            input.AllyOrder = static_cast<std::int8_t>(allyOrderQueued);
 
             // Fixed-timestep simulation, run by the session. Hit-stop
             // holds back the frame's sim time, freezing the world for a
@@ -1074,12 +1150,14 @@ namespace Atlas
                 reloadQueued = false;
                 slotQueued = -1;
                 orderQueued = false;
+                switchQueued = false;
+                allyOrderQueued = -1;
             }
 
             // Gold popups, batched: while gold keeps arriving the window
             // extends; once it goes quiet the total pops up.
             {
-                const int gold = player.GetGold();
+                const int gold = world.GetTeamGold(0);
 
                 if (gold > lastPlayerGold)
                 {
@@ -1343,6 +1421,23 @@ namespace Atlas
                     1.5f, tag, 235, 235, 240, 220);
             }
 
+            // Which body is yours: once there are several on your side,
+            // a small bobbing chevron over it.
+            if (player.IsAlive() && !allies.empty())
+            {
+                const float bob = std::sin(timeSeconds * 5.0f) * 2.0f;
+                const float cx = player.GetCenterX() - camera.GetX();
+                const float top = player.GetY() - camera.GetY() - 18.0f + bob;
+
+                for (int row = 0; row < 4; row++)
+                {
+                    m_Window.DrawScreenRect(
+                        cx - 4.0f + static_cast<float>(row), top + static_cast<float>(row),
+                        8.0f - static_cast<float>(row) * 2.0f, 1.0f,
+                        140, 230, 255, 230);
+                }
+            }
+
             particles.Draw(m_Window);
 
             // --- Floating combat text (damage numbers, gold, banners) ---
@@ -1512,7 +1607,7 @@ namespace Atlas
                         2.0f, "ORDER SUPPLIES", 235, 235, 240);
 
                     const std::string goldLine =
-                        "GOLD: " + std::to_string(player.GetGold());
+                        "GOLD: " + std::to_string(world.GetTeamGold(0));
 
                     PixelFont::Draw(
                         m_Window,
@@ -1537,7 +1632,7 @@ namespace Atlas
                                 MaxAllies;
 
                         const bool affordable = roomForBody &&
-                            player.GetGold() >= cart.GetTotalCost() + entry.Cost;
+                            world.GetTeamGold(0) >= cart.GetTotalCost() + entry.Cost;
 
                         Uint8 baseR = 26, baseG = 26, baseB = 34;
 
@@ -1654,7 +1749,7 @@ namespace Atlas
                     // --- Total and action buttons ---
                     {
                         const bool canAfford =
-                            player.GetGold() >= cart.GetTotalCost();
+                            world.GetTeamGold(0) >= cart.GetTotalCost();
 
                         const std::string totalLine =
                             "TOTAL: " + std::to_string(cart.GetTotalCost()) + "G";
@@ -1946,7 +2041,7 @@ namespace Atlas
                     goldX + 13.0f,
                     75.0f,
                     2.0f,
-                    std::to_string(player.GetGold()),
+                    std::to_string(world.GetTeamGold(0)),
                     230, 200, 110);
             }
 
@@ -2044,6 +2139,116 @@ namespace Atlas
                         PixelFont::Measure(status, 1.5f),
                     BotsButtonY + BotsButtonH + 8.0f,
                     1.5f, status, r, g, b);
+            }
+
+            // --- Brain assault: both brains, the next enemy drop, squad
+            // orders, and arrows toward each brain when it's off screen ---
+            if (world.GetMode() == GameMode::BrainAssault)
+            {
+                brainAlarm = std::max(0.0f, brainAlarm - frameTime * 0.6f);
+
+                const float panelW = 560.0f;
+                const float panelX = (static_cast<float>(ViewWidth) - panelW) * 0.5f;
+                const float panelY = 8.0f;
+
+                const bool flash = brainAlarm > 0.0f &&
+                    std::fmod(timeSeconds, 0.4f) < 0.2f;
+
+                m_Window.DrawScreenRect(panelX - 1.0f, panelY - 1.0f, panelW + 2.0f, 52.0f,
+                    flash ? 200 : 120, flash ? 60 : 126, flash ? 60 : 148, flash ? 160 : 60);
+                m_Window.DrawScreenRect(panelX, panelY, panelW, 50.0f, 12, 12, 18, 195);
+
+                auto brainBar = [&](float x, const std::string& label, const TeamBase& base,
+                    Uint8 r, Uint8 g, Uint8 b)
+                {
+                    const float w = 180.0f;
+                    const float health = base.GetBrainHealth();
+
+                    drawText(x, panelY + 7.0f, 1.5f, label, r, g, b);
+                    m_Window.DrawScreenRect(x - 1.0f, panelY + 19.0f, w + 2.0f, 11.0f, 52, 54, 66, 255);
+                    m_Window.DrawScreenRect(x, panelY + 20.0f, w, 9.0f, 24, 24, 32, 255);
+
+                    if (health > 0.0f)
+                    {
+                        m_Window.DrawScreenRect(x, panelY + 20.0f, w * health, 9.0f, r, g, b, 255);
+                        m_Window.DrawScreenRect(x, panelY + 20.0f, w * health, 4.0f, 255, 255, 255, 46);
+                    }
+                };
+
+                brainBar(panelX + 12.0f, "YOUR BRAIN", world.GetBase(0), 120, 200, 255);
+                brainBar(panelX + panelW - 192.0f, "ENEMY BRAIN", world.GetBase(1), 255, 118, 106);
+
+                // Next drop countdown, centered between the bars.
+                if (world.GetOutcome() == MatchOutcome::InProgress && world.IsBotsEnabled())
+                {
+                    const int secs = static_cast<int>(std::ceil(world.GetWaveTimer()));
+                    const std::string drop = "DROP " + std::to_string(secs);
+
+                    drawText(
+                        panelX + (panelW - PixelFont::Measure(drop, 1.5f)) * 0.5f,
+                        panelY + 21.0f, 1.5f, drop, 255, 170, 150);
+                }
+
+                // Squad orders, the current one lit.
+                {
+                    static const char* Names[] = { "Z DEFEND", "X FOLLOW", "C ATTACK" };
+                    const int current = static_cast<int>(world.GetAllyOrder());
+
+                    float x = panelX + 12.0f;
+
+                    drawText(x, panelY + 36.0f, 1.5f,
+                        "SQUAD " + std::to_string(allies.size()), 200, 205, 215);
+                    x += 92.0f;
+
+                    for (int i = 0; i < 3; i++)
+                    {
+                        const bool lit = i == current;
+                        drawText(x, panelY + 36.0f, 1.5f, Names[i],
+                            lit ? 140 : 110, lit ? 230 : 112, lit ? 255 : 124);
+                        x += 84.0f;
+                    }
+
+                    if (!allies.empty())
+                        drawText(x, panelY + 36.0f, 1.5f, "Q SWITCH", 200, 205, 215);
+                }
+
+                // Off-screen arrows toward each living brain.
+                for (int team = 0; team < World::TeamCount; team++)
+                {
+                    const TeamBase& base = world.GetBase(team);
+
+                    if (!base.BrainAlive)
+                        continue;
+
+                    const float sx = base.GetBrainCenterX() - camera.GetX();
+                    const float sy = base.GetBrainCenterY() - camera.GetY();
+
+                    if (sx >= 0.0f && sx < static_cast<float>(ViewWidth) &&
+                        sy >= 0.0f && sy < static_cast<float>(ViewHeight))
+                        continue;
+
+                    const float ax = std::clamp(sx, 26.0f, static_cast<float>(ViewWidth) - 26.0f);
+                    const float ay = std::clamp(sy, 90.0f, static_cast<float>(ViewHeight) - 26.0f);
+                    const float dir = sx < 0.0f ? -1.0f : 1.0f;
+
+                    const Uint8 r = team == 0 ? 120 : 255;
+                    const Uint8 g = team == 0 ? 200 : 118;
+                    const Uint8 b = team == 0 ? 255 : 106;
+
+                    for (int col = 0; col < 7; col++)
+                    {
+                        const float h = 14.0f - static_cast<float>(col) * 2.0f;
+                        m_Window.DrawScreenRect(
+                            ax + dir * static_cast<float>(col), ay - h * 0.5f, 1.0f, h, r, g, b, 230);
+                    }
+
+                    const float distance = std::fabs(base.GetBrainCenterX() - player.GetCenterX());
+                    const std::string label = std::to_string(static_cast<int>(distance / 10.0f)) + "M";
+
+                    drawText(
+                        ax - dir * 12.0f - (dir > 0.0f ? PixelFont::Measure(label, 1.5f) : 0.0f),
+                        ay - 4.0f, 1.5f, label, r, g, b);
+                }
             }
 
             // Death overlay.

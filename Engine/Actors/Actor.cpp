@@ -233,11 +233,11 @@ namespace Atlas
         m_TintB = b;
     }
 
-    void Actor::Spawn(const Terrain& terrain, float centerX)
+    void Actor::Spawn(const Terrain& terrain, float centerX, int searchFromY)
     {
         float surfaceY = 0.0f;
 
-        for (int y = 0; y < terrain.GetHeight(); y++)
+        for (int y = std::max(0, searchFromY); y < terrain.GetHeight(); y++)
         {
             if (terrain.IsSolid(centerX, static_cast<float>(y)))
             {
@@ -1323,6 +1323,11 @@ namespace Atlas
         m_Team = team;
     }
 
+    float Actor::GetFacingDir() const
+    {
+        return m_FacingDir;
+    }
+
     int Actor::GetTeam() const
     {
         return m_Team;
@@ -1379,6 +1384,11 @@ namespace Atlas
     float Actor::ShoulderY() const
     {
         return m_Y + ShoulderOffsetY;
+    }
+
+    bool Actor::HasRoom(const Terrain& terrain) const
+    {
+        return IsBodyBoxFree(terrain, m_X, m_Y);
     }
 
     bool Actor::IsBodyBoxFree(const Terrain& terrain, float x, float y) const

@@ -4,6 +4,7 @@
 
 #include "Net/Session.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -146,11 +147,22 @@ int main()
     Check(late.GetState() == SessionState::Running, "client 2 joined mid-match: " + late.GetStatusText());
     Check(late.GetLocalSlot() == 2, "client 2 got slot 2");
 
+    // Furthest each client's body got from its spawn, as the host sees it.
+    float furthest[3] = {};
+
     for (int i = 0; i < 900; i++, frame++)
     {
         host.Update(Dt, Script(host, frame), nullptr, nullptr);
         early.Update(Dt, Script(early, frame), nullptr, nullptr);
         late.Update(Dt, Script(late, frame), nullptr, nullptr);
+
+        const World& world = host.GetWorld();
+
+        for (int slot = 1; slot <= 2 && slot < world.GetPlayerCount(); slot++)
+        {
+            furthest[slot] = std::max(furthest[slot], std::fabs(
+                world.GetPlayer(slot).Body->GetCenterX() - world.GetSpawnX(slot)));
+        }
     }
 
     // Host stops; clients drain whatever is in flight.
@@ -180,10 +192,7 @@ int main()
     // The clients' inputs really drove their bodies on the host.
     for (int slot = 1; slot <= 2; slot++)
     {
-        const World& world = host.GetWorld();
-        const float moved = std::fabs(
-            world.GetPlayer(slot).Body->GetCenterX() - world.GetSpawnX(slot));
-        Check(moved > 20.0f || !world.GetPlayer(slot).Body->IsAlive(),
+        Check(furthest[slot] > 20.0f,
             "player " + std::to_string(slot + 1) + " moved by its client's input");
     }
 

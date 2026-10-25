@@ -17,12 +17,13 @@ namespace Atlas
         float VelY;
         float Fuse;  // seconds until detonation
         float Trail; // seconds until the next smoke-trail puff
+        int Team;    // thrower's team, -1 = nobody's
     };
 
     class GrenadeSystem
     {
     public:
-        void Throw(float x, float y, float velX, float velY, float fuse = 2.2f);
+        void Throw(float x, float y, float velX, float velY, int team = -1, float fuse = 2.2f);
 
         void Update(
             Terrain& terrain,

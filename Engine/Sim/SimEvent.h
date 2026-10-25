@@ -15,6 +15,11 @@ namespace Atlas
         EnemyKilled,  // an enemy died at X, Y
         Damage,       // an enemy took Value damage at X, Y
         WaveStarted,  // Value = wave number
+        BrainUnderAttack, // Value = team whose brain is taking damage
+        BrainDestroyed,   // Value = team; at X, Y
+        MatchOver,        // Value = winning team
+        BodySwitched,     // Player took over another body
+        EnemyDropIncoming, // Value = how many, at X
     };
 
     // Something that happened during a tick that presentation cares

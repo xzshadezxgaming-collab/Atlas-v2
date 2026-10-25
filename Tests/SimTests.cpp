@@ -193,15 +193,16 @@ namespace
         order.Bodies.push_back(world.GetAllyWeapon());
         order.SupplyCrates = 1;
 
+        world.AddTeamGold(0, -world.GetTeamGold(0));
         Check(!world.SubmitOrder(slot, order), "unaffordable order refused");
-        Check(player.GetGold() == 0, "nothing spent on refusal");
+        Check(world.GetTeamGold(0) == 0, "nothing spent on refusal");
 
-        player.AddGold(1000);
+        world.AddTeamGold(0, 1000);
         const int price = world.PriceOrder(order);
         Check(price == World::ReinforcementCost + World::SupplyCrateCost,
             "bundled weapon is free");
         Check(world.SubmitOrder(slot, order), "affordable order accepted");
-        Check(player.GetGold() == 1000 - price, "gold spent once");
+        Check(world.GetTeamGold(0) == 1000 - price, "gold spent once");
         Check(!world.SubmitOrder(slot, OrderRequest{}), "empty order refused");
 
         for (int t = 0; t < 120 * 30 && world.GetAllies().empty(); t++)
@@ -221,11 +222,153 @@ namespace
     }
 }
 
+namespace
+{
+    void TestBrainAssault()
+    {
+        std::printf("brain assault: bases, friendly fire, switching, victory\n");
+
+        World world;
+        Check(world.Create(MakeConfig(5u)), "world created");
+        world.SetBotsEnabled(false);
+        const int slot = world.AddPlayer();
+
+        const TeamBase& home = world.GetBase(0);
+        const TeamBase& away = world.GetBase(1);
+        Check(home.Exists && away.Exists, "both bases built");
+        Check(home.BrainAlive && away.BrainAlive && home.BrainPixelsStart > 200,
+            "both brains alive");
+        Check(home.X < away.X, "players' base on the left");
+
+        Actor& body = *world.GetPlayer(slot).Body;
+        Check(std::fabs(body.GetCenterX() - home.X) < 100.0f, "player starts in their bunker");
+
+        // Hosing our own brain with the SMG does nothing to it.
+        PlayerInput input;
+        input.AimX = home.GetBrainCenterX();
+        input.AimY = home.GetBrainCenterY();
+        input.Fire = true;
+
+        for (int t = 0; t < 240; t++)
+        {
+            input.AimX = home.GetBrainCenterX();
+            world.Step(&input, 1);
+        }
+
+        Check(home.BrainPixels == home.BrainPixelsStart, "own bullets spare own brain");
+
+        // Order a body and hop into it.
+        world.AddTeamGold(0, 1000);
+        OrderRequest order;
+        order.Bodies.push_back(world.GetAllyWeapon());
+        Check(world.SubmitOrder(slot, order), "reinforcement ordered");
+
+        for (int t = 0; t < 120 * 30 && world.GetAllies().empty(); t++)
+            world.Step(nullptr, 0);
+
+        Check(world.GetAllies().size() == 1, "reinforcement landed");
+
+        if (world.GetAllies().size() == 1)
+        {
+            const std::uint32_t mine = body.GetId();
+            const std::uint32_t theirs = world.GetAllies().front().Body->GetId();
+
+            PlayerInput swap;
+            swap.SwitchBodyPressed = true;
+            world.Step(&swap, 1);
+
+            Check(world.GetPlayer(slot).Body.get() == &body, "player's Actor object is stable");
+            Check(body.GetId() == theirs, "player now drives the ally's body");
+            Check(world.GetAllies().size() == 1 &&
+                world.GetAllies().front().Body->GetId() == mine,
+                "old body carries on as an ally");
+
+            // Losing a body with a teammate around: jump straight into it.
+            body.TakeDamage(9999, 0.0f, 0.0f);
+
+            for (int t = 0; t < 240; t++)
+                world.Step(nullptr, 0);
+
+            Check(body.IsAlive() && body.GetId() == mine, "took over the survivor on death");
+            Check(world.GetAllies().empty(), "the corpse isn't left as an ally");
+        }
+
+        // Standing orders reach the team.
+        PlayerInput attack;
+        attack.AllyOrder = static_cast<std::int8_t>(AllyOrder::Attack);
+        world.Step(&attack, 1);
+        Check(world.GetAllyOrder() == AllyOrder::Attack, "ally order set");
+
+        // Wreck the enemy brain: the match is won.
+        Terrain& terrain = world.GetTerrain();
+
+        for (int y = away.BrainMinY; y <= away.BrainMaxY; y++)
+        {
+            for (int x = away.BrainMinX; x <= away.BrainMaxX; x++)
+            {
+                if (x % 4 != 0)
+                    terrain.SetMaterial(x, y, Material::Air);
+            }
+        }
+
+        bool sawDestroyed = false;
+        bool sawOver = false;
+
+        for (int t = 0; t < 4; t++)
+        {
+            world.Step(nullptr, 0);
+
+            for (const SimEvent& event : world.GetEvents())
+            {
+                sawDestroyed |= event.Type == SimEventType::BrainDestroyed && event.Value == 1;
+                sawOver |= event.Type == SimEventType::MatchOver && event.Value == 0;
+            }
+        }
+
+        Check(!away.BrainAlive, "enemy brain dead");
+        Check(world.GetOutcome() == MatchOutcome::Victory, "victory");
+        Check(sawDestroyed && sawOver, "brain-destroyed and match-over events");
+    }
+
+    void TestEnemiesAdvance()
+    {
+        std::printf("enemy drops march on the players' base\n");
+
+        World world;
+        world.Create(MakeConfig(11u));
+        world.AddPlayer();
+
+        const TeamBase& home = world.GetBase(0);
+        float closest = 1.0e9f;
+        int drops = 0;
+
+        for (int t = 0; t < 120 * 75; t++)
+        {
+            world.Step(nullptr, 0);
+
+            for (const SimEvent& event : world.GetEvents())
+                drops += event.Type == SimEventType::EnemyDropIncoming ? 1 : 0;
+
+            for (const Enemy& enemy : world.GetEnemies())
+            {
+                if (enemy.Attacker)
+                    closest = std::min(closest, std::fabs(enemy.Body->GetCenterX() - home.X));
+            }
+        }
+
+        Check(drops >= 1, "enemy drop ships came");
+        Check(closest < 700.0f, "attackers got within 700px of the players' bunker (closest " +
+            std::to_string(static_cast<int>(closest)) + ")");
+    }
+}
+
 int main()
 {
     TestDeterminism();
     TestSeedsDiffer();
     TestOrdersAndIds();
+    TestBrainAssault();
+    TestEnemiesAdvance();
     TestMultiplayerSoak();
 
     if (g_Failures > 0)
