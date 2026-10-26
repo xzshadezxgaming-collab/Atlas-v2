@@ -202,6 +202,12 @@ namespace Atlas
             if (event.type == SDL_EVENT_QUIT)
                 return false;
 
+            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat)
+                Input::NoteKeyPressed(event.key.scancode);
+
+            if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+                Input::NoteMouseButtonPressed(event.button.button);
+
             if (event.type == SDL_EVENT_MOUSE_WHEEL)
                 Input::AccumulateWheel(event.wheel.y);
 
