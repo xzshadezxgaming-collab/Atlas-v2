@@ -813,7 +813,8 @@ namespace Atlas
 
     // weapon: null falls back to the default rifleman loadout (SMG).
     // Every ordered body also packs a shovel, for whoever drives it.
-    void World::SpawnAlly(float x, const WeaponDef* weapon, BodyClass bodyClass)
+    void World::SpawnAlly(float x, const WeaponDef* weapon, BodyClass bodyClass,
+        const std::vector<const WeaponDef*>* extras)
     {
         if (static_cast<int>(m_Allies.size()) >= MaxAllies)
             return;
@@ -824,6 +825,16 @@ namespace Atlas
         ally.Body->SetTint(120, 170, 255);
         ally.Body->SetBodyClass(bodyClass);
         ally.Body->SetWeaponDef(weapon ? weapon : m_AllyWeapon);
+
+        if (extras)
+        {
+            for (const WeaponDef* extra : *extras)
+            {
+                if (extra)
+                    ally.Body->AddItem(extra);
+            }
+        }
+
         ally.Body->AddItem(m_Shovel);
         ally.Body->SelectBestWeapon();
         ally.Body->Spawn(m_Terrain, x);
@@ -883,7 +894,7 @@ namespace Atlas
 
     int World::PriceOrder(const OrderRequest& order) const
     {
-        int total = 0;
+        int total = GetCraftInfo(static_cast<CraftKind>(order.Craft)).Cost;
 
         // A body lands with the default rifleman weapon at no extra
         // charge; any other weapon assigned to it is paid for.
@@ -893,6 +904,12 @@ namespace Atlas
 
             if (body.Weapon && body.Weapon != m_AllyWeapon)
                 total += body.Weapon->Cost;
+
+            for (const WeaponDef* extra : body.Extras)
+            {
+                if (extra)
+                    total += extra->Cost;
+            }
         }
 
         total += std::max(0, order.Drones) * DroneCost;
@@ -908,6 +925,21 @@ namespace Atlas
         return total;
     }
 
+    int World::OrderCargoUnits(const OrderRequest& order)
+    {
+        int units = 0;
+
+        for (const OrderBody& body : order.Bodies)
+            units += CargoUnits(DeliveryKind::Reinforcement, body.Class);
+
+        units += std::max(0, order.Drones) * CargoUnits(DeliveryKind::Drone);
+        units += static_cast<int>(order.LooseWeapons.size()) *
+            CargoUnits(DeliveryKind::WeaponPickup);
+        units += std::max(0, order.SupplyCrates) * CargoUnits(DeliveryKind::SupplyCrate);
+
+        return units;
+    }
+
     bool World::SubmitOrder(int player, const OrderRequest& order)
     {
         if (player < 0 || player >= GetPlayerCount())
@@ -921,11 +953,21 @@ namespace Atlas
             order.Drones <= 0)
             return false;
 
+        if (order.Craft >= static_cast<std::uint8_t>(CraftKind::Count) ||
+            order.SupplyCrates < 0)
+            return false;
+
         for (const OrderBody& body : order.Bodies)
         {
-            if (body.Class >= static_cast<std::uint8_t>(BodyClass::Count))
+            if (body.Class >= static_cast<std::uint8_t>(BodyClass::Count) ||
+                static_cast<int>(body.Extras.size()) > MaxExtrasPerBody)
                 return false;
         }
+
+        const CraftKind craft = static_cast<CraftKind>(order.Craft);
+
+        if (OrderCargoUnits(order) > GetCraftInfo(craft).Capacity)
+            return false;
 
         // No paying for drones there's no room to fly.
         int ownDrones = 0;
@@ -943,36 +985,46 @@ namespace Atlas
 
         m_TeamGold[0] -= cost;
 
-        // Drops land on the buyer, or at home if they're between bodies.
-        const float dropX = buyer.IsAlive() || !m_Bases[0].Exists
-            ? buyer.GetCenterX()
-            : m_Bases[0].X + 150.0f;
+        // Drops land on the chosen landing zone, else on the buyer, or at
+        // home if they're between bodies.
+        const float width = static_cast<float>(m_Terrain.GetWidth());
 
-        auto queueDelivery = [&](DeliveryKind kind, const WeaponDef* weapon, int bodyClass = 1)
-        {
-            const bool fromLeft = (m_Rng() % 2u) == 0u;
-            const float shipDir = fromLeft ? 1.0f : -1.0f;
-            const float shipOrigin = fromLeft
-                ? dropX - ShipSpawnDistance
-                : dropX + ShipSpawnDistance;
+        const float dropX = order.DropX >= 0
+            ? std::clamp(static_cast<float>(order.DropX), 40.0f, width - 40.0f)
+            : buyer.IsAlive() || !m_Bases[0].Exists
+                ? buyer.GetCenterX()
+                : m_Bases[0].X + 150.0f;
 
-            m_Deliveries.Order(
-                kind, shipOrigin, shipDir, dropX, weapon, player, 0, bodyClass);
-        };
+        std::vector<Cargo> hold;
 
         for (const OrderBody& body : order.Bodies)
-            queueDelivery(DeliveryKind::Reinforcement, body.Weapon, body.Class);
+        {
+            Cargo cargo;
+            cargo.Kind = DeliveryKind::Reinforcement;
+            cargo.Weapon = body.Weapon;
+            cargo.Extras = body.Extras;
+            cargo.BodyClass = body.Class;
+            hold.push_back(std::move(cargo));
+        }
 
         for (int i = 0; i < order.Drones; i++)
-            queueDelivery(DeliveryKind::Drone, nullptr);
+            hold.push_back({ DeliveryKind::Drone, nullptr, {}, 1 });
+
+        for (const WeaponDef* weapon : order.LooseWeapons)
+            hold.push_back({ DeliveryKind::WeaponPickup, weapon, {}, 1 });
+
+        for (int i = 0; i < order.SupplyCrates; i++)
+            hold.push_back({ DeliveryKind::SupplyCrate, nullptr, {}, 1 });
 
         m_Stats.BodiesOrdered += static_cast<int>(order.Bodies.size());
 
-        for (const WeaponDef* weapon : order.LooseWeapons)
-            queueDelivery(DeliveryKind::WeaponPickup, weapon);
+        const bool fromLeft = (m_Rng() % 2u) == 0u;
+        const float shipDir = fromLeft ? 1.0f : -1.0f;
+        const float shipOrigin = fromLeft
+            ? dropX - ShipSpawnDistance
+            : dropX + ShipSpawnDistance;
 
-        for (int i = 0; i < order.SupplyCrates; i++)
-            queueDelivery(DeliveryKind::SupplyCrate, nullptr);
+        m_Deliveries.Send(craft, shipOrigin, shipDir, dropX, std::move(hold), player, 0);
 
         return true;
     }
@@ -1795,7 +1847,7 @@ namespace Atlas
                     else
                     {
                         SpawnAlly(delivery->PayloadX, delivery->Weapon,
-                            static_cast<BodyClass>(delivery->BodyClass));
+                            static_cast<BodyClass>(delivery->BodyClass), &delivery->Extras);
                     }
                     break;
 

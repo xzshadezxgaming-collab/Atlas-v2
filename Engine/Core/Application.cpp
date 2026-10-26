@@ -3,7 +3,6 @@
 #include "../Actors/Actor.h"
 #include "../Actors/AIController.h"
 #include "../Audio/Audio.h"
-#include "BuyCart.h"
 #include "IniFile.h"
 #include "../Combat/Delivery.h"
 #include "../Combat/Grenade.h"
@@ -19,6 +18,7 @@
 #include "../Net/Protocol.h"
 #include "../Net/Session.h"
 #include "../Sim/World.h"
+#include "../UI/BuyMenu.h"
 #include "../UI/Ui.h"
 #include "../World/Terrain.h"
 
@@ -148,21 +148,6 @@ namespace Atlas
             static_cast<float>(ViewWidth) - 20.0f - BotsButtonW;
         constexpr float BotsButtonY = 54.0f;
 
-        // Floating buy menu (world space, anchored above the player).
-        constexpr float WheelButtonW = 56.0f;
-        constexpr float WheelButtonH = 36.0f;
-        constexpr float WheelGap = 8.0f;
-        constexpr float WheelTotalW =
-            WheelButtonW * 3.0f + WheelGap * 2.0f;
-
-        constexpr float BuyPanelW = 260.0f;
-        constexpr float CloseButtonSize = 18.0f;
-
-        // Order-panel catalog row layout.
-        constexpr float CatalogRowH = 15.0f;
-        constexpr float CatalogRowGap = 2.0f;
-        constexpr float CatalogGroupGap = 5.0f; // extra gap between BODIES/WEAPONS/SUPPLIES
-
         std::string ResolveAssetPath(const std::string& relative)
         {
             const char* basePath = SDL_GetBasePath();
@@ -220,34 +205,6 @@ namespace Atlas
             std::string Text;
             Uint8 R, G, B;
             bool ScreenSpace;
-        };
-
-        // --- Buy-menu catalog: what's on offer, Cortex Command style ---
-        enum class CatalogKind
-        {
-            Body,
-            Weapon,
-            Item,
-        };
-
-        struct CatalogEntry
-        {
-            CatalogKind Kind;
-            std::string Name;
-            int Cost;
-            const WeaponDef* Weapon; // Body: default loadout; Weapon: itself; Item: null
-            int Class = 1;           // Body: its build
-            bool Drone = false;      // Item: a drone rather than a supply crate
-        };
-
-        // One line in the cart summary display: a purchased body (with
-        // its currently-assigned weapon), a group of identical loose
-        // weapons, or the supply-crate count.
-        struct CartLine
-        {
-            std::string Text;
-            int Kind; // 0 = body, 1 = loose weapon group, 2 = supply crates, 3 = drones
-            int RefIndex; // body index, or the loose weapon's first index
         };
 
     }
@@ -984,7 +941,7 @@ namespace Atlas
                     { "RIGHT MOUSE", "THROW GRENADE" },
                     { "1-6 / WHEEL", "SWITCH BETWEEN THE ITEMS THIS BODY CARRIES" },
                     { "R", "RELOAD" },
-                    { "TAB (HOLD)", "BUY MENU: ORDER BODIES, WEAPONS, SUPPLIES" },
+                    { "TAB / B", "BUY MENU: ORDER BODIES, WEAPONS, CRAFTS, PRESETS" },
                     { "Q", "SWITCH TO THE NEXT FRIENDLY BODY" },
                     { "Z / X / C", "SQUAD: DEFEND / FOLLOW / ATTACK" },
                     { "M", "TOGGLE THE MINIMAP" },
@@ -1167,7 +1124,6 @@ namespace Atlas
         Background background;
         background.Create(seed);
 
-        constexpr int MaxAllies = World::MaxAllies;
         constexpr float RespawnTime = 3.0f;
 
         const WeaponDef* allyWeapon = world.GetAllyWeapon();
@@ -1197,160 +1153,24 @@ namespace Atlas
         const std::vector<WeaponPickup>& weaponPickups =
             world.GetWeaponPickups();
 
-        BuyCart cart;
+        // The Cortex Command-style order screen (Tab / B).
+        BuyMenu buyMenu(world, allyWeapon);
 
-        // Catalog is fixed for the whole run (built from the match's
-        // WeaponDefs), so it - and the
-        // vertical offset of each row within the panel - are computed
-        // once rather than every frame.
-        std::vector<CatalogEntry> catalog;
+        // Held after the buy menu takes a click, so the button still
+        // being down doesn't open fire once it closes.
+        bool fireLock = false;
 
-        for (int c = 0; c < static_cast<int>(BodyClass::Count); c++)
+        auto makeBuyContext = [&]()
         {
-            const BodyClassInfo& info = GetBodyClassInfo(static_cast<BodyClass>(c));
+            BuyMenuContext context;
+            context.Gold = world.GetTeamGold(0);
+            context.AlliesFielded = static_cast<int>(allies.size());
 
-            catalog.push_back(
-                { CatalogKind::Body, info.Name, info.Cost, allyWeapon, c });
-        }
+            for (const Drone& drone : world.GetDrones())
+                context.DronesFielded += drone.Team == 0 ? 1 : 0;
 
-        // Everything for sale (the enemy's own gun isn't).
-        for (const WeaponDef& def : world.GetWeaponDefs())
-        {
-            if (def.Cost <= 0)
-                continue;
-
-            std::string name = def.Name;
-
-            for (char& c : name)
-                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-
-            catalog.push_back({ CatalogKind::Weapon, name, def.Cost, &def });
-        }
-
-        catalog.push_back(
-            { CatalogKind::Item, "DRONE", World::DroneCost, nullptr, 1, true });
-        catalog.push_back(
-            { CatalogKind::Item, "SUPPLY CRATE", World::SupplyCrateCost, nullptr });
-
-        std::vector<float> catalogRowOffset(catalog.size());
-        constexpr float CatalogStartY = 46.0f;
-
-        {
-            float y = CatalogStartY;
-
-            for (std::size_t i = 0; i < catalog.size(); i++)
-            {
-                catalogRowOffset[i] = y;
-                y += CatalogRowH + CatalogRowGap;
-
-                if (i + 1 < catalog.size() &&
-                    catalog[i].Kind != catalog[i + 1].Kind)
-                {
-                    y += CatalogGroupGap;
-                }
-            }
-        }
-
-        // Layout for everything below the catalog: the assignment
-        // toggle, the cart summary lines, the total, and the two
-        // action buttons. Computed once (from the fixed catalog height)
-        // so click-handling and drawing always agree on where things are.
-        constexpr float CartLineH = 11.0f;
-        constexpr int MaxCartLinesShown = 6;
-        constexpr float SendButtonH = 22.0f;
-        constexpr float ClearButtonH = 16.0f;
-
-        const float assignRowOffset =
-            catalogRowOffset.back() + CatalogRowH + 6.0f;
-        const float cartLinesStartOffset = assignRowOffset + 14.0f;
-        const float totalLineOffset =
-            cartLinesStartOffset + MaxCartLinesShown * CartLineH + 6.0f;
-        const float sendButtonOffset = totalLineOffset + 14.0f;
-        const float clearButtonOffset =
-            sendButtonOffset + SendButtonH + 6.0f;
-        const float BuyPanelH = clearButtonOffset + ClearButtonH + 8.0f;
-
-        // Builds the (up to) one-line-per-order-item cart summary,
-        // grouping identical loose weapons together. Recomputed on
-        // demand rather than cached, since the cart mutates on clicks.
-        auto buildCartLines = [&]()
-        {
-            std::vector<CartLine> lines;
-
-            const std::vector<CartBody>& bodies = cart.GetBodies();
-
-            for (std::size_t i = 0; i < bodies.size(); i++)
-            {
-                std::string weaponName =
-                    bodies[i].Weapon ? bodies[i].Weapon->Name : "UNARMED";
-
-                for (char& c : weaponName)
-                    c = static_cast<char>(
-                        std::toupper(static_cast<unsigned char>(c)));
-
-                const std::string build =
-                    GetBodyClassInfo(static_cast<BodyClass>(bodies[i].Class)).Name;
-
-                lines.push_back(
-                    { build + " + " + weaponName, 0, static_cast<int>(i) });
-            }
-
-            const std::vector<CartLooseWeapon>& loose = cart.GetLooseWeapons();
-            std::vector<bool> consumed(loose.size(), false);
-
-            for (std::size_t i = 0; i < loose.size(); i++)
-            {
-                if (consumed[i])
-                    continue;
-
-                int count = 1;
-
-                for (std::size_t j = i + 1; j < loose.size(); j++)
-                {
-                    if (!consumed[j] && loose[j].Weapon == loose[i].Weapon)
-                    {
-                        consumed[j] = true;
-                        count++;
-                    }
-                }
-
-                std::string weaponName =
-                    loose[i].Weapon ? loose[i].Weapon->Name : "?";
-
-                for (char& c : weaponName)
-                    c = static_cast<char>(
-                        std::toupper(static_cast<unsigned char>(c)));
-
-                const std::string text =
-                    (count > 1 ? std::to_string(count) + "x " : std::string()) +
-                    weaponName + " (LOOSE)";
-
-                lines.push_back({ text, 1, static_cast<int>(i) });
-            }
-
-            if (cart.GetSupplyCrateCount() > 0)
-            {
-                const std::string text =
-                    (cart.GetSupplyCrateCount() > 1
-                        ? std::to_string(cart.GetSupplyCrateCount()) + "x "
-                        : std::string()) +
-                    "SUPPLY CRATE";
-
-                lines.push_back({ text, 2, 0 });
-            }
-
-            if (cart.GetDroneCount() > 0)
-            {
-                const std::string text =
-                    (cart.GetDroneCount() > 1
-                        ? std::to_string(cart.GetDroneCount()) + "x "
-                        : std::string()) +
-                    "DRONE";
-
-                lines.push_back({ text, 3, 0 });
-            }
-
-            return lines;
+            context.LocalPlayer = localPlayer;
+            return context;
         };
 
         // Cosmetic-only randomness (floating text jitter). Simulation
@@ -1397,13 +1217,6 @@ namespace Atlas
         // A brain alarm flashes the HUD for a moment.
         float brainAlarm = 0.0f;
 
-        // The UI (buy menu, HUD anchors) follows the smoothed camera
-        // WITHOUT the shake component, so menus don't wobble and clicks
-        // can't land on a shifted row mid-shake. Updated each frame from
-        // the camera block below.
-        float uiCamX = camSmoothX;
-        float uiCamY = camSmoothY;
-
         // Health bar keeps a decaying "ghost" of recent damage.
         float healthGhost = 1.0f;
 
@@ -1414,9 +1227,6 @@ namespace Atlas
         // bloom for a moment.
         float blastFlash = 0.0f;
         int lastPlayerHealth = player.GetHealth();
-
-        // The Tab-held buy menu.
-        bool buyPanelOpen = false;
 
         // Turns what the simulation reported this tick into sound,
         // camera shake, hit-stop and floating text - judged from the
@@ -1673,6 +1483,8 @@ namespace Atlas
             {
                 if (pauseSettings)
                     pauseSettings = false;
+                else if (buyMenu.IsActive() && !paused)
+                    buyMenu.Close();
                 else
                     paused = !paused;
             }
@@ -1685,9 +1497,13 @@ namespace Atlas
             // A menu is up: the game gets no input (and offline, no time).
             const bool modal = paused || resultsShown;
 
+            if (!modal)
+                buyMenu.HandleToggleKeys();
+
             // Item switching (1-6 or scroll wheel) and reload are
             // edge-triggered per frame and latched for the next tick.
-            if (player.IsAlive())
+            // The buy menu has the number keys and wheel while it's up.
+            if (player.IsAlive() && !buyMenu.IsActive())
             {
                 const int shownSlot =
                     slotQueued >= 0 ? slotQueued : player.GetSelectedItem();
@@ -1733,7 +1549,8 @@ namespace Atlas
             if (Input::WasKeyPressed(SDL_SCANCODE_X))
                 allyOrderQueued = static_cast<int>(AllyOrder::Follow);
 
-            if (Input::WasKeyPressed(SDL_SCANCODE_C))
+            // (C cycles the craft while the buy menu is up.)
+            if (Input::WasKeyPressed(SDL_SCANCODE_C) && !buyMenu.IsActive())
                 allyOrderQueued = static_cast<int>(AllyOrder::Attack);
 
             const float mouseWorldX = m_Window.ScreenToWorldX(Input::GetMouseX());
@@ -1744,7 +1561,7 @@ namespace Atlas
             jumpQueued = jumpQueued ||
                 Input::WasKeyPressed(SDL_SCANCODE_SPACE);
 
-            // --- UI: bots-spawn toggle button, and the Tab buy menu ---
+            // --- UI: bots-spawn toggle button ---
             //
             // Click rects are computed once here (before this frame's
             // simulation step) and the exact same numbers are reused for
@@ -1760,253 +1577,9 @@ namespace Atlas
                 mouseScreenY <= BotsButtonY + BotsButtonH;
 
             if (Input::WasMouseButtonPressed(SDL_BUTTON_LEFT) &&
-                botsButtonHovered && !modal)
+                botsButtonHovered && !modal && !buyMenu.IsActive())
             {
                 session.SetBotsEnabled(!world.IsBotsEnabled());
-            }
-
-            const bool menuHeld =
-                player.IsAlive() && !modal && Input::IsKeyDown(SDL_SCANCODE_TAB);
-
-            if (!menuHeld)
-                buyPanelOpen = false;
-
-            const float uiCameraX = uiCamX;
-            const float uiCameraY = uiCamY;
-
-            // Floating menu anchor, in world space, above the player.
-            const float menuAnchorX = player.GetCenterX();
-            const float menuAnchorY = player.GetY() - 70.0f;
-
-            const float zoom = m_Window.GetZoom();
-            const float wheelScreenX =
-                (menuAnchorX - uiCameraX) * zoom - WheelTotalW * 0.5f;
-            const float wheelScreenY =
-                (menuAnchorY - uiCameraY) * zoom - WheelButtonH * 0.5f;
-
-            const float panelScreenX = std::clamp(
-                (menuAnchorX - uiCameraX) * zoom - BuyPanelW * 0.5f,
-                8.0f, static_cast<float>(ViewWidth) - BuyPanelW - 8.0f);
-            const float panelScreenY = std::clamp(
-                (menuAnchorY - uiCameraY) * zoom - BuyPanelH * 0.5f,
-                66.0f, static_cast<float>(ViewHeight) - BuyPanelH - 8.0f); // below the top HUD
-
-            const float closeScreenX =
-                panelScreenX + BuyPanelW - CloseButtonSize - 6.0f;
-            const float closeScreenY = panelScreenY + 6.0f;
-
-            if (menuHeld && Input::WasMouseButtonPressed(SDL_BUTTON_LEFT))
-            {
-                if (!buyPanelOpen)
-                {
-                    const float buyX = wheelScreenX;
-                    const float buyY = wheelScreenY;
-
-                    if (mouseScreenX >= buyX &&
-                        mouseScreenX <= buyX + WheelButtonW &&
-                        mouseScreenY >= buyY &&
-                        mouseScreenY <= buyY + WheelButtonH)
-                    {
-                        buyPanelOpen = true;
-                    }
-                }
-                else if (mouseScreenX >= closeScreenX &&
-                    mouseScreenX <= closeScreenX + CloseButtonSize &&
-                    mouseScreenY >= closeScreenY &&
-                    mouseScreenY <= closeScreenY + CloseButtonSize)
-                {
-                    buyPanelOpen = false;
-                }
-                else
-                {
-                    const float rowX = panelScreenX + 8.0f;
-                    const float rowW = BuyPanelW - 16.0f;
-
-                    const float assignY = panelScreenY + assignRowOffset;
-                    const float sendY = panelScreenY + sendButtonOffset;
-                    const float clearY = panelScreenY + clearButtonOffset;
-
-                    bool handled = false;
-
-                    // Catalog rows: click to add to the cart.
-                    for (std::size_t i = 0; i < catalog.size() && !handled; i++)
-                    {
-                        const float rowY = panelScreenY + catalogRowOffset[i];
-
-                        if (mouseScreenX < rowX ||
-                            mouseScreenX > rowX + rowW ||
-                            mouseScreenY < rowY ||
-                            mouseScreenY > rowY + CatalogRowH)
-                            continue;
-
-                        handled = true;
-
-                        const CatalogEntry& entry = catalog[i];
-
-                        if (world.GetTeamGold(0) < cart.GetTotalCost() + entry.Cost)
-                            break; // can't afford - clicking does nothing
-
-                        if (entry.Kind == CatalogKind::Body &&
-                            static_cast<int>(cart.GetBodies().size()) +
-                                    static_cast<int>(allies.size()) >=
-                                MaxAllies)
-                        {
-                            break; // no room to field another body
-                        }
-
-                        switch (entry.Kind)
-                        {
-                        case CatalogKind::Body:
-                            cart.AddBody(entry.Weapon, entry.Cost, entry.Class);
-                            break;
-                        case CatalogKind::Weapon:
-                            cart.AddWeapon(entry.Weapon, entry.Cost);
-                            break;
-                        case CatalogKind::Item:
-                            if (entry.Drone)
-                                cart.AddDrone(entry.Cost);
-                            else
-                                cart.AddSupplyCrate(entry.Cost);
-                            break;
-                        }
-
-                        Audio::Play(Sfx::UiClick, 0.45f);
-                    }
-
-                    // Assignment toggle: cycles which cart body (if any)
-                    // the next purchased weapon equips onto, or LOOSE.
-                    if (!handled &&
-                        mouseScreenX >= rowX && mouseScreenX <= rowX + rowW &&
-                        mouseScreenY >= assignY &&
-                        mouseScreenY <= assignY + CatalogRowH)
-                    {
-                        handled = true;
-
-                        const int bodyCount =
-                            static_cast<int>(cart.GetBodies().size());
-                        const int next = cart.GetActiveBodyIndex() + 1;
-
-                        if (bodyCount == 0 || next >= bodyCount)
-                            cart.DeselectBody();
-                        else
-                            cart.SelectBody(next);
-                    }
-
-                    // Cart lines: click a body line to make it the active
-                    // assignment target again.
-                    if (!handled)
-                    {
-                        const std::vector<CartLine> lines = buildCartLines();
-
-                        for (std::size_t i = 0;
-                            i < lines.size() &&
-                                i < static_cast<std::size_t>(MaxCartLinesShown) &&
-                                !handled;
-                            i++)
-                        {
-                            const float lineY = panelScreenY +
-                                cartLinesStartOffset +
-                                static_cast<float>(i) * CartLineH;
-
-                            if (mouseScreenX < rowX ||
-                                mouseScreenX > rowX + rowW ||
-                                mouseScreenY < lineY ||
-                                mouseScreenY > lineY + CartLineH)
-                                continue;
-
-                            handled = true;
-
-                            if (lines[i].Kind == 0)
-                                cart.SelectBody(lines[i].RefIndex);
-                        }
-                    }
-
-                    // SEND ORDER: spend the total, queue one delivery per
-                    // body, per loose weapon, and per supply crate.
-                    if (!handled &&
-                        mouseScreenX >= rowX && mouseScreenX <= rowX + rowW &&
-                        mouseScreenY >= sendY &&
-                        mouseScreenY <= sendY + SendButtonH)
-                    {
-                        handled = true;
-
-                        if (!cart.IsEmpty() &&
-                            world.GetTeamGold(0) >= cart.GetTotalCost())
-                        {
-                            OrderRequest order;
-
-                            for (const CartBody& body : cart.GetBodies())
-                            {
-                                order.Bodies.push_back(
-                                    { body.Weapon, static_cast<std::uint8_t>(body.Class) });
-                            }
-
-                            order.Drones = cart.GetDroneCount();
-
-                            for (const CartLooseWeapon& loose :
-                                cart.GetLooseWeapons())
-                            {
-                                order.LooseWeapons.push_back(loose.Weapon);
-                            }
-
-                            order.SupplyCrates = cart.GetSupplyCrateCount();
-
-                            // The World charges for it on the tick it
-                            // lands (on every peer at once, in multiplayer).
-                            queuedOrder = order;
-                            orderQueued = true;
-                            cart.Clear();
-                            Audio::Play(Sfx::OrderSent, 0.6f);
-                        }
-                    }
-
-                    // CLEAR: abandon the whole order (nothing was spent
-                    // yet - gold is only taken on SEND).
-                    if (!handled &&
-                        mouseScreenX >= rowX && mouseScreenX <= rowX + rowW &&
-                        mouseScreenY >= clearY &&
-                        mouseScreenY <= clearY + ClearButtonH)
-                    {
-                        cart.Clear();
-                    }
-                }
-            }
-
-            // Right-click a cart line to cancel just that part of the
-            // order (refunded automatically - nothing was spent yet).
-            if (menuHeld && buyPanelOpen &&
-                Input::WasMouseButtonPressed(SDL_BUTTON_RIGHT))
-            {
-                const float rowX = panelScreenX + 8.0f;
-                const float rowW = BuyPanelW - 16.0f;
-
-                const std::vector<CartLine> lines = buildCartLines();
-
-                for (std::size_t i = 0;
-                    i < lines.size() &&
-                        i < static_cast<std::size_t>(MaxCartLinesShown);
-                    i++)
-                {
-                    const float lineY = panelScreenY +
-                        cartLinesStartOffset +
-                        static_cast<float>(i) * CartLineH;
-
-                    if (mouseScreenX < rowX || mouseScreenX > rowX + rowW ||
-                        mouseScreenY < lineY ||
-                        mouseScreenY > lineY + CartLineH)
-                        continue;
-
-                    if (lines[i].Kind == 0)
-                        cart.RemoveBody(lines[i].RefIndex);
-                    else if (lines[i].Kind == 1)
-                        cart.RemoveLooseWeapon(lines[i].RefIndex);
-                    else if (lines[i].Kind == 3)
-                        cart.RemoveDrone();
-                    else
-                        cart.RemoveSupplyCrate();
-
-                    break;
-                }
             }
 
             // While the buy menu is open, or the mouse is over a HUD
@@ -2014,7 +1587,21 @@ namespace Atlas
             // (no shooting or grenade-throwing through the UI). Movement
             // is left untouched so the player can still walk around with
             // the menu open.
-            const bool uiCapturingInput = menuHeld || botsButtonHovered;
+            if (buyMenu.IsActive())
+                fireLock = true;
+            else if (!Input::IsMouseButtonDown(SDL_BUTTON_LEFT))
+                fireLock = false;
+
+            const bool uiCapturingInput = buyMenu.IsActive() || fireLock || botsButtonHovered;
+
+            // An order the menu confirmed last frame goes to the session.
+            if (OrderRequest order; buyMenu.TakeOrder(order))
+            {
+                // The World charges for it on the tick it lands (on every
+                // peer at once, in multiplayer).
+                queuedOrder = order;
+                orderQueued = true;
+            }
 
             // This frame's input for the local player.
             PlayerInput input;
@@ -2214,11 +1801,6 @@ namespace Atlas
                 camera.SetPosition(
                     std::clamp(camSmoothX + shakeX / zoom, 0.0f, maxCamX),
                     std::clamp(camSmoothY + shakeY / zoom, 0.0f, maxCamY));
-
-                // UI anchoring tracks the smoothed position only - no
-                // shake - so menus hold still while the world rocks.
-                uiCamX = std::clamp(camSmoothX, 0.0f, maxCamX);
-                uiCamY = std::clamp(camSmoothY, 0.0f, maxCamY);
             }
 
             // Damage feedback: vignette pulse plus a camera thump.
@@ -2651,307 +2233,6 @@ namespace Atlas
                     m_Window.DrawScreenRect(
                         cursorX - 11.0f, cursorY + gap + 8.0f,
                         22.0f * progress, 3.0f, 230, 150, 60, 235);
-                }
-            }
-
-            // --- Floating buy menu (Tab held), anchored above the player ---
-            //
-            // Drawn with the exact screen coordinates computed earlier
-            // this frame for click detection, via DrawScreenRect, so the
-            // clickable area and the visible menu are always identical.
-            if (menuHeld)
-            {
-                // A thin connector from the menu down to the player's
-                // head, so it reads as anchored rather than floating
-                // free.
-                m_Window.DrawScreenRect(
-                    menuAnchorX - uiCameraX - 1.0f,
-                    menuAnchorY - uiCameraY + WheelButtonH * 0.5f,
-                    2.0f,
-                    (player.GetY() - uiCameraY) -
-                        (menuAnchorY - uiCameraY + WheelButtonH * 0.5f),
-                    150, 190, 230, 90);
-
-                if (!buyPanelOpen)
-                {
-                    // Three-slot wheel: BUY is live, the rest are
-                    // placeholders for future menu options.
-                    const char* labels[3] = { "BUY", "GEAR", "CALL" };
-                    const bool enabled[3] = { true, false, false };
-
-                    for (int i = 0; i < 3; i++)
-                    {
-                        const float slotX = wheelScreenX +
-                            static_cast<float>(i) *
-                                (WheelButtonW + WheelGap);
-
-                        m_Window.DrawScreenRect(
-                            slotX - 1.0f, wheelScreenY - 1.0f,
-                            WheelButtonW + 2.0f, WheelButtonH + 2.0f,
-                            120, 126, 148, 90);
-
-                        m_Window.DrawScreenRect(
-                            slotX, wheelScreenY,
-                            WheelButtonW, WheelButtonH,
-                            enabled[i] ? 30 : 16,
-                            enabled[i] ? 34 : 16,
-                            enabled[i] ? 30 : 20,
-                            230);
-
-                        if (enabled[i])
-                        {
-                            m_Window.DrawScreenRect(
-                                slotX, wheelScreenY,
-                                WheelButtonW, 3.0f,
-                                230, 205, 110, 220);
-                        }
-
-                        const std::string label = labels[i];
-                        const Uint8 textShade =
-                            enabled[i] ? 235 : 110;
-
-                        PixelFont::Draw(
-                            m_Window,
-                            slotX + (WheelButtonW -
-                                PixelFont::Measure(label, 2.0f)) * 0.5f,
-                            wheelScreenY + WheelButtonH * 0.5f - 5.0f,
-                            2.0f,
-                            label,
-                            textShade, textShade,
-                            enabled[i] ? 200 : textShade);
-                    }
-                }
-                else
-                {
-                    // Order panel: a real catalog + cart, Cortex Command
-                    // style. Buying a weapon equips whichever body is
-                    // "active" (highlighted in the cart below); with no
-                    // active body it queues as a loose field pickup.
-                    m_Window.DrawScreenRect(
-                        panelScreenX - 1.0f, panelScreenY - 1.0f,
-                        BuyPanelW + 2.0f, BuyPanelH + 2.0f,
-                        120, 126, 148, 100);
-                    m_Window.DrawScreenRect(
-                        panelScreenX, panelScreenY,
-                        BuyPanelW, BuyPanelH,
-                        14, 14, 20, 235);
-
-                    PixelFont::Draw(
-                        m_Window,
-                        panelScreenX + 10.0f, panelScreenY + 10.0f,
-                        2.0f, "ORDER SUPPLIES", 235, 235, 240);
-
-                    const std::string goldLine =
-                        "GOLD: " + std::to_string(world.GetTeamGold(0));
-
-                    PixelFont::Draw(
-                        m_Window,
-                        panelScreenX + 10.0f, panelScreenY + 26.0f,
-                        2.0f, goldLine, 230, 200, 110);
-
-                    m_Window.DrawScreenRect(
-                        panelScreenX + 8.0f, panelScreenY + 40.0f,
-                        BuyPanelW - 16.0f, 1.0f,
-                        120, 126, 148, 90);
-
-                    // --- Catalog rows ---
-                    for (std::size_t i = 0; i < catalog.size(); i++)
-                    {
-                        const CatalogEntry& entry = catalog[i];
-                        const float rowY = panelScreenY + catalogRowOffset[i];
-
-                        const bool roomForBody =
-                            entry.Kind != CatalogKind::Body ||
-                            static_cast<int>(cart.GetBodies().size()) +
-                                    static_cast<int>(allies.size()) <
-                                MaxAllies;
-
-                        const bool affordable = roomForBody &&
-                            world.GetTeamGold(0) >= cart.GetTotalCost() + entry.Cost;
-
-                        Uint8 baseR = 26, baseG = 26, baseB = 34;
-
-                        switch (entry.Kind)
-                        {
-                        case CatalogKind::Body:
-                            baseR = 24; baseG = 30; baseB = 42; break;
-                        case CatalogKind::Weapon:
-                            baseR = 28; baseG = 28; baseB = 32; break;
-                        case CatalogKind::Item:
-                            baseR = 34; baseG = 30; baseB = 20; break;
-                        }
-
-                        m_Window.DrawScreenRect(
-                            panelScreenX + 8.0f, rowY, BuyPanelW - 16.0f,
-                            CatalogRowH,
-                            affordable ? baseR : static_cast<Uint8>(baseR * 0.6f),
-                            affordable ? baseG : static_cast<Uint8>(baseG * 0.6f),
-                            affordable ? baseB : static_cast<Uint8>(baseB * 0.6f),
-                            210);
-
-                        const std::string label =
-                            entry.Name + " " + std::to_string(entry.Cost) + "G";
-
-                        PixelFont::Draw(
-                            m_Window,
-                            panelScreenX + 12.0f, rowY + 4.0f,
-                            1.5f, label,
-                            affordable ? 225 : 110,
-                            affordable ? 228 : 110,
-                            affordable ? 235 : 114);
-                    }
-
-                    // --- Assignment toggle ---
-                    {
-                        const float assignY = panelScreenY + assignRowOffset;
-                        const int activeBody = cart.GetActiveBodyIndex();
-
-                        std::string assignLabel = "EQUIP: LOOSE ITEM";
-
-                        if (activeBody >= 0 &&
-                            activeBody < static_cast<int>(cart.GetBodies().size()))
-                        {
-                            assignLabel = std::string("EQUIP: ") +
-                                GetBodyClassInfo(static_cast<BodyClass>(
-                                    cart.GetBodies()[static_cast<std::size_t>(activeBody)].Class)).Name +
-                                " #" + std::to_string(activeBody + 1);
-                        }
-
-                        m_Window.DrawScreenRect(
-                            panelScreenX + 8.0f, assignY, BuyPanelW - 16.0f,
-                            CatalogRowH, 46, 50, 60, 220);
-
-                        PixelFont::Draw(
-                            m_Window,
-                            panelScreenX + 12.0f, assignY + 4.0f,
-                            1.5f, assignLabel, 200, 210, 225);
-                    }
-
-                    // --- Cart summary ---
-                    const std::vector<CartLine> cartLines = buildCartLines();
-
-                    for (std::size_t i = 0;
-                        i < cartLines.size() &&
-                            i < static_cast<std::size_t>(MaxCartLinesShown);
-                        i++)
-                    {
-                        const float lineY = panelScreenY +
-                            cartLinesStartOffset +
-                            static_cast<float>(i) * CartLineH;
-
-                        const bool isActiveBody =
-                            cartLines[i].Kind == 0 &&
-                            cartLines[i].RefIndex == cart.GetActiveBodyIndex();
-
-                        if (isActiveBody)
-                        {
-                            m_Window.DrawScreenRect(
-                                panelScreenX + 8.0f, lineY,
-                                BuyPanelW - 16.0f, CartLineH,
-                                70, 84, 60, 160);
-                        }
-
-                        PixelFont::Draw(
-                            m_Window,
-                            panelScreenX + 12.0f, lineY + 2.0f,
-                            1.5f, cartLines[i].Text,
-                            isActiveBody ? 220 : 175,
-                            isActiveBody ? 235 : 177,
-                            isActiveBody ? 200 : 180);
-                    }
-
-                    if (cartLines.empty())
-                    {
-                        PixelFont::Draw(
-                            m_Window,
-                            panelScreenX + 12.0f,
-                            panelScreenY + cartLinesStartOffset + 2.0f,
-                            1.5f, "CART IS EMPTY", 120, 122, 130);
-                    }
-                    else if (cartLines.size() >
-                        static_cast<std::size_t>(MaxCartLinesShown))
-                    {
-                        const std::string more = "+" + std::to_string(
-                            cartLines.size() - MaxCartLinesShown) + " MORE";
-
-                        PixelFont::Draw(
-                            m_Window,
-                            panelScreenX + 12.0f,
-                            panelScreenY + cartLinesStartOffset +
-                                static_cast<float>(MaxCartLinesShown) *
-                                    CartLineH,
-                            1.3f, more, 140, 142, 150);
-                    }
-
-                    // --- Total and action buttons ---
-                    {
-                        const bool canAfford =
-                            world.GetTeamGold(0) >= cart.GetTotalCost();
-
-                        const std::string totalLine =
-                            "TOTAL: " + std::to_string(cart.GetTotalCost()) + "G";
-
-                        PixelFont::Draw(
-                            m_Window,
-                            panelScreenX + 12.0f,
-                            panelScreenY + totalLineOffset,
-                            1.5f, totalLine,
-                            canAfford ? 230 : 220,
-                            canAfford ? 200 : 90,
-                            canAfford ? 110 : 90);
-
-                        const bool canSend = !cart.IsEmpty() && canAfford;
-                        const float sendY = panelScreenY + sendButtonOffset;
-
-                        m_Window.DrawScreenRect(
-                            panelScreenX + 8.0f, sendY, BuyPanelW - 16.0f,
-                            SendButtonH,
-                            canSend ? 40 : 26, canSend ? 110 : 26,
-                            canSend ? 56 : 32, 235);
-
-                        const std::string sendLabel = "SEND ORDER";
-
-                        PixelFont::Draw(
-                            m_Window,
-                            panelScreenX + BuyPanelW * 0.5f -
-                                PixelFont::Measure(sendLabel, 2.0f) * 0.5f,
-                            sendY + 7.0f,
-                            2.0f, sendLabel,
-                            canSend ? 230 : 130, canSend ? 235 : 132,
-                            canSend ? 230 : 132);
-
-                        const bool canClear = !cart.IsEmpty();
-                        const float clearY = panelScreenY + clearButtonOffset;
-
-                        m_Window.DrawScreenRect(
-                            panelScreenX + 8.0f, clearY, BuyPanelW - 16.0f,
-                            ClearButtonH,
-                            canClear ? 90 : 40, canClear ? 46 : 30,
-                            canClear ? 46 : 30, 220);
-
-                        const std::string clearLabel = "CLEAR";
-
-                        PixelFont::Draw(
-                            m_Window,
-                            panelScreenX + BuyPanelW * 0.5f -
-                                PixelFont::Measure(clearLabel, 1.5f) * 0.5f,
-                            clearY + 4.0f,
-                            1.5f, clearLabel,
-                            canClear ? 230 : 130,
-                            canClear ? 190 : 110,
-                            canClear ? 190 : 110);
-                    }
-
-                    // Close button.
-                    m_Window.DrawScreenRect(
-                        closeScreenX, closeScreenY,
-                        CloseButtonSize, CloseButtonSize,
-                        70, 40, 40, 230);
-
-                    PixelFont::Draw(
-                        m_Window,
-                        closeScreenX + 5.0f, closeScreenY + 5.0f,
-                        2.0f, "X", 235, 200, 200);
                 }
             }
 
@@ -3498,6 +2779,17 @@ namespace Atlas
                     240, 236, 236);
                 drawBar(cx - 110.0f, cy + 2.0f, 220.0f, 4.0f,
                     1.0f - localSlot().RespawnTimer / RespawnTime, 235, 235, 245);
+            }
+
+            // --- Buy menu, on top of the HUD ---
+            {
+                BuyMenuContext buyContext = makeBuyContext();
+                buyContext.Time = timeSeconds;
+
+                buyMenu.DrawInbound(m_Window, buyContext);
+
+                if (!modal)
+                    buyMenu.Frame(m_Window, buyContext);
             }
 
             if (m_Settings.ShowFps)

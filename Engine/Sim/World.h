@@ -211,6 +211,9 @@ namespace Atlas
         static constexpr int TeamCount = 2;
         static constexpr int LoadoutSize = 5;
 
+        // Weapons a reinforcement can be packed with beyond its main one.
+        static constexpr int MaxExtrasPerBody = 3;
+
         static constexpr int SupplyCrateCost = 40;
         static constexpr int ReinforcementCost = 100;
         static constexpr int DroneCost = 80;
@@ -243,6 +246,9 @@ namespace Atlas
 
         // What the World would charge for an order.
         int PriceOrder(const OrderRequest& order) const;
+
+        // Hold space an order needs (compare with its craft's Capacity).
+        static int OrderCargoUnits(const OrderRequest& order);
 
         // Lands an AI unit for the players' side at x (menu backdrops,
         // scenarios). weapon null = the default rifleman.
@@ -350,7 +356,8 @@ namespace Atlas
         int SpawnEnemyDrop(int maxCount);
         int AllyIndexNearest(float x, float y) const;
         void SpawnWave(int count);
-        void SpawnAlly(float x, const WeaponDef* weapon, BodyClass bodyClass);
+        void SpawnAlly(float x, const WeaponDef* weapon, BodyClass bodyClass,
+            const std::vector<const WeaponDef*>* extras = nullptr);
 
         void StepPlayer(int slot, const PlayerInput& input);
         void ApplyTerrainHazards(Actor& actor);

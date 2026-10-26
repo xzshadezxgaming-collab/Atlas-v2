@@ -12,7 +12,12 @@ namespace Atlas
     namespace
     {
         constexpr float DeliveryAltitude = 24.0f;
-        constexpr float ShipSpeed = 480.0f;
+        constexpr float CraftBrake = 520.0f;      // px/s^2 when braking to hover
+        constexpr float MinApproachSpeed = 40.0f;
+        constexpr float HoverSettle = 0.35f;      // before the first drop
+        constexpr float ReleaseInterval = 0.28f;  // between drops
+        constexpr float CargoSpread = 9.0f;
+        constexpr float ShipExitMargin = 400.0f;
         constexpr float ChuteDeployDelay = 0.35f;
         constexpr float ChuteFallSpeed = 70.0f;
         constexpr float FreeFallGravity = 640.0f;
@@ -42,17 +47,23 @@ namespace Atlas
 
         // Procedural drop-ship hull: a sleek wedge with a glowing tail
         // engine, nose pointed the direction it's flying.
-        void DrawDropShipHull(Window& window, float x, float y, float dir, int team)
+        void DrawDropShipHull(Window& window, float x, float y, float dir, int team,
+            float scale, float thrust)
         {
             if (const SpriteFrame* sprite = SpriteBank::Find(team == 0 ? "ship_team0" : "ship_team1"))
             {
-                window.DrawSprite(*sprite, x, y, 0.0f, dir < 0.0f);
+                window.DrawSprite(*sprite, x, y, 0.0f, dir < 0.0f, false, scale);
 
-                window.DrawGlow(x - dir * 25.0f, y + 1.0f, 14.0f, 255, 170, 90, 160);
-                window.DrawFilledRect(x - dir * 26.0f - 2.0f, y - 1.0f, 4.0f, 4.0f,
+                const float tail = x - dir * 25.0f * scale;
+                window.DrawGlow(tail, y + 1.0f, 14.0f * scale * (0.5f + 0.5f * thrust),
+                    255, 170, 90, static_cast<Uint8>(60.0f + 100.0f * thrust));
+                window.DrawFilledRect(tail - dir * scale - 2.0f, y - 1.0f, 4.0f, 4.0f,
                     255, 220, 160, 255);
                 return;
             }
+
+            (void)scale;
+            (void)thrust;
 
             window.DrawFilledRect(x - 22.0f, y - 6.0f, 44.0f, 12.0f,
                 40, 42, 50, 255);
@@ -172,6 +183,64 @@ namespace Atlas
         }
     }
 
+    const CraftInfo& GetCraftInfo(CraftKind kind)
+    {
+        static const CraftInfo Crafts[] =
+        {
+            { "SPARROW",   0,  5, 640.0f, 0.80f, "FAST LIGHT COURIER. FREE." },
+            { "DROPSHIP", 25, 12, 480.0f, 1.00f, "THE WORKHORSE. ROOM FOR A SQUAD." },
+            { "HAULER",   60, 24, 380.0f, 1.35f, "SLOW HEAVY LIFTER. BRINGS AN ARMY." },
+        };
+
+        static_assert(sizeof(Crafts) / sizeof(Crafts[0]) ==
+            static_cast<std::size_t>(CraftKind::Count));
+
+        const int index = std::clamp(static_cast<int>(kind), 0,
+            static_cast<int>(CraftKind::Count) - 1);
+
+        return Crafts[index];
+    }
+
+    int CargoUnits(DeliveryKind kind, int bodyClass)
+    {
+        switch (kind)
+        {
+        case DeliveryKind::Reinforcement:
+            return bodyClass <= 0 ? 2 : bodyClass == 1 ? 3 : 4;
+        case DeliveryKind::Drone:
+            return 2;
+        case DeliveryKind::WeaponPickup:
+        case DeliveryKind::SupplyCrate:
+        default:
+            return 1;
+        }
+    }
+
+    void DeliverySystem::Send(
+        CraftKind kind,
+        float originX,
+        float shipDir,
+        float targetX,
+        std::vector<Cargo> hold,
+        int ownerPlayer,
+        int team)
+    {
+        if (hold.empty())
+            return;
+
+        Craft craft;
+        craft.Kind = kind;
+        craft.X = originX;
+        craft.Dir = shipDir;
+        craft.Speed = GetCraftInfo(kind).Speed;
+        craft.TargetX = targetX;
+        craft.Hold = std::move(hold);
+        craft.OwnerPlayer = ownerPlayer;
+        craft.Team = team;
+
+        m_Crafts.push_back(std::move(craft));
+    }
+
     void DeliverySystem::Order(
         DeliveryKind kind,
         float originX,
@@ -182,17 +251,16 @@ namespace Atlas
         int team,
         int bodyClass)
     {
-        Delivery delivery;
-        delivery.Team = team;
-        delivery.BodyClass = bodyClass;
-        delivery.Kind = kind;
-        delivery.ShipX = originX;
-        delivery.ShipDir = shipDir;
-        delivery.TargetX = targetX;
-        delivery.Weapon = weapon;
-        delivery.OwnerPlayer = ownerPlayer;
+        Cargo cargo;
+        cargo.Kind = kind;
+        cargo.Weapon = weapon;
+        cargo.BodyClass = bodyClass;
 
-        m_Deliveries.push_back(delivery);
+        std::vector<Cargo> hold;
+        hold.push_back(std::move(cargo));
+
+        Send(CraftKind::Dropship, originX, shipDir, targetX, std::move(hold),
+            ownerPlayer, team);
     }
 
     void DeliverySystem::Update(
@@ -205,44 +273,118 @@ namespace Atlas
         outDelivered.clear();
         m_ShipPasses.clear();
 
-        for (std::size_t i = 0; i < m_Deliveries.size(); )
+        // Finished payloads go first, so pointers handed out below stay
+        // valid until the next Update.
+        m_Deliveries.erase(
+            std::remove_if(m_Deliveries.begin(), m_Deliveries.end(),
+                [](const Delivery& d) { return d.Phase == DeliveryPhase::Done; }),
+            m_Deliveries.end());
+
+        const float worldWidth = static_cast<float>(terrain.GetWidth());
+
+        for (std::size_t i = 0; i < m_Crafts.size(); )
         {
-            Delivery& delivery = m_Deliveries[i];
+            Craft& craft = m_Crafts[i];
+            const CraftInfo& info = GetCraftInfo(craft.Kind);
+            bool gone = false;
 
-            switch (delivery.Phase)
+            switch (craft.Phase)
             {
-            case DeliveryPhase::FlyIn:
+            case CraftPhase::FlyIn:
             {
-                delivery.ShipX += delivery.ShipDir * ShipSpeed * deltaTime;
-                delivery.PayloadX = delivery.ShipX;
-                delivery.PayloadY = DeliveryAltitude;
+                const float dist = (craft.TargetX - craft.X) * craft.Dir;
 
-                if (!delivery.PassReported &&
-                    std::fabs(delivery.TargetX - delivery.ShipX) < ShipSpeed * 1.1f)
+                if (!craft.PassReported && dist < info.Speed * 1.1f)
                 {
-                    delivery.PassReported = true;
-                    m_ShipPasses.push_back(delivery.TargetX);
+                    craft.PassReported = true;
+                    m_ShipPasses.push_back(craft.TargetX);
                 }
 
-                const bool arrived = delivery.ShipDir > 0.0f
-                    ? delivery.ShipX >= delivery.TargetX
-                    : delivery.ShipX <= delivery.TargetX;
+                // Cruise, then brake so it comes to a stop on the mark.
+                const float wanted = std::clamp(
+                    std::sqrt(2.0f * CraftBrake * std::max(dist, 0.0f)),
+                    MinApproachSpeed, info.Speed);
 
-                if (arrived)
+                craft.Speed = wanted;
+
+                const float step = craft.Speed * deltaTime;
+
+                if (dist <= step)
                 {
-                    delivery.Phase = DeliveryPhase::Descending;
-                    delivery.FallVelY = 30.0f;
-                    delivery.ChuteTimer = 0.0f;
+                    craft.X = craft.TargetX;
+                    craft.Speed = 0.0f;
+                    craft.Phase = CraftPhase::Hover;
+                    craft.PhaseTimer = 0.0f;
+                }
+                else
+                {
+                    craft.X += craft.Dir * step;
                 }
                 break;
             }
 
+            case CraftPhase::Hover:
+            {
+                craft.PhaseTimer += deltaTime;
+
+                const int count = static_cast<int>(craft.Hold.size());
+
+                while (craft.Released < count &&
+                    craft.PhaseTimer >= HoverSettle +
+                        static_cast<float>(craft.Released) * ReleaseInterval)
+                {
+                    const int n = craft.Released;
+                    Cargo& cargo = craft.Hold[static_cast<std::size_t>(n)];
+
+                    // Spread the drop either side of the mark.
+                    const float side = (n % 2 == 0) ? -1.0f : 1.0f;
+                    const float offset = static_cast<float>((n + 1) / 2) * CargoSpread * side;
+
+                    Delivery delivery;
+                    delivery.Kind = cargo.Kind;
+                    delivery.PayloadX = std::clamp(craft.X + offset, 8.0f, worldWidth - 8.0f);
+                    delivery.PayloadY = DeliveryAltitude + 10.0f * info.Scale;
+                    delivery.FallVelY = 30.0f;
+                    delivery.Weapon = cargo.Weapon;
+                    delivery.Extras = std::move(cargo.Extras);
+                    delivery.OwnerPlayer = craft.OwnerPlayer;
+                    delivery.Team = craft.Team;
+                    delivery.BodyClass = cargo.BodyClass;
+
+                    m_Deliveries.push_back(std::move(delivery));
+                    craft.Released++;
+                }
+
+                if (craft.Released >= count &&
+                    craft.PhaseTimer >= HoverSettle +
+                        static_cast<float>(count) * ReleaseInterval + 0.3f)
+                {
+                    craft.Phase = CraftPhase::FlyOut;
+                    craft.PhaseTimer = 0.0f;
+                }
+                break;
+            }
+
+            case CraftPhase::FlyOut:
+            default:
+                craft.Speed = std::min(craft.Speed + 520.0f * deltaTime, info.Speed * 1.2f);
+                craft.X += craft.Dir * craft.Speed * deltaTime;
+                gone = craft.X < -ShipExitMargin || craft.X > worldWidth + ShipExitMargin;
+                break;
+            }
+
+            if (gone)
+                m_Crafts.erase(m_Crafts.begin() + static_cast<std::ptrdiff_t>(i));
+            else
+                i++;
+        }
+
+        for (Delivery& delivery : m_Deliveries)
+        {
+            switch (delivery.Phase)
+            {
             case DeliveryPhase::Descending:
             {
-                // The ship flies on through and off the scene; the
-                // payload now falls under its own chute.
-                delivery.ShipX += delivery.ShipDir * ShipSpeed * deltaTime;
-
                 delivery.ChuteTimer += deltaTime;
                 const bool chuteOpen = delivery.ChuteTimer > ChuteDeployDelay;
 
@@ -289,30 +431,47 @@ namespace Atlas
             default:
                 break;
             }
-
-            if (delivery.Phase == DeliveryPhase::Done)
-            {
-                m_Deliveries.erase(m_Deliveries.begin() +
-                    static_cast<std::ptrdiff_t>(i));
-            }
-            else
-            {
-                i++;
-            }
         }
     }
 
     void DeliverySystem::Draw(Window& window) const
     {
+        const float time = static_cast<float>(SDL_GetTicks()) / 1000.0f;
+
+        for (const Craft& craft : m_Crafts)
+        {
+            const CraftInfo& info = GetCraftInfo(craft.Kind);
+            const bool hovering = craft.Phase == CraftPhase::Hover;
+
+            // A gentle bob while it holds station, eased in and out.
+            const float bob = hovering
+                ? std::sin(time * 4.0f + craft.TargetX) * 1.5f *
+                    std::min(1.0f, craft.PhaseTimer * 3.0f)
+                : 0.0f;
+
+            const float y = DeliveryAltitude + bob;
+
+            DrawDropShipHull(window, craft.X, y, craft.Dir, craft.Team, info.Scale,
+                hovering ? 0.35f : 1.0f);
+
+            if (hovering)
+            {
+                // Downward thrusters holding it up.
+                for (int side = -1; side <= 1; side += 2)
+                {
+                    const float tx = craft.X + static_cast<float>(side) * 12.0f * info.Scale;
+                    const float flicker = 0.8f + 0.2f * std::sin(time * 37.0f + static_cast<float>(side));
+
+                    window.DrawGlow(tx, y + 8.0f * info.Scale, 10.0f * info.Scale * flicker,
+                        255, 170, 90, 150);
+                    window.DrawFilledRect(tx - 1.0f, y + 6.0f * info.Scale, 2.0f,
+                        4.0f * flicker, 255, 225, 170, 230);
+                }
+            }
+        }
+
         for (const Delivery& delivery : m_Deliveries)
         {
-            if (delivery.Phase == DeliveryPhase::FlyIn ||
-                delivery.Phase == DeliveryPhase::Descending)
-            {
-                DrawDropShipHull(
-                    window, delivery.ShipX, DeliveryAltitude, delivery.ShipDir, delivery.Team);
-            }
-
             if (delivery.Phase == DeliveryPhase::Descending)
             {
                 const float canopyOpen = std::clamp(
@@ -343,13 +502,19 @@ namespace Atlas
         return m_ShipPasses;
     }
 
+    const std::vector<Craft>& DeliverySystem::GetCrafts() const
+    {
+        return m_Crafts;
+    }
+
     int DeliverySystem::GetActiveCount() const
     {
-        return static_cast<int>(m_Deliveries.size());
+        return static_cast<int>(m_Crafts.size() + m_Deliveries.size());
     }
 
     void DeliverySystem::Clear()
     {
+        m_Crafts.clear();
         m_Deliveries.clear();
     }
 }
