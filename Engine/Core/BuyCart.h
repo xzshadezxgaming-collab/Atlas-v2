@@ -1,85 +1,118 @@
 #pragma once
 
+#include "../Combat/Delivery.h"
+#include "../Sim/PlayerInput.h"
+
 #include <vector>
 
 namespace Atlas
 {
     struct WeaponDef;
 
-    // One reinforcement queued in the cart: always leaves with a weapon
-    // (defaults to whatever the caller passes as the "bundled" weapon),
-    // which can be replaced by assigning a different one.
+    // One reinforcement queued in the cart and the weapons packed into
+    // its inventory. No weapons means it lands with the free default
+    // rifle.
     struct CartBody
     {
-        const WeaponDef* Weapon;
-        int BodyCost;
-        int WeaponCost; // cost of the currently-assigned weapon (0 = bundled default)
-        int Class = 1;  // its build (a BodyClass value)
+        int Class = 1; // its build (a BodyClass value)
+        std::vector<const WeaponDef*> Weapons;
+        int Id = 0;    // stable while it is in the cart (for undo)
     };
 
-    struct CartLooseWeapon
-    {
-        const WeaponDef* Weapon;
-        int Cost;
-    };
-
-    // Cortex Command-style order cart: bodies and weapons/items queued
-    // for one drop-ship order. Buying a weapon equips it to whichever
-    // body is currently "active" (most recently added, or explicitly
-    // selected); with no active body, weapons are queued as loose field
-    // pickups instead. Pure bookkeeping - no gold checks, no rendering,
-    // no knowledge of gameplay; the caller decides affordability before
-    // calling Add*, and reads the cart back out to spend gold and queue
-    // deliveries.
+    // Cortex Command-style order cart: a craft, then bodies with their
+    // gear, then loose cargo. Buying a weapon packs it into whichever
+    // body is "active" (the most recently added, or one picked in the
+    // order list); with no active body it rides as a loose field pickup.
+    //
+    // Pure bookkeeping - no gold checks, no rendering, no gameplay. The
+    // World prices an order itself (World::PriceOrder on ToOrder()), so
+    // the cart never keeps its own copy of the price list.
     class BuyCart
     {
     public:
-        // Adds a reinforcement with a bundled default weapon (no extra
-        // charge for it - only the body's own cost is added) and makes
-        // it the active assignment target.
-        void AddBody(const WeaponDef* defaultWeapon, int bodyCost, int bodyClass = 1);
+        static constexpr int MaxWeaponsPerBody = 4;
+        static constexpr int AutoCraft = -1;
 
-        // Assigns to the active body if one is selected (replacing
-        // whatever weapon it had and adjusting the total by the cost
-        // delta), otherwise queues a loose weapon. Returns true if it
-        // was assigned to a body, false if it went in as a loose item.
-        bool AddWeapon(const WeaponDef* weapon, int cost);
+        enum class AddResult
+        {
+            ToBody,    // packed into the active body
+            Loose,     // queued as a loose field pickup
+            BodyFull,  // the active body can't carry more
+            Duplicate, // the active body already carries one
+        };
 
-        void AddSupplyCrate(int cost);
+        void AddBody(int bodyClass);
 
-        // Removes one supply crate from the order, if any are queued.
+        AddResult AddWeapon(const WeaponDef* weapon);
+
+        void AddSupplyCrate();
+        void AddDrone();
+
+        void RemoveBody(int index);
+        void RemoveBodyWeapon(int bodyIndex, int weaponIndex);
+        void RemoveLooseWeapon(int index);
         void RemoveSupplyCrate();
-
-        void AddDrone(int cost);
         void RemoveDrone();
-        int GetDroneCount() const;
+
+        // Takes back the most recent addition still in the cart.
+        void Undo();
 
         // -1 deselects (subsequent weapons go loose). Out-of-range
         // indices are ignored.
         void SelectBody(int index);
         void DeselectBody();
+        int GetActiveBodyIndex() const;
 
-        void RemoveBody(int index);
-        void RemoveLooseWeapon(int index);
+        // AutoCraft, or a CraftKind value to always fly in.
+        void SetCraftChoice(int choice);
+        int GetCraftChoice() const;
+
+        // The craft the order would fly on: the chosen one, or on auto
+        // the smallest that fits (the biggest if nothing does).
+        CraftKind ResolveCraft() const;
 
         void Clear();
-
-        int GetTotalCost() const;
-        int GetActiveBodyIndex() const;
         bool IsEmpty() const;
 
         const std::vector<CartBody>& GetBodies() const;
-        const std::vector<CartLooseWeapon>& GetLooseWeapons() const;
+        const std::vector<const WeaponDef*>& GetLooseWeapons() const;
         int GetSupplyCrateCount() const;
+        int GetDroneCount() const;
+        int GetItemCount() const; // weapons, crates and drones, any body
+
+        // The order as the World takes it (the default rifle fills in
+        // for bodies without weapons). DropX is left on the buyer.
+        OrderRequest ToOrder(const WeaponDef* defaultWeapon) const;
+
+        // Replaces the cart with an order's contents (loading a preset).
+        void FromOrder(const OrderRequest& order, const WeaponDef* defaultWeapon);
 
     private:
+        enum class AddKind
+        {
+            Body,
+            BodyWeapon,
+            LooseWeapon,
+            Crate,
+            Drone,
+        };
+
+        struct Addition
+        {
+            AddKind Kind;
+            int BodyId;
+            const WeaponDef* Weapon;
+        };
+
+        int FindBody(int id) const;
+
         std::vector<CartBody> m_Bodies;
-        std::vector<CartLooseWeapon> m_LooseWeapons;
-        int m_SupplyCrateCount = 0;
-        int m_SupplyCrateCostEach = 0;
-        int m_DroneCount = 0;
-        int m_DroneCostEach = 0;
-        int m_Total = 0;
+        std::vector<const WeaponDef*> m_LooseWeapons;
+        std::vector<Addition> m_History;
+        int m_SupplyCrates = 0;
+        int m_Drones = 0;
         int m_ActiveBody = -1;
+        int m_CraftChoice = AutoCraft;
+        int m_NextId = 1;
     };
 }

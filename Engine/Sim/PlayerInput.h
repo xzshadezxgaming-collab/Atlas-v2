@@ -48,11 +48,20 @@ namespace Atlas
     {
         const WeaponDef* Weapon = nullptr; // null = the default rifle
         std::uint8_t Class = 1;            // a BodyClass value
+
+        // More weapons packed into its inventory (always paid for).
+        std::vector<const WeaponDef*> Extras;
     };
 
     struct OrderRequest
     {
-        // One reinforcement per entry, with its build and the weapon it
+        // The craft that flies the whole order in (a CraftKind value).
+        std::uint8_t Craft = 0;
+
+        // Landing zone x in world pixels; -1 = on the buyer.
+        std::int32_t DropX = -1;
+
+        // One reinforcement per entry, with its build and the weapons it
         // lands with.
         std::vector<OrderBody> Bodies;
 

@@ -82,12 +82,18 @@ namespace Atlas
 
     void WriteOrder(ByteWriter& out, const OrderRequest& order, const World& world)
     {
+        out.U8(order.Craft);
+        out.U32(static_cast<std::uint32_t>(order.DropX));
         out.U8(static_cast<std::uint8_t>(order.Bodies.size()));
 
         for (const OrderBody& body : order.Bodies)
         {
             WriteWeapon(out, body.Weapon, world);
             out.U8(body.Class);
+            out.U8(static_cast<std::uint8_t>(body.Extras.size()));
+
+            for (const WeaponDef* extra : body.Extras)
+                WriteWeapon(out, extra, world);
         }
 
         out.U8(static_cast<std::uint8_t>(order.LooseWeapons.size()));
@@ -103,6 +109,9 @@ namespace Atlas
     {
         OrderRequest order;
 
+        order.Craft = in.U8();
+        order.DropX = static_cast<std::int32_t>(in.U32());
+
         const std::uint32_t bodies = std::min<std::uint32_t>(in.U8(), MaxListLength);
 
         for (std::uint32_t i = 0; i < bodies; i++)
@@ -110,6 +119,12 @@ namespace Atlas
             OrderBody body;
             body.Weapon = ReadWeapon(in, world);
             body.Class = in.U8();
+
+            const std::uint32_t extras = std::min<std::uint32_t>(in.U8(), MaxListLength);
+
+            for (std::uint32_t e = 0; e < extras; e++)
+                body.Extras.push_back(ReadWeapon(in, world));
+
             order.Bodies.push_back(body);
         }
 

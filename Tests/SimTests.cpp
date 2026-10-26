@@ -208,7 +208,7 @@ namespace
         Actor& player = *world.GetPlayer(slot).Body;
 
         OrderRequest order;
-        order.Bodies.push_back({ world.GetAllyWeapon(), 1 });
+        order.Bodies.push_back({ world.GetAllyWeapon(), 1, {} });
         order.SupplyCrates = 1;
 
         world.AddTeamGold(0, -world.GetTeamGold(0));
@@ -237,6 +237,83 @@ namespace
 
         Check(world.FindActor(0) == nullptr, "id 0 never resolves");
         Check(world.FindActor(123456) == nullptr, "unknown ids don't resolve");
+    }
+}
+
+namespace
+{
+    void TestCrafts()
+    {
+        std::printf("crafts: capacity, price, one ship, loadouts, landing zone\n");
+
+        World world;
+        world.Create(MakeConfig(41u));
+        world.SetBotsEnabled(false);
+        const int slot = world.AddPlayer();
+        world.AddTeamGold(0, 5000);
+
+        const WeaponDef* sniper = world.FindWeapon("Sniper");
+        const WeaponDef* smg = world.FindWeapon("SMG");
+        Check(sniper && smg, "weapons exist");
+
+        // Two riflemen and a crate (7 units) don't fit a Sparrow (5).
+        OrderRequest order;
+        order.Craft = static_cast<std::uint8_t>(CraftKind::Sparrow);
+        order.Bodies.push_back({ sniper, 1, { smg } });
+        order.Bodies.push_back({ nullptr, 1, {} });
+        order.SupplyCrates = 1;
+        Check(World::OrderCargoUnits(order) == 7, "cargo units counted");
+
+        const int gold = world.GetTeamGold(0);
+        Check(!world.SubmitOrder(slot, order), "overloaded craft refused");
+        Check(world.GetTeamGold(0) == gold, "nothing spent on refusal");
+
+        order.Craft = static_cast<std::uint8_t>(CraftKind::Dropship);
+        const int expected = GetCraftInfo(CraftKind::Dropship).Cost +
+            2 * World::ReinforcementCost + sniper->Cost + smg->Cost + World::SupplyCrateCost;
+        Check(world.PriceOrder(order) == expected, "craft and extras priced");
+
+        OrderRequest bad = order;
+        bad.Craft = static_cast<std::uint8_t>(CraftKind::Count);
+        Check(!world.SubmitOrder(slot, bad), "unknown craft refused");
+
+        // Land it well away from the player.
+        const float lz = world.GetPlayer(slot).Body->GetCenterX() + 260.0f;
+        order.DropX = static_cast<std::int32_t>(lz);
+
+        Check(world.SubmitOrder(slot, order), "order accepted");
+        Check(world.GetTeamGold(0) == gold - expected, "gold spent");
+        Check(world.GetDeliveries().GetCrafts().size() == 1, "one craft carries the order");
+
+        for (int t = 0; t < 120 * 30 && world.GetAllies().size() < 2; t++)
+            world.Step(nullptr, 0);
+
+        Check(world.GetAllies().size() == 2, "both bodies landed");
+
+        bool packed = false;
+
+        for (const Ally& ally : world.GetAllies())
+        {
+            Check(std::fabs(ally.Body->GetCenterX() - lz) < 60.0f, "landed at the landing zone");
+
+            bool hasSniper = false;
+            bool hasSmg = false;
+
+            for (int i = 0; i < ally.Body->GetItemCount(); i++)
+            {
+                hasSniper = hasSniper || ally.Body->GetItem(i).GetDef() == sniper;
+                hasSmg = hasSmg || ally.Body->GetItem(i).GetDef() == smg;
+            }
+
+            packed = packed || (hasSniper && hasSmg);
+        }
+
+        Check(packed, "a body landed with its whole loadout");
+
+        for (int t = 0; t < 120 * 20 && world.GetDeliveries().GetActiveCount() > 0; t++)
+            world.Step(nullptr, 0);
+
+        Check(world.GetDeliveries().GetActiveCount() == 0, "craft leaves and cargo clears");
     }
 }
 
@@ -278,7 +355,7 @@ namespace
         // Order a body and hop into it.
         world.AddTeamGold(0, 1000);
         OrderRequest order;
-        order.Bodies.push_back({ world.GetAllyWeapon(), 1 });
+        order.Bodies.push_back({ world.GetAllyWeapon(), 1, {} });
         Check(world.SubmitOrder(slot, order), "reinforcement ordered");
 
         for (int t = 0; t < 120 * 30 && world.GetAllies().empty(); t++)
@@ -506,12 +583,12 @@ namespace
 
         world.AddTeamGold(0, 1000);
         OrderRequest order;
-        order.Bodies.push_back({ world.FindWeapon("Shotgun"), static_cast<std::uint8_t>(BodyClass::Heavy) });
+        order.Bodies.push_back({ world.FindWeapon("Shotgun"), static_cast<std::uint8_t>(BodyClass::Heavy), {} });
         Check(world.PriceOrder(order) == 170 + world.FindWeapon("Shotgun")->Cost, "heavy body priced by build");
         Check(world.SubmitOrder(slot, order), "heavy ordered");
 
         OrderRequest bad;
-        bad.Bodies.push_back({ nullptr, 9 });
+        bad.Bodies.push_back({ nullptr, 9, {} });
         Check(!world.SubmitOrder(slot, bad), "unknown build refused");
 
         for (int t = 0; t < 120 * 30 && world.GetAllies().empty(); t++)
@@ -947,6 +1024,7 @@ int main()
     TestDeterminism();
     TestSeedsDiffer();
     TestOrdersAndIds();
+    TestCrafts();
     TestBrainAssault();
     TestEnemiesAdvance();
     TestBodiesAndInventory();
