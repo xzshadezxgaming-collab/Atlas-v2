@@ -50,6 +50,12 @@ target_include_directories(AtlasEngine
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+# stb_truetype (vendored, public domain): rasterizes the UI fonts.
+target_include_directories(AtlasEngine
+    SYSTEM PRIVATE
+        ${CMAKE_SOURCE_DIR}/ThirdParty/stb
+)
+
 # ENet (vendored in ThirdParty/enet): reliable UDP for multiplayer.
 target_include_directories(AtlasEngine
     PRIVATE

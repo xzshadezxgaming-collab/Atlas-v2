@@ -8,13 +8,24 @@ namespace Atlas
 {
     class Window;
 
-    // Built-in pixel fonts (A-Z, 0-9, and a few symbols), drawn as
-    // screen-space rects. No font files needed. Scales of 2 and up use a
-    // chunky 3x5 face (4*scale advance); smaller scales use a crisp 5x7
-    // face at one pixel per font pixel (6px advance, 7px tall).
+    // Screen-space text. Once LoadFaces has found the TrueType faces in
+    // Assets/Fonts, text is anti-aliased and rasterized at the display's
+    // real pixel size (crisp at any window size); without them it falls
+    // back to built-in pixel faces drawn as rects.
+    //
+    // Either way `scale` keeps its pixel-font meaning, so layouts carry
+    // over: below 2 text is about 7px tall, from 2 up it is 5*scale, and
+    // y is the top of the capitals. Large text uses the bold face.
     class PixelFont
     {
     public:
+        // Loads the regular and bold faces (TTF/OTF). Returns false, and
+        // keeps the pixel faces, if either can't be read.
+        static bool LoadFaces(SDL_Renderer* renderer,
+            const std::string& regularPath, const std::string& boldPath);
+
+        static void Shutdown();
+
         static void Draw(
             Window& window,
             float x,

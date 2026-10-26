@@ -2,9 +2,16 @@
 
 #include "../Core/Window.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <unordered_map>
+#include <vector>
+
+#define STB_TRUETYPE_IMPLEMENTATION
+#define STBTT_STATIC
+#include <stb_truetype.h>
 
 namespace Atlas
 {
@@ -163,7 +170,9 @@ namespace Atlas
         constexpr float SmallFaceBelow = 2.0f;
     }
 
-    void PixelFont::Draw(
+    namespace
+    {
+    void DrawPixelFace(
         Window& window,
         float x,
         float y,
@@ -250,11 +259,362 @@ namespace Atlas
         }
     }
 
-    float PixelFont::Measure(const std::string& text, float scale)
+    float MeasurePixelFace(const std::string& text, float scale)
     {
         if (scale < SmallFaceBelow)
             return static_cast<float>(text.size()) * 6.0f;
 
         return static_cast<float>(text.size()) * 4.0f * scale;
+    }
+    }
+
+    // --- TrueType faces ---
+
+    namespace
+    {
+        // Glyphs are rasterized on first use into shared atlas pages,
+        // one entry per (face, size in real pixels, character).
+        struct Glyph
+        {
+            int Page = -1;
+            int X = 0, Y = 0, W = 0, H = 0;
+            int OffsetX = 0, OffsetY = 0;
+        };
+
+        struct Face
+        {
+            std::vector<unsigned char> Data;
+            stbtt_fontinfo Info{};
+            float CapUnits = 1.0f; // height of 'H' in font units
+        };
+
+        constexpr int PageSize = 1024;
+
+        struct TextState
+        {
+            SDL_Renderer* Renderer = nullptr;
+            Face Faces[2];
+            bool Loaded = false;
+
+            std::vector<SDL_Texture*> Pages;
+            int ShelfX = 0, ShelfY = 0, ShelfH = 0;
+            std::unordered_map<std::uint64_t, Glyph> Glyphs;
+            std::vector<SDL_Vertex> Vertices;
+        };
+
+        TextState& State()
+        {
+            static TextState state;
+            return state;
+        }
+
+        bool ReadFile(const std::string& path, std::vector<unsigned char>& out)
+        {
+            std::size_t size = 0;
+            void* data = SDL_LoadFile(path.c_str(), &size);
+
+            if (!data)
+                return false;
+
+            out.assign(static_cast<unsigned char*>(data), static_cast<unsigned char*>(data) + size);
+            SDL_free(data);
+            return true;
+        }
+
+        bool LoadFace(Face& face, const std::string& path)
+        {
+            if (!ReadFile(path, face.Data))
+                return false;
+
+            const int offset = stbtt_GetFontOffsetForIndex(face.Data.data(), 0);
+
+            if (offset < 0 || !stbtt_InitFont(&face.Info, face.Data.data(), offset))
+                return false;
+
+            int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+
+            if (!stbtt_GetCodepointBox(&face.Info, 'H', &x0, &y0, &x1, &y1) || y1 <= 0)
+                return false;
+
+            face.CapUnits = static_cast<float>(y1);
+            return true;
+        }
+
+        // Old pixel-font scale -> capital height in view pixels.
+        float CapHeightFor(float scale)
+        {
+            return scale < SmallFaceBelow ? 7.5f : 5.0f * scale;
+        }
+
+        int FaceFor(float scale)
+        {
+            return scale < SmallFaceBelow ? 0 : 1;
+        }
+
+        // Uppercase UI text reads better slightly open.
+        float TrackingFor(float capHeight)
+        {
+            return capHeight * 0.06f;
+        }
+
+        void ResetAtlas(TextState& state)
+        {
+            for (SDL_Texture* page : state.Pages)
+                SDL_DestroyTexture(page);
+
+            state.Pages.clear();
+            state.Glyphs.clear();
+            state.ShelfX = state.ShelfY = state.ShelfH = 0;
+        }
+
+        bool AddPage(TextState& state)
+        {
+            SDL_Texture* page = SDL_CreateTexture(state.Renderer, SDL_PIXELFORMAT_ARGB8888,
+                SDL_TEXTUREACCESS_STATIC, PageSize, PageSize);
+
+            if (!page)
+                return false;
+
+            std::vector<Uint32> clear(static_cast<std::size_t>(PageSize) * PageSize, 0x00FFFFFFu);
+            SDL_UpdateTexture(page, nullptr, clear.data(), PageSize * 4);
+            SDL_SetTextureBlendMode(page, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureScaleMode(page, SDL_SCALEMODE_LINEAR);
+
+            state.Pages.push_back(page);
+            state.ShelfX = state.ShelfY = state.ShelfH = 0;
+            return true;
+        }
+
+        const Glyph* GetGlyph(TextState& state, int faceIndex, int capPixels, int codepoint)
+        {
+            const std::uint64_t key =
+                (static_cast<std::uint64_t>(faceIndex) << 48) |
+                (static_cast<std::uint64_t>(capPixels) << 24) |
+                static_cast<std::uint64_t>(codepoint & 0xFFFFFF);
+
+            if (auto it = state.Glyphs.find(key); it != state.Glyphs.end())
+                return &it->second;
+
+            const Face& face = state.Faces[faceIndex];
+            const float fontScale = static_cast<float>(capPixels) / face.CapUnits;
+
+            Glyph glyph;
+            int w = 0, h = 0;
+            unsigned char* bitmap = stbtt_GetCodepointBitmap(
+                &face.Info, fontScale, fontScale, codepoint, &w, &h, &glyph.OffsetX, &glyph.OffsetY);
+
+            if (bitmap && w > 0 && h > 0 && w < PageSize - 2 && h < PageSize - 2)
+            {
+                // Shelf packing with a one-texel gutter (bilinear filtering
+                // would otherwise bleed neighbours in).
+                if (state.Pages.empty() || state.ShelfX + w + 1 > PageSize)
+                {
+                    if (!state.Pages.empty())
+                    {
+                        state.ShelfX = 0;
+                        state.ShelfY += state.ShelfH + 1;
+                        state.ShelfH = 0;
+                    }
+                }
+
+                if (state.Pages.empty() || state.ShelfY + h + 1 > PageSize)
+                {
+                    // A handful of sizes fit on one page; if a session
+                    // somehow fills several, start over rather than grow.
+                    if (state.Pages.size() >= 4)
+                        ResetAtlas(state);
+
+                    if (!AddPage(state))
+                    {
+                        stbtt_FreeBitmap(bitmap, nullptr);
+                        return nullptr;
+                    }
+                }
+
+                std::vector<Uint32> pixels(static_cast<std::size_t>(w) * h);
+
+                for (int i = 0; i < w * h; i++)
+                    pixels[static_cast<std::size_t>(i)] = (static_cast<Uint32>(bitmap[i]) << 24) | 0x00FFFFFFu;
+
+                const SDL_Rect rect = { state.ShelfX + 1, state.ShelfY + 1, w, h };
+                SDL_UpdateTexture(state.Pages.back(), &rect, pixels.data(), w * 4);
+
+                glyph.Page = static_cast<int>(state.Pages.size()) - 1;
+                glyph.X = rect.x;
+                glyph.Y = rect.y;
+                glyph.W = w;
+                glyph.H = h;
+
+                state.ShelfX += w + 1;
+                state.ShelfH = std::max(state.ShelfH, h + 1);
+            }
+
+            if (bitmap)
+                stbtt_FreeBitmap(bitmap, nullptr);
+
+            return &state.Glyphs.emplace(key, glyph).first->second;
+        }
+
+        // Pen advance (with kerning) between two characters, in view
+        // pixels at the given font scale.
+        float Advance(const Face& face, float fontScale, int c, int next)
+        {
+            int advance = 0, bearing = 0;
+            stbtt_GetCodepointHMetrics(&face.Info, c, &advance, &bearing);
+
+            float result = static_cast<float>(advance) * fontScale;
+
+            if (next)
+                result += static_cast<float>(stbtt_GetCodepointKernAdvance(&face.Info, c, next)) * fontScale;
+
+            return result;
+        }
+
+        float MeasureTrueType(const std::string& text, float scale)
+        {
+            TextState& state = State();
+            const Face& face = state.Faces[FaceFor(scale)];
+            const float cap = CapHeightFor(scale);
+            const float fontScale = cap / face.CapUnits;
+            const float tracking = TrackingFor(cap);
+
+            float width = 0.0f;
+
+            for (std::size_t i = 0; i < text.size(); i++)
+            {
+                const int c = static_cast<unsigned char>(text[i]);
+                const int next = i + 1 < text.size() ? static_cast<unsigned char>(text[i + 1]) : 0;
+                width += Advance(face, fontScale, c, next) + (next ? tracking : 0.0f);
+            }
+
+            return width;
+        }
+
+        void DrawTrueType(Window& window, float x, float y, float scale,
+            const std::string& text, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+        {
+            TextState& state = State();
+            const int faceIndex = FaceFor(scale);
+            const Face& face = state.Faces[faceIndex];
+            const float cap = CapHeightFor(scale);
+            const float fontScale = cap / face.CapUnits;
+            const float tracking = TrackingFor(cap);
+
+            // Rasterize at the real output size, then draw at 1/pixelScale
+            // so each glyph texel lands on one screen pixel.
+            const float pixelScale = window.GetPixelScale();
+            const int capPixels = std::max(4, static_cast<int>(std::lround(cap * pixelScale)));
+            const float texel = cap / static_cast<float>(capPixels);
+
+            auto snap = [&](float v) { return std::round(v / texel) * texel; };
+
+            const float baseline = snap(y + cap);
+            const SDL_FColor color = { r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f };
+
+            int page = -1;
+            std::vector<SDL_Vertex>& vertices = state.Vertices;
+            vertices.clear();
+
+            auto flush = [&]()
+            {
+                if (page >= 0 && !vertices.empty())
+                {
+                    SDL_RenderGeometry(window.GetRenderer(), state.Pages[static_cast<std::size_t>(page)],
+                        vertices.data(), static_cast<int>(vertices.size()), nullptr, 0);
+                }
+
+                vertices.clear();
+            };
+
+            float penX = x;
+
+            for (std::size_t i = 0; i < text.size(); i++)
+            {
+                const int c = static_cast<unsigned char>(text[i]);
+                const int next = i + 1 < text.size() ? static_cast<unsigned char>(text[i + 1]) : 0;
+
+                const Glyph* glyph = GetGlyph(state, faceIndex, capPixels, c);
+
+                if (glyph && glyph->Page >= 0)
+                {
+                    if (glyph->Page != page)
+                    {
+                        flush();
+                        page = glyph->Page;
+                    }
+
+                    const float gx = snap(penX) + static_cast<float>(glyph->OffsetX) * texel;
+                    const float gy = baseline + static_cast<float>(glyph->OffsetY) * texel;
+                    const float gw = static_cast<float>(glyph->W) * texel;
+                    const float gh = static_cast<float>(glyph->H) * texel;
+
+                    const float u0 = static_cast<float>(glyph->X) / PageSize;
+                    const float v0 = static_cast<float>(glyph->Y) / PageSize;
+                    const float u1 = static_cast<float>(glyph->X + glyph->W) / PageSize;
+                    const float v1 = static_cast<float>(glyph->Y + glyph->H) / PageSize;
+
+                    const SDL_Vertex tl = { { gx, gy }, color, { u0, v0 } };
+                    const SDL_Vertex tr = { { gx + gw, gy }, color, { u1, v0 } };
+                    const SDL_Vertex br = { { gx + gw, gy + gh }, color, { u1, v1 } };
+                    const SDL_Vertex bl = { { gx, gy + gh }, color, { u0, v1 } };
+
+                    vertices.insert(vertices.end(), { tl, tr, br, tl, br, bl });
+                }
+
+                penX += Advance(face, fontScale, c, next) + (next ? tracking : 0.0f);
+            }
+
+            flush();
+        }
+    }
+
+    bool PixelFont::LoadFaces(SDL_Renderer* renderer,
+        const std::string& regularPath, const std::string& boldPath)
+    {
+        TextState& state = State();
+        ResetAtlas(state);
+        state.Loaded = false;
+        state.Renderer = renderer;
+
+        if (!renderer ||
+            !LoadFace(state.Faces[0], regularPath) ||
+            !LoadFace(state.Faces[1], boldPath))
+            return false;
+
+        state.Loaded = true;
+        return true;
+    }
+
+    void PixelFont::Shutdown()
+    {
+        TextState& state = State();
+        ResetAtlas(state);
+        state.Loaded = false;
+        state.Renderer = nullptr;
+    }
+
+    void PixelFont::Draw(
+        Window& window,
+        float x,
+        float y,
+        float scale,
+        const std::string& text,
+        Uint8 r,
+        Uint8 g,
+        Uint8 b,
+        Uint8 a)
+    {
+        if (State().Loaded && window.GetRenderer() == State().Renderer)
+            DrawTrueType(window, x, y, scale, text, r, g, b, a);
+        else
+            DrawPixelFace(window, x, y, scale, text, r, g, b, a);
+    }
+
+    float PixelFont::Measure(const std::string& text, float scale)
+    {
+        if (State().Loaded)
+            return MeasureTrueType(text, scale);
+
+        return MeasurePixelFace(text, scale);
     }
 }

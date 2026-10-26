@@ -183,7 +183,47 @@ namespace Atlas
 
         void ApplyLighting(const AmbientLight& ambient);
 
+        // --- World pass ---
+        //
+        // Between BeginWorld and EndWorld everything lands in an offscreen
+        // target holding the view at one texel per world pixel. EndWorld
+        // blooms it and scales it onto the screen by the zoom with
+        // pixel-art filtering, shifted by the camera's sub-pixel remainder
+        // so scrolling glides instead of stepping a whole pixel at a time.
+        // Screen-space draws inside the pass (the sky) are in target
+        // coordinates, which span GetViewWidth x GetViewHeight.
+        void SetZoom(float zoom);
+        float GetZoom() const;
+
+        void BeginWorld();
+        void EndWorld();
+
+        // World pixels visible across and down the screen.
+        float GetViewWidth() const;
+        float GetViewHeight() const;
+
+        // Between world positions and screen (HUD) positions, through
+        // the camera and the zoom.
+        float WorldToScreenX(float x) const;
+        float WorldToScreenY(float y) const;
+        float ScreenToWorldX(float x) const;
+        float ScreenToWorldY(float y) const;
+
+        // Glow around bright pixels; 0 turns it off. Needs a renderer
+        // with custom blend modes (every GPU backend; not the software
+        // one).
+        void SetBloom(float strength);
+        bool IsBloomSupported() const;
+
+        // A brief full-screen color wash on top of the world (hits,
+        // explosions), faded by the caller each frame.
+        void SetScreenTint(Uint8 r, Uint8 g, Uint8 b, Uint8 a);
+
         SDL_Renderer* GetRenderer() const;
+
+        // Real screen pixels per view pixel (window size / 1280x720,
+        // letterboxed), for drawing text and UI crisply.
+        float GetPixelScale() const;
 
         int GetWidth() const;
         int GetHeight() const;
@@ -197,6 +237,18 @@ namespace Atlas
         };
 
         void CreateEffectTextures();
+        void EnsureWorldTargets();
+        void ApplyBloom();
+
+        // The camera position world draws subtract: in the world pass the
+        // whole-pixel part (the sub-pixel rest is applied when the target
+        // is scaled onto the screen).
+        float OriginX() const;
+        float OriginY() const;
+
+        // Size of whatever is being drawn into right now.
+        float SurfaceWidth() const;
+        float SurfaceHeight() const;
         void DrawGlowTexture(float x, float y, float radius,
             Uint8 r, Uint8 g, Uint8 b, Uint8 a);
 
@@ -211,6 +263,23 @@ namespace Atlas
         SDL_Texture* m_GlowTexture = nullptr;
         SDL_Texture* m_VignetteTexture = nullptr;
         SDL_Texture* m_LightMap = nullptr;
+
+        SDL_Texture* m_WorldTarget = nullptr;
+        int m_TargetWidth = 0;
+        int m_TargetHeight = 0;
+        float m_Zoom = 1.0f;
+        bool m_InWorld = false;
+        float m_SubX = 0.0f;
+        float m_SubY = 0.0f;
+
+        static constexpr int BloomLevels = 4;
+        SDL_Texture* m_Bloom[BloomLevels] = {};
+        float m_BloomStrength = 1.0f;
+        bool m_BloomSupported = false;
+        SDL_BlendMode m_SubtractBlend = SDL_BLENDMODE_INVALID;
+
+        SDL_Color m_Tint = { 0, 0, 0, 0 };
+        float m_PixelScale = 1.0f;
 
         bool m_LightingEnabled = true;
         std::vector<Light> m_Lights;

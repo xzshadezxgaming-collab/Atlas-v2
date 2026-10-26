@@ -18,7 +18,17 @@ a [release](https://github.com/xzshadezxgaming-collab/atlas-v2/releases)
 (`.github/workflows/release.yml`), so that link is always the newest
 build.
 
-## Current features (v0.10.0)
+## Current features (v0.11.0)
+
+- **Modern presentation** — the battlefield is drawn closer (1.5x by
+  default; 1x to 2x under Settings, WORLD ZOOM) with sharp pixel-art
+  scaling, and the camera glides at sub-pixel precision instead of
+  stepping a pixel at a time. Bright light (muzzle flashes, fire, lava,
+  explosions, the moon) blooms into a soft glow, and nearby blasts wash
+  the screen with warm light (BLOOM in Settings). All text uses an
+  anti-aliased font (Chakra Petch) rendered at your screen's real
+  resolution, so it stays crisp in fullscreen. Menus, buttons and HUD
+  panels share a new chamfered glass style with eased hover effects.
 
 - **New look** — dynamic lighting: caves and tunnels are genuinely
   dark, muzzle flashes, explosions, fire and lava light up the rock

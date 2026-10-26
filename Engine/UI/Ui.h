@@ -49,9 +49,19 @@ namespace Atlas
         bool Hovered(float x, float y, float w, float h) const;
 
     private:
-        // A control's face: rounded border, vertical gradient fill, and
-        // an accent bar down the left edge when lit (0..1).
+        // A control's face: translucent dark glass with a chamfered
+        // top-right corner, a hairline border, and an accent bar down the
+        // left edge that grows as it lights up (0..1).
         void Frame(float x, float y, float w, float h, float lit, bool pressed = false);
+
+        // Eased 0..1 hover amount for the control at (x, y), so lighting
+        // up and fading out glide instead of snapping.
+        float Ease(float x, float y, bool target, float speed = 14.0f);
+
+        // A filled shape with its top-right corner cut at 45 degrees,
+        // colored top to bottom.
+        void Chamfer(float x, float y, float w, float h, float cut,
+            SDL_Color top, SDL_Color bottom);
 
         Window& m_Window;
 
@@ -60,6 +70,15 @@ namespace Atlas
         bool m_MouseDown = false;
         bool m_Clicked = false;
         float m_Time = 0.0f;
+        float m_FrameTime = 0.0f;
+
+        struct Anim
+        {
+            float X, Y, Value;
+            bool Seen;
+        };
+
+        std::vector<Anim> m_Anims;
 
         // Identity of the focused text field / dragged slider (by
         // position, which is stable for a static layout).
