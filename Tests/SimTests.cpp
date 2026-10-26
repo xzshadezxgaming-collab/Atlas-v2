@@ -162,6 +162,119 @@ namespace
         Check(a.ComputeStateHash() != b.ComputeStateHash(), "terrain differs by seed");
     }
 
+    int CountMaterial(const Terrain& terrain, Material material)
+    {
+        const std::uint8_t* data = terrain.GetMaterialData();
+        const int cells = terrain.GetWidth() * terrain.GetHeight();
+
+        return static_cast<int>(std::count(data, data + cells, static_cast<std::uint8_t>(material)));
+    }
+
+    void TestBiomes()
+    {
+        std::printf("biomes: each generates its own world, deterministically, at rest\n");
+
+        struct Expect
+        {
+            Biome Kind;
+            Material Signature; // must be plentiful
+            Material Absent;    // must not appear
+        };
+
+        const Expect expects[] =
+        {
+            { Biome::Temperate, Material::Grass, Material::Snow },
+            { Biome::Desert, Material::Sandstone, Material::Grass },
+            { Biome::Arctic, Material::Snow, Material::Grass },
+            { Biome::Volcanic, Material::Basalt, Material::Grass },
+        };
+
+        std::uint64_t hashes[4] = {};
+
+        for (int i = 0; i < 4; i++)
+        {
+            const Expect& expect = expects[i];
+            const std::string name = GetBiomeName(expect.Kind);
+
+            WorldConfig config = MakeConfig(77u);
+            config.Biome = expect.Kind;
+
+            World a;
+            World b;
+            Check(a.Create(config), name + " world created");
+            b.Create(config);
+
+            Check(a.GetTerrain().GetBiome() == expect.Kind, name + " terrain knows its biome");
+            Check(a.ComputeStateHash() == b.ComputeStateHash(), name + " generation is deterministic");
+            Check(CountMaterial(a.GetTerrain(), expect.Signature) > 4000, name + " has its signature material");
+            Check(CountMaterial(a.GetTerrain(), expect.Absent) == 0, name + " has no foreign surface material");
+
+            // Both brains stand on solid, static ground.
+            for (int team = 0; team < 2; team++)
+            {
+                const TeamBase& base = a.GetBase(team);
+                Check(base.Exists && base.BrainAlive, name + " base " + std::to_string(team) + " built");
+            }
+
+            // Everything generated settles instead of churning forever
+            // (a restless pool keeps regions awake and costs every tick).
+            for (int t = 0; t < 1200; t++)
+                a.Step(nullptr, 0);
+
+            Check(a.GetTerrain().GetAwakeRegionCount() <= 2,
+                name + " terrain at rest after 10s (" + std::to_string(a.GetTerrain().GetAwakeRegionCount()) + " awake)");
+
+            hashes[i] = b.ComputeStateHash();
+        }
+
+        Check(hashes[0] != hashes[1] && hashes[1] != hashes[2] && hashes[2] != hashes[3],
+            "same seed, different biome -> different world");
+
+        Check(ResolveBiome(0, 1234u) == ResolveBiome(0, 1234u), "random biome is seeded");
+        Check(ResolveBiome(3, 1234u) == Biome::Arctic, "explicit biome choice");
+
+        bool varied = false;
+
+        for (unsigned int seed = 1; seed < 40 && !varied; seed++)
+            varied = ResolveBiome(0, seed) != ResolveBiome(0, 1u);
+
+        Check(varied, "random biome varies by seed");
+
+        // Lava melts ice, and the meltwater quenches the lava to obsidian.
+        {
+            Terrain terrain;
+            terrain.Create(256, 256, 5u, Biome::Arctic);
+
+            for (int y = 40; y < 60; y++)
+            {
+                for (int x = 100; x < 140; x++)
+                    terrain.SetMaterial(x, y, Material::Air);
+            }
+
+            for (int x = 100; x < 140; x++)
+            {
+                terrain.SetMaterial(x, 59, Material::Ice);
+                terrain.SetMaterial(x, 58, Material::Ice);
+            }
+
+            for (int x = 110; x < 130; x++)
+                terrain.SetMaterial(x, 57, Material::Lava);
+
+            for (int t = 0; t < 600; t++)
+                terrain.Simulate();
+
+            int obsidian = 0;
+
+            for (int y = 40; y < 62; y++)
+            {
+                for (int x = 98; x < 142; x++)
+                    obsidian += terrain.GetMaterial(x, y) == Material::Obsidian ? 1 : 0;
+            }
+
+            Check(obsidian > 0, "lava on ice melts it and hardens");
+        }
+    }
+
     void TestMultiplayerSoak()
     {
         // Four players and bots fighting for five simulated minutes.
@@ -1023,6 +1136,7 @@ int main()
 {
     TestDeterminism();
     TestSeedsDiffer();
+    TestBiomes();
     TestOrdersAndIds();
     TestCrafts();
     TestBrainAssault();

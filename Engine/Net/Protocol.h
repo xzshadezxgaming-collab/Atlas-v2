@@ -14,7 +14,7 @@ namespace Atlas
 
     // Bump whenever the wire format or anything that affects simulation
     // results changes: peers on different versions would desync.
-    constexpr std::uint16_t ProtocolVersion = 7;
+    constexpr std::uint16_t ProtocolVersion = 8;
 
     constexpr std::uint16_t DefaultPort = 27960;
 
@@ -62,6 +62,7 @@ namespace Atlas
         std::uint8_t Mode = 0; // GameMode
         std::uint8_t Difficulty = 1;
         std::uint8_t LandingZone = 12;
+        std::uint8_t Biome = 0;
         std::string WeaponsIni;
         std::uint32_t HistoryFrames = 0; // frames that will follow before live ones
     };

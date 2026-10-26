@@ -18,7 +18,28 @@ a [release](https://github.com/xzshadezxgaming-collab/atlas-v2/releases)
 (`.github/workflows/release.yml`), so that link is always the newest
 build.
 
-## Current features (v0.11.0)
+## Current features (v0.12.0)
+
+- **Four worlds to fight over** — pick the TERRAIN on the skirmish
+  and host screens (or leave it on RANDOM and let the seed decide; the
+  map preview shows which you'll get):
+  - **Temperate**: rolling grassland over dirt and stone, flooded
+    caves, lava down deep.
+  - **Desert**: deep dunes of loose sand over layered sandstone, with
+    flat-topped mesas out in no man's land. Caves are mostly dry. The
+    sky is a hot amber afterglow, with mesas and saguaros on the ridges.
+  - **Arctic**: a thick snowfield that collapses when you dig under it,
+    ice lenses in frozen dirt, and frozen lakes: a crust of ice over
+    cold water that drains into whatever you open beneath it. Lava
+    melts snow and ice, and the meltwater turns it to obsidian. An
+    aurora ripples over snowy pines while snow falls.
+  - **Volcanic**: cinder ash over columnar basalt veined with
+    obsidian, jagged spires, and lava in most caves, but the rock holds
+    60% more gold. A far eruption glows under its smoke column, embers
+    drift up past burnt snags, and the moon is blood red.
+
+  Each world lights its scene in its own colors. In co-op the host's
+  choice is sent to everyone who joins.
 
 - **Modern presentation** — the battlefield is drawn closer (1.5x by
   default; 1x to 2x under Settings, WORLD ZOOM) with sharp pixel-art

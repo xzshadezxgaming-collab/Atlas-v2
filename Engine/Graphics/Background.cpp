@@ -54,34 +54,76 @@ namespace Atlas
             return v;
         }
 
-        // Moonlit dusk palette. The scene's light map multiplies a cool
-        // ambient over all of this, so it is authored a touch bright.
-        constexpr Color SkyTop{ 14.0f, 16.0f, 40.0f };
-        constexpr Color SkyHigh{ 34.0f, 34.0f, 76.0f };
-        constexpr Color SkyMid{ 86.0f, 62.0f, 110.0f };
-        constexpr Color SkyHorizon{ 214.0f, 128.0f, 96.0f };
-        constexpr Color Haze{ 120.0f, 84.0f, 112.0f };
-
-        // Ridge silhouettes, far to near: each fades from a moonlit rim
-        // into the haze at its foot (atmospheric perspective).
         constexpr int LayerCount = 5;
 
-        constexpr Color LayerTop[LayerCount] =
+        // A biome's sky. The scene's light map multiplies a cool ambient
+        // over all of this, so it is authored a touch bright.
+        struct Palette
         {
-            { 104.0f, 84.0f, 124.0f },
-            { 78.0f, 64.0f, 104.0f },
-            { 56.0f, 48.0f, 82.0f },
-            { 36.0f, 33.0f, 58.0f },
-            { 21.0f, 20.0f, 36.0f },
+            Color SkyTop;
+            Color SkyHigh;
+            Color SkyMid;
+            Color SkyHorizon;
+            Color Haze;
+
+            // Ridge silhouettes, far to near: each fades from a moonlit
+            // rim into the haze at its foot (atmospheric perspective).
+            Color LayerTop[LayerCount];
+            Color LayerFoot[LayerCount];
+
+            Color CloudHigh; // clouds up in the dark
+            Color CloudLow;  // clouds catching the horizon glow
+            Color Galaxy;
+            Color MoonTint;  // multiplies the moon's gray
+            float Stars;     // 0..1 of the stars that show
         };
 
-        constexpr Color LayerFoot[LayerCount] =
+        constexpr Palette Palettes[static_cast<int>(Biome::Count)] =
         {
-            { 130.0f, 92.0f, 118.0f },
-            { 100.0f, 76.0f, 108.0f },
-            { 70.0f, 58.0f, 90.0f },
-            { 44.0f, 40.0f, 66.0f },
-            { 26.0f, 24.0f, 42.0f },
+            // Temperate: moonlit dusk.
+            {
+                { 14.0f, 16.0f, 40.0f }, { 34.0f, 34.0f, 76.0f }, { 86.0f, 62.0f, 110.0f },
+                { 214.0f, 128.0f, 96.0f }, { 120.0f, 84.0f, 112.0f },
+                { { 104.0f, 84.0f, 124.0f }, { 78.0f, 64.0f, 104.0f }, { 56.0f, 48.0f, 82.0f },
+                    { 36.0f, 33.0f, 58.0f }, { 21.0f, 20.0f, 36.0f } },
+                { { 130.0f, 92.0f, 118.0f }, { 100.0f, 76.0f, 108.0f }, { 70.0f, 58.0f, 90.0f },
+                    { 44.0f, 40.0f, 66.0f }, { 26.0f, 24.0f, 42.0f } },
+                { 120.0f, 110.0f, 160.0f }, { 200.0f, 130.0f, 130.0f },
+                { 135.0f, 110.0f, 190.0f }, { 1.0f, 0.97f, 0.9f }, 1.0f,
+            },
+            // Desert: a hot amber afterglow over mesas.
+            {
+                { 22.0f, 16.0f, 42.0f }, { 60.0f, 38.0f, 82.0f }, { 156.0f, 80.0f, 92.0f },
+                { 250.0f, 168.0f, 90.0f }, { 186.0f, 112.0f, 96.0f },
+                { { 168.0f, 104.0f, 112.0f }, { 132.0f, 80.0f, 96.0f }, { 98.0f, 60.0f, 78.0f },
+                    { 62.0f, 40.0f, 54.0f }, { 34.0f, 22.0f, 32.0f } },
+                { { 206.0f, 130.0f, 110.0f }, { 160.0f, 98.0f, 100.0f }, { 116.0f, 72.0f, 84.0f },
+                    { 72.0f, 46.0f, 60.0f }, { 40.0f, 26.0f, 36.0f } },
+                { 150.0f, 104.0f, 150.0f }, { 240.0f, 150.0f, 110.0f },
+                { 170.0f, 110.0f, 160.0f }, { 1.0f, 0.93f, 0.8f }, 0.8f,
+            },
+            // Arctic: a clear, freezing night.
+            {
+                { 4.0f, 10.0f, 28.0f }, { 14.0f, 32.0f, 64.0f }, { 38.0f, 76.0f, 112.0f },
+                { 124.0f, 172.0f, 196.0f }, { 92.0f, 124.0f, 156.0f },
+                { { 100.0f, 116.0f, 144.0f }, { 76.0f, 92.0f, 122.0f }, { 54.0f, 68.0f, 98.0f },
+                    { 34.0f, 44.0f, 70.0f }, { 18.0f, 24.0f, 40.0f } },
+                { { 84.0f, 106.0f, 132.0f }, { 64.0f, 84.0f, 112.0f }, { 46.0f, 62.0f, 90.0f },
+                    { 28.0f, 38.0f, 62.0f }, { 16.0f, 22.0f, 36.0f } },
+                { 110.0f, 140.0f, 180.0f }, { 160.0f, 190.0f, 210.0f },
+                { 90.0f, 150.0f, 200.0f }, { 0.9f, 0.97f, 1.05f }, 1.0f,
+            },
+            // Volcanic: smoke lit from below by fire.
+            {
+                { 18.0f, 8.0f, 12.0f }, { 44.0f, 14.0f, 18.0f }, { 104.0f, 32.0f, 26.0f },
+                { 232.0f, 92.0f, 36.0f }, { 132.0f, 46.0f, 34.0f },
+                { { 96.0f, 52.0f, 52.0f }, { 74.0f, 40.0f, 42.0f }, { 52.0f, 30.0f, 32.0f },
+                    { 32.0f, 20.0f, 22.0f }, { 16.0f, 11.0f, 13.0f } },
+                { { 150.0f, 64.0f, 44.0f }, { 112.0f, 50.0f, 40.0f }, { 76.0f, 36.0f, 32.0f },
+                    { 44.0f, 24.0f, 24.0f }, { 22.0f, 13.0f, 14.0f } },
+                { 90.0f, 50.0f, 52.0f }, { 200.0f, 90.0f, 60.0f },
+                { 150.0f, 60.0f, 50.0f }, { 1.15f, 0.55f, 0.4f }, 0.3f,
+            },
         };
 
         constexpr float LayerParallax[LayerCount] = { 0.08f, 0.18f, 0.30f, 0.46f, 0.64f };
@@ -90,16 +132,18 @@ namespace Atlas
     }
 
     Background::Background()
-        : m_Seed(1u)
+        : m_Seed(1u),
+        m_Biome(Biome::Temperate)
     {
         for (int layer = 0; layer < LayerCount; layer++)
             for (int octave = 0; octave < 3; octave++)
                 m_Phase[layer][octave] = 0.0f;
     }
 
-    void Background::Create(unsigned int seed)
+    void Background::Create(unsigned int seed, Biome biome)
     {
         m_Seed = seed | 1u;
+        m_Biome = biome < Biome::Count ? biome : Biome::Temperate;
 
         for (int layer = 0; layer < LayerCount; layer++)
         {
@@ -121,6 +165,14 @@ namespace Atlas
         height += std::sin(x * 0.0110f + m_Phase[layer][2]) * 0.18f;
 
         height *= LayerAmp[layer];
+
+        if (m_Biome == Biome::Desert && layer >= 1 && layer <= 3)
+        {
+            // Clip the swells into flat-topped mesas with sheer sides.
+            const float cap = LayerAmp[layer] * 0.45f;
+            height = std::clamp(height * 2.2f, -cap, cap);
+            return height + std::fabs(std::sin(x * 0.037f + m_Phase[layer][1])) * 3.0f;
+        }
 
         // Far ranges get sharp peaks; the nearest layers get rocky,
         // craggy detail so they read as ridges, not more hills.
@@ -147,6 +199,8 @@ namespace Atlas
         const float width = static_cast<float>(viewWidth);
         const float height = static_cast<float>(viewHeight);
 
+        const Palette& pal = Palettes[static_cast<int>(m_Biome)];
+
         // The horizon drifts a little with the camera so looking down
         // into the ground pulls the sky's glow up with it.
         const float horizon = std::clamp(560.0f - cameraY * 0.08f, 420.0f, 640.0f);
@@ -154,7 +208,7 @@ namespace Atlas
         // --- Sky: smooth four-stop gradient ---
         {
             const float stops[5] = { 0.0f, horizon * 0.35f, horizon * 0.72f, horizon, height };
-            const Color colors[5] = { SkyTop, SkyHigh, SkyMid, SkyHorizon, SkyHorizon };
+            const Color colors[5] = { pal.SkyTop, pal.SkyHigh, pal.SkyMid, pal.SkyHorizon, pal.SkyHorizon };
 
             for (int i = 0; i < 4; i++)
             {
@@ -176,13 +230,17 @@ namespace Atlas
             const float r = 60.0f + static_cast<float>((h >> 8) % 70u);
 
             window.DrawSoftScreen(x, y, r * 1.6f, r * 0.7f,
-                (h & 1u) ? 120 : 150, 110, 190, 14);
+                static_cast<Uint8>(pal.Galaxy.R * ((h & 1u) ? 0.88f : 1.1f)),
+                static_cast<Uint8>(pal.Galaxy.G), static_cast<Uint8>(pal.Galaxy.B), 14);
         }
 
         // --- Stars: tiny parallax, a few big ones, some twinkle ---
         for (int i = 0; i < 220; i++)
         {
             const std::uint32_t h = Hash(m_Seed, static_cast<std::uint32_t>(i));
+
+            if (static_cast<float>((h >> 4) % 1000u) >= pal.Stars * 1000.0f)
+                continue;
 
             float x = static_cast<float>(h % 2600u);
             float y = static_cast<float>((h >> 11) % 420u);
@@ -223,14 +281,66 @@ namespace Atlas
             }
         }
 
+        // --- Arctic aurora: slow curtains of green and teal light ---
+        if (m_Biome == Biome::Arctic)
+        {
+            for (int band = 0; band < 3; band++)
+            {
+                const float bandY = 70.0f + static_cast<float>(band) * 46.0f - cameraY * 0.02f;
+
+                for (float sx = -40.0f; sx < width + 40.0f; sx += 14.0f)
+                {
+                    const float wx = sx + cameraX * 0.05f;
+                    const float wave = std::sin(wx * 0.006f + timeSeconds * 0.21f + static_cast<float>(band) * 1.7f) * 34.0f +
+                        std::sin(wx * 0.017f - timeSeconds * 0.37f + static_cast<float>(band)) * 12.0f;
+                    const float pulse = 0.5f + 0.5f * std::sin(wx * 0.011f + timeSeconds * 0.6f + static_cast<float>(band) * 2.3f);
+                    const Uint8 alpha = static_cast<Uint8>(6.0f + pulse * 16.0f);
+
+                    window.DrawSoftScreen(sx, bandY + wave, 22.0f, 46.0f,
+                        band == 1 ? 70 : 60, band == 2 ? 200 : 236, band == 1 ? 200 : 150, alpha);
+                }
+            }
+        }
+
+        // --- Volcanic: a far eruption glowing under its smoke column ---
+        if (m_Biome == Biome::Volcanic)
+        {
+            const float ventX = std::fmod(width * 0.3f - cameraX * LayerParallax[0] + 40000.0f, width + 600.0f) - 300.0f;
+            const float ventY = LayerBase[0] - 120.0f + (horizon - 560.0f) * 0.48f - cameraY * LayerParallax[0] * 0.35f;
+
+            window.DrawGlowScreen(ventX, ventY + 40.0f, 240.0f, 255, 90, 30, 30);
+            window.DrawGlowScreen(ventX, ventY + 40.0f, 90.0f, 255, 150, 60, 50);
+
+            for (int p = 0; p < 14; p++)
+            {
+                const float age = std::fmod(timeSeconds * 0.05f + static_cast<float>(p) / 14.0f, 1.0f);
+                const float py = ventY - age * 300.0f;
+                const float px = ventX + std::sin(age * 3.0f + static_cast<float>(p)) * 14.0f + age * age * 160.0f;
+                const float pr = 26.0f + age * 90.0f;
+                const Uint8 glow = static_cast<Uint8>(std::max(0.0f, 120.0f - age * 160.0f));
+
+                window.DrawSoftScreen(px, py, pr, pr * 0.7f,
+                    static_cast<Uint8>(46 + glow), static_cast<Uint8>(26 + glow / 3), 26,
+                    static_cast<Uint8>(40.0f * (1.0f - age)));
+            }
+        }
+
         // --- Moon: shaded pixel disc, craters, soft halo ---
         {
             const float moonX = std::floor(width * 0.76f - cameraX * 0.04f);
             const float moonY = std::floor(110.0f - cameraY * 0.025f);
             constexpr int Radius = 28;
 
-            window.DrawGlowScreen(moonX, moonY, 170.0f, 120, 110, 160, 14);
-            window.DrawGlowScreen(moonX, moonY, 80.0f, 220, 210, 190, 40);
+            const Color tint = pal.MoonTint;
+
+            window.DrawGlowScreen(moonX, moonY, 170.0f,
+                static_cast<Uint8>(std::min(255.0f, 120.0f * tint.R)),
+                static_cast<Uint8>(std::min(255.0f, 110.0f * tint.G)),
+                static_cast<Uint8>(std::min(255.0f, 160.0f * tint.B)), 14);
+            window.DrawGlowScreen(moonX, moonY, 80.0f,
+                static_cast<Uint8>(std::min(255.0f, 220.0f * tint.R)),
+                static_cast<Uint8>(std::min(255.0f, 210.0f * tint.G)),
+                static_cast<Uint8>(std::min(255.0f, 190.0f * tint.B)), 40);
 
             for (int dy = -Radius; dy <= Radius; dy++)
             {
@@ -258,8 +368,9 @@ namespace Atlas
 
                     window.DrawScreenRect(moonX + static_cast<float>(dx), moonY + static_cast<float>(dy),
                         1.0f, 1.0f,
-                        static_cast<Uint8>(v * 1.0f), static_cast<Uint8>(v * 0.97f),
-                        static_cast<Uint8>(v * 0.9f), 255);
+                        static_cast<Uint8>(std::min(255.0f, v * tint.R)),
+                        static_cast<Uint8>(std::min(255.0f, v * tint.G)),
+                        static_cast<Uint8>(std::min(255.0f, v * tint.B)), 255);
                 }
             }
         }
@@ -279,7 +390,7 @@ namespace Atlas
 
             // Lower clouds catch the horizon's warm light.
             const float warmth = std::clamp((y - 120.0f) / 260.0f, 0.0f, 1.0f);
-            const Color tint = Lerp(Color{ 120.0f, 110.0f, 160.0f }, Color{ 200.0f, 130.0f, 130.0f }, warmth);
+            const Color tint = Lerp(pal.CloudHigh, pal.CloudLow, warmth);
 
             for (int p = 0; p < 7; p++)
             {
@@ -305,8 +416,8 @@ namespace Atlas
         {
             triangles.clear();
 
-            const SDL_FColor top = ToF(LayerTop[layer]);
-            const SDL_FColor foot = ToF(LayerFoot[layer]);
+            const SDL_FColor top = ToF(pal.LayerTop[layer]);
+            const SDL_FColor foot = ToF(pal.LayerFoot[layer]);
             const float parallaxY = cameraY * LayerParallax[layer] * 0.35f;
             const float base = LayerBase[layer] + (horizon - 560.0f) * (0.4f + LayerParallax[layer]);
 
@@ -358,17 +469,22 @@ namespace Atlas
                     if (slope < 0.0f)
                     {
                         window.DrawScreenRect(screenX, ridgeTop, 2.0f, 1.0f,
-                            static_cast<Uint8>(std::min(255.0f, LayerTop[layer].R + 40.0f)),
-                            static_cast<Uint8>(std::min(255.0f, LayerTop[layer].G + 34.0f)),
-                            static_cast<Uint8>(std::min(255.0f, LayerTop[layer].B + 40.0f)),
+                            static_cast<Uint8>(std::min(255.0f, pal.LayerTop[layer].R + 40.0f)),
+                            static_cast<Uint8>(std::min(255.0f, pal.LayerTop[layer].G + 34.0f)),
+                            static_cast<Uint8>(std::min(255.0f, pal.LayerTop[layer].B + 40.0f)),
                             static_cast<Uint8>(std::min(160.0f, -slope * 90.0f)));
                     }
                 }
             }
 
-            // Pines along the nearest ridge.
+            // Flora along the nearest ridge.
             if (layer == LayerCount - 1)
             {
+                const Color c = pal.LayerTop[layer];
+                const Uint8 cr = static_cast<Uint8>(c.R);
+                const Uint8 cg = static_cast<Uint8>(c.G);
+                const Uint8 cb = static_cast<Uint8>(c.B);
+
                 const float spacing = 23.0f;
                 const float scroll = cameraX * LayerParallax[layer];
                 const float first = std::floor(scroll / spacing) * spacing;
@@ -385,17 +501,58 @@ namespace Atlas
                     const float groundY = std::floor(base - LayerHeight(layer, worldX + jitter) - parallaxY);
                     const float treeH = 14.0f + static_cast<float>((h >> 6) % 16u);
 
-                    const Color c = LayerTop[layer];
+                    if (m_Biome == Biome::Desert)
+                    {
+                        // Saguaro: a thick trunk and one or two bent arms.
+                        if (h % 5u > 1u)
+                            continue;
 
-                    window.DrawScreenRect(treeX, groundY - treeH, 1.0f, treeH + 2.0f,
-                        static_cast<Uint8>(c.R), static_cast<Uint8>(c.G), static_cast<Uint8>(c.B), 255);
+                        const float top = groundY - treeH;
+                        window.DrawScreenRect(treeX - 1.0f, top, 3.0f, treeH + 2.0f, cr, cg, cb, 255);
+
+                        const float armY = top + treeH * 0.35f + static_cast<float>((h >> 12) % 4u);
+                        window.DrawScreenRect(treeX - 4.0f, armY, 3.0f, 2.0f, cr, cg, cb, 255);
+                        window.DrawScreenRect(treeX - 5.0f, armY - 6.0f, 2.0f, 7.0f, cr, cg, cb, 255);
+
+                        if (h & 64u)
+                        {
+                            window.DrawScreenRect(treeX + 2.0f, armY + 3.0f, 3.0f, 2.0f, cr, cg, cb, 255);
+                            window.DrawScreenRect(treeX + 4.0f, armY - 2.0f, 2.0f, 6.0f, cr, cg, cb, 255);
+                        }
+
+                        continue;
+                    }
+
+                    if (m_Biome == Biome::Volcanic)
+                    {
+                        // Burnt snags: bare trunks with a broken limb.
+                        if (h % 4u != 0u)
+                            continue;
+
+                        window.DrawScreenRect(treeX, groundY - treeH, 1.0f, treeH + 2.0f, cr, cg, cb, 255);
+                        const float limbY = groundY - treeH * 0.6f;
+                        const float dir = (h & 128u) ? 1.0f : -1.0f;
+
+                        for (int k = 1; k <= 4; k++)
+                            window.DrawScreenRect(treeX + dir * static_cast<float>(k), limbY - static_cast<float>(k),
+                                1.0f, 1.0f, cr, cg, cb, 255);
+
+                        continue;
+                    }
+
+                    window.DrawScreenRect(treeX, groundY - treeH, 1.0f, treeH + 2.0f, cr, cg, cb, 255);
 
                     for (float k = 0.0f; k < treeH - 2.0f; k += 2.0f)
                     {
                         const float half = std::floor((k / treeH) * treeH * 0.28f) + 1.0f;
 
                         window.DrawScreenRect(treeX - half, groundY - treeH + 2.0f + k, half * 2.0f + 1.0f, 2.0f,
-                            static_cast<Uint8>(c.R), static_cast<Uint8>(c.G), static_cast<Uint8>(c.B), 255);
+                            cr, cg, cb, 255);
+
+                        // Snow settled on the arctic pines' boughs.
+                        if (m_Biome == Biome::Arctic && static_cast<int>(k) % 4 == 0)
+                            window.DrawScreenRect(treeX - half, groundY - treeH + 2.0f + k, half * 2.0f + 1.0f, 1.0f,
+                                120, 136, 160, 255);
                     }
                 }
             }
@@ -411,7 +568,43 @@ namespace Atlas
                 const float hazeTop = LayerBase[layer] + (horizon - 560.0f) * 0.5f - cameraY * LayerParallax[layer] * 0.35f;
 
                 window.DrawGradientScreen(0.0f, hazeTop - 30.0f, width, height - hazeTop + 30.0f,
-                    ToC(Haze, 0), ToC(Haze, static_cast<Uint8>(36 - layer * 6)));
+                    ToC(pal.Haze, 0), ToC(pal.Haze, static_cast<Uint8>(36 - layer * 6)));
+            }
+        }
+
+        // --- Volcanic embers drifting up past the ridges ---
+        if (m_Biome == Biome::Volcanic)
+        {
+            for (int i = 0; i < 60; i++)
+            {
+                const std::uint32_t h = Hash(m_Seed + 4111u, static_cast<std::uint32_t>(i));
+                const float speed = 12.0f + static_cast<float>(h % 20u);
+                const float span = height + 40.0f;
+                const float y = span - std::fmod(timeSeconds * speed + static_cast<float>((h >> 8) % 1000u), span) - 20.0f;
+                const float x = std::fmod(static_cast<float>((h >> 4) % 3000u) - cameraX * 0.5f +
+                    std::sin(timeSeconds * 0.8f + static_cast<float>(i)) * 10.0f + 30000.0f, width + 20.0f) - 10.0f;
+                const float flicker = 0.6f + 0.4f * std::sin(timeSeconds * 6.0f + static_cast<float>(h % 50u));
+
+                window.DrawScreenRect(std::floor(x), std::floor(y), 1.0f, 1.0f, 255,
+                    static_cast<Uint8>(120.0f + 80.0f * flicker), 40, static_cast<Uint8>(200.0f * flicker));
+                window.DrawGlowScreen(x, y, 5.0f, 255, 110, 40, static_cast<Uint8>(30.0f * flicker));
+            }
+        }
+
+        // --- Arctic snowfall ---
+        if (m_Biome == Biome::Arctic)
+        {
+            for (int i = 0; i < 90; i++)
+            {
+                const std::uint32_t h = Hash(m_Seed + 5003u, static_cast<std::uint32_t>(i));
+                const float speed = 10.0f + static_cast<float>(h % 18u);
+                const float span = height + 20.0f;
+                const float y = std::fmod(timeSeconds * speed + static_cast<float>((h >> 8) % 1000u) - cameraY * 0.4f + 40000.0f, span) - 10.0f;
+                const float x = std::fmod(static_cast<float>((h >> 4) % 3000u) - cameraX * 0.4f +
+                    std::sin(timeSeconds * 0.5f + static_cast<float>(i)) * 16.0f + 30000.0f, width + 20.0f) - 10.0f;
+                const float size = (h & 3u) == 0u ? 2.0f : 1.0f;
+
+                window.DrawScreenRect(std::floor(x), std::floor(y), size, size, 220, 230, 245, 150);
             }
         }
     }

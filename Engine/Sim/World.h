@@ -97,6 +97,9 @@ namespace Atlas
         // Where the players' bunker goes, in percent of the map width
         // from the west edge (BrainAssault). Clamped to 6..42.
         int LandingZone = 12;
+
+        // What kind of world the terrain is generated as.
+        Atlas::Biome Biome = Atlas::Biome::Temperate;
     };
 
     // Running totals for the end-of-match screen (the players' side).

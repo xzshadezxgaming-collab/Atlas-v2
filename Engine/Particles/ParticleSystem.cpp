@@ -710,7 +710,7 @@ namespace Atlas
 
                         // Some things don't pile back up: brain matter
                         // splatters, glass shatters, concrete crumbles
-                        // to rubble.
+                        // to rubble, ice to slush, sandstone to sand.
                         Material settle = p.SettleMaterial;
 
                         if (settle == Material::Brain)
@@ -725,6 +725,14 @@ namespace Atlas
                         else if (settle == Material::Concrete)
                         {
                             settle = Material::Gravel;
+                        }
+                        else if (settle == Material::Ice)
+                        {
+                            settle = Material::Snow;
+                        }
+                        else if (settle == Material::Sandstone)
+                        {
+                            settle = Material::Sand;
                         }
 
                         if (settle != Material::Air && !terrain.IsSolid(prevX, prevY))

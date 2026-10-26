@@ -51,12 +51,14 @@ namespace Atlas
     bool Terrain::Create(
         int width,
         int height,
-        unsigned int seed)
+        unsigned int seed,
+        Biome biome)
     {
         Destroy();
 
         m_Width = width;
         m_Height = height;
+        m_Biome = biome;
 
         m_Materials.assign(
             static_cast<std::size_t>(width) * height,
@@ -644,6 +646,15 @@ namespace Atlas
 
         const float baseHeight = static_cast<float>(m_Height) * 0.40f;
 
+        const Biome biome = m_Biome;
+        const bool temperate = biome == Biome::Temperate;
+        const bool desert = biome == Biome::Desert;
+        const bool arctic = biome == Biome::Arctic;
+        const bool volcanic = biome == Biome::Volcanic;
+
+        // Dunes roll gently; volcanic ground is broken and craggy.
+        const float amplitude = desert ? 0.7f : arctic ? 1.1f : volcanic ? 1.2f : 1.0f;
+
         std::vector<int> surface(m_Width);
 
         for (int x = 0; x < m_Width; x++)
@@ -651,14 +662,74 @@ namespace Atlas
             const float fx = static_cast<float>(x);
 
             float height = baseHeight;
-            height += 60.0f * std::sin(fx * 0.0040f + phase1);
-            height += 28.0f * std::sin(fx * 0.0110f + phase2);
-            height += 10.0f * std::sin(fx * 0.0330f + phase3);
+            height += 60.0f * amplitude * std::sin(fx * 0.0040f + phase1);
+            height += 28.0f * amplitude * std::sin(fx * 0.0110f + phase2);
+            height += 10.0f * amplitude * std::sin(fx * 0.0330f + phase3);
+
+            if (volcanic)
+            {
+                // Sharp spires and a jagged, cinder-strewn top.
+                height -= 46.0f * std::pow(std::fabs(std::sin(fx * 0.0058f + phase2 * 1.7f)), 12.0f);
+                height += 8.0f * std::fabs(std::sin(fx * 0.047f + phase3)) - 4.0f;
+                height += 3.0f * std::fabs(std::sin(fx * 0.19f + phase1));
+            }
 
             surface[x] = std::clamp(
                 static_cast<int>(height),
                 32,
                 m_Height - 160);
+        }
+
+        // Desert mesas: flat-topped sandstone tables with steep, ragged
+        // sides, out in no man's land between the two landing zones
+        // (the players land in the west 42%, the enemy at 88%).
+        std::vector<std::uint8_t> mesa(m_Width, 0);
+
+        if (desert)
+        {
+            const int count = 1 + m_Width / 2000;
+            const int zoneLeft = m_Width * 45 / 100;
+            const int zoneRight = m_Width * 81 / 100;
+
+            for (int i = 0; i < count; i++)
+            {
+                const int width = std::min(rng.Range(150, 260), std::max(60, (zoneRight - zoneLeft) / 2));
+                const int start = rng.Range(zoneLeft, std::max(zoneLeft, zoneRight - width));
+
+                int top = m_Height;
+
+                for (int x = start; x < std::min(m_Width, start + width); x++)
+                    top = std::min(top, surface[x]);
+
+                top = std::max(48, top - rng.Range(40, 80));
+
+                constexpr int Ramp = 14;
+
+                for (int x = std::max(0, start - Ramp); x < std::min(m_Width, start + width + Ramp); x++)
+                {
+                    const int into = std::min(x - start, start + width - 1 - x);
+                    float t = 1.0f;
+
+                    if (into < 0)
+                    {
+                        t = 1.0f + static_cast<float>(into) / static_cast<float>(Ramp);
+                        t = t * t * (3.0f - 2.0f * t);
+                    }
+                    else
+                    {
+                        mesa[x] = 1;
+                    }
+
+                    // Weathered edges: the rim crumbles a few pixels.
+                    const int crumble = static_cast<int>(HashPixel(
+                        static_cast<std::uint32_t>(x / 3), seed) % 4u);
+
+                    const int target = static_cast<int>(std::lround(
+                        static_cast<float>(surface[x]) + static_cast<float>(top - surface[x]) * t)) + crumble;
+
+                    surface[x] = std::max(32, std::min(surface[x], target));
+                }
+            }
         }
 
         // Dirt depth and the bedrock floor wander a little.
@@ -683,8 +754,8 @@ namespace Atlas
 
         // Desert stretches: the top layers turn to loose sand. Kept away
         // from the middle of the map, where players drop in.
-        std::vector<std::uint8_t> desert(m_Width, 0);
-        const int duneCount = 1 + rng.Range(0, 1) + m_Width / 3000;
+        std::vector<std::uint8_t> dunes(m_Width, 0);
+        const int duneCount = temperate ? 1 + rng.Range(0, 1) + m_Width / 3000 : 0;
 
         for (int i = 0; i < duneCount; i++)
         {
@@ -702,18 +773,42 @@ namespace Atlas
             {
                 // Ramp in and out so the dunes blend into the grassland.
                 const int edge = std::min(x - start, start + width - 1 - x);
-                desert[x] = static_cast<std::uint8_t>(std::min(255, edge * 6));
+                dunes[x] = static_cast<std::uint8_t>(std::min(255, edge * 6));
             }
         }
 
         // Layers: grass (or sand), dirt, stone, bedrock.
         constexpr int GrassDepth = 5;
 
+        // Other biomes: a loose top layer over a soil layer, then stone.
+        const Material topMaterial = desert ? Material::Sand
+            : arctic ? Material::Snow
+            : volcanic ? Material::Ash
+            : Material::Grass;
+
+        const Material soilMaterial = desert ? Material::Sandstone
+            : volcanic ? Material::Basalt
+            : Material::Dirt;
+
         for (int x = 0; x < m_Width; x++)
         {
-            const int sandDepth = desert[x] > 0
-                ? 4 + (desert[x] * 22) / 255
+            const float fx = static_cast<float>(x);
+
+            const int sandDepth = dunes[x] > 0
+                ? 4 + (dunes[x] * 22) / 255
                 : 0;
+
+            int topDepth = GrassDepth;
+
+            if (desert)
+                topDepth = mesa[x] ? 3 : 8 + static_cast<int>(
+                    12.0f * (0.5f + 0.5f * std::sin(fx * 0.0051f + dirtPhase)) +
+                    5.0f * std::sin(fx * 0.021f + bedPhase));
+            else if (arctic)
+                topDepth = 16 + static_cast<int>(
+                    5.0f * std::sin(fx * 0.013f + dirtPhase) + 2.0f * std::sin(fx * 0.05f + bedPhase));
+            else if (volcanic)
+                topDepth = 3 + static_cast<int>(2.5f * (1.0f + std::sin(fx * 0.017f + dirtPhase)));
 
             for (int y = surface[x]; y < m_Height; y++)
             {
@@ -723,25 +818,33 @@ namespace Atlas
 
                 if (y >= bedrockTop[x])
                     material = Material::Bedrock;
-                else if (depth < sandDepth)
+                else if (temperate && depth < sandDepth)
                     material = Material::Sand;
-                else if (depth < GrassDepth)
-                    material = Material::Grass;
+                else if (depth < topDepth)
+                    material = topMaterial;
                 else if (depth < dirtDepth[x])
-                    material = Material::Dirt;
+                    material = soilMaterial;
 
                 at(x, y) = static_cast<std::uint8_t>(material);
+
+                Material wall = material;
+
+                if (material == Material::Grass || material == Material::Snow)
+                    wall = Material::Dirt;
+                else if (material == Material::Ash)
+                    wall = Material::Basalt;
+
                 m_Backwall[static_cast<std::size_t>(y) * m_Width + x] =
-                    static_cast<std::uint8_t>(material == Material::Grass ? Material::Dirt : material);
+                    static_cast<std::uint8_t>(wall);
             }
         }
 
         // Sparse grass tufts poking 1-3px above the surface line - they
         // are real Grass pixels, destructible (and walkable) like any
         // other terrain, purely to break up the razor-straight top edge.
-        for (int x = 0; x < m_Width; x++)
+        for (int x = 0; x < m_Width && temperate; x++)
         {
-            if (desert[x] > 0)
+            if (dunes[x] > 0)
                 continue;
 
             const std::uint32_t h = HashPixel(
@@ -795,14 +898,29 @@ namespace Atlas
             return true;
         };
 
-        // Sand pockets in the dirt: dig into one and it pours out.
+        // Pockets in the soil: sand in dirt and sandstone (dig into one
+        // and it pours out), ice lenses in frozen dirt, ash in basalt.
+        const Material pocketMaterial = arctic ? Material::Ice
+            : volcanic ? Material::Ash
+            : Material::Sand;
+
         for (int i = 0; i < m_Width / 40; i++)
         {
             int x = 0;
             int y = 0;
 
             if (randomDepthPoint(12, 200, false, x, y))
-                blob(x, y, rng.Range(5, 13), Material::Sand, { Material::Dirt });
+                blob(x, y, rng.Range(5, 13), pocketMaterial, { soilMaterial });
+        }
+
+        // Obsidian veins through volcanic rock.
+        for (int i = 0; volcanic && i < m_Width / 40; i++)
+        {
+            int x = 0;
+            int y = 0;
+
+            if (randomDepthPoint(20, 20, false, x, y))
+                blob(x, y, rng.Range(4, 10), Material::Obsidian, { Material::Basalt, Material::Stone });
         }
 
         // Gravel pockets in the stone.
@@ -817,7 +935,9 @@ namespace Atlas
 
         // Gold veins: blobs of gold scattered through the stone layer,
         // richer the deeper you go.
-        for (int i = 0; i < m_Width / 10; i++)
+        const int goldVeins = volcanic ? m_Width * 16 / 100 : m_Width / 10;
+
+        for (int i = 0; i < goldVeins; i++)
         {
             int x = 0;
             int y = 0;
@@ -850,7 +970,7 @@ namespace Atlas
             return inside(x, y) && at(x, y) == static_cast<std::uint8_t>(m);
         };
 
-        const int caveCount = std::max(3, m_Width / 170);
+        const int caveCount = std::max(3, volcanic ? m_Width / 130 : m_Width / 170);
 
         for (int i = 0; i < caveCount; i++)
         {
@@ -889,7 +1009,8 @@ namespace Atlas
                 }
 
                 blob(ix, iy, static_cast<int>(radius), Material::Air,
-                    { Material::Dirt, Material::Stone, Material::Gold, Material::Gravel });
+                    { Material::Dirt, Material::Stone, Material::Gold, Material::Gravel,
+                        Material::Sandstone, Material::Basalt, Material::Obsidian, Material::Ice });
 
                 // Now and then the tunnel opens into a chamber.
                 if (rng.Unit() < 0.018f)
@@ -980,7 +1101,7 @@ namespace Atlas
 
         auto pour = [&](int x, int y, Material fill, int volume)
         {
-            if (!is(x, y, Material::Air))
+            if (fill == Material::Air || !is(x, y, Material::Air))
                 return;
 
             while (is(x, y + 1, Material::Air))
@@ -1016,15 +1137,36 @@ namespace Atlas
                 fillBasin(x, y, y - best, fill, volume);
         };
 
+        // What collects in a hollow at depth y (Air = stays dry).
         auto liquidFor = [&](int y)
         {
             const float depth01 = static_cast<float>(y) / static_cast<float>(m_Height);
-            return depth01 > 0.7f && rng.Unit() < 0.7f ? Material::Lava : Material::Water;
+
+            switch (biome)
+            {
+            case Biome::Desert:
+                if (depth01 > 0.7f && rng.Unit() < 0.7f)
+                    return Material::Lava;
+                return rng.Unit() < 0.25f ? Material::Water : Material::Air;
+
+            case Biome::Arctic:
+                return depth01 > 0.85f && rng.Unit() < 0.3f ? Material::Lava : Material::Water;
+
+            case Biome::Volcanic:
+                if (depth01 > 0.45f)
+                    return rng.Unit() < 0.85f ? Material::Lava : Material::Water;
+                return rng.Unit() < 0.45f ? Material::Lava : Material::Water;
+
+            default:
+                return depth01 > 0.7f && rng.Unit() < 0.7f ? Material::Lava : Material::Water;
+            }
         };
+
+        const float chamberFill = desert ? 0.5f : volcanic ? 0.9f : arctic ? 0.8f : 0.75f;
 
         for (const Chamber& chamber : chambers)
         {
-            if (rng.Unit() < 0.75f)
+            if (rng.Unit() < chamberFill)
                 pour(chamber.X, chamber.Y, liquidFor(chamber.Y), rng.Range(1200, 2600));
         }
 
@@ -1036,6 +1178,91 @@ namespace Atlas
             const int px = rng.Range(8, m_Width - 8);
             const int py = rng.Range(surface[px] + 30, bedrockTop[px] - 6);
             pour(px, py, liquidFor(py), rng.Range(300, 1400));
+        }
+
+        // Frozen lakes: valleys hold a flat crust of ice over cold water.
+        // Shoot or dig through the ice and the lake drains into whatever
+        // you opened up.
+        if (arctic && m_Width >= 640)
+        {
+            const int lakes = 2 + m_Width / 1500;
+
+            for (int i = 0; i < lakes; i++)
+            {
+                // The lowest point of the ground near a random spot.
+                const int around = rng.Range(160, m_Width - 161);
+                int valley = around;
+
+                for (int x = std::max(8, around - 150); x <= std::min(m_Width - 9, around + 150); x++)
+                {
+                    if (surface[x] > surface[valley])
+                        valley = x;
+                }
+
+                const int waterline = surface[valley] - 2;
+                const int depth = rng.Range(18, 34);
+                const int iceThick = rng.Range(4, 6);
+
+                int left = valley;
+                int right = valley;
+
+                while (left > 8 && valley - left < 170 && surface[left - 1] > waterline - 10)
+                    left--;
+
+                while (right < m_Width - 9 && right - valley < 170 && surface[right + 1] > waterline - 10)
+                    right++;
+
+                if (right - left < 40)
+                    continue;
+
+                const float halfSpan = 0.5f * static_cast<float>(right - left);
+                const float mid = 0.5f * static_cast<float>(left + right);
+
+                for (int x = left; x <= right; x++)
+                {
+                    const float t = (static_cast<float>(x) - mid) / halfSpan;
+                    const int bottom = waterline + static_cast<int>(static_cast<float>(depth) * (1.0f - t * t));
+
+                    for (int y = waterline; y <= bottom; y++)
+                    {
+                        if (!inside(x, y) || is(x, y, Material::Bedrock))
+                            continue;
+
+                        const bool crust = y < waterline + iceThick || y == bottom;
+                        at(x, y) = static_cast<std::uint8_t>(crust ? Material::Ice : Material::Water);
+                        m_Backwall[static_cast<std::size_t>(y) * m_Width + x] =
+                            static_cast<std::uint8_t>(Material::Dirt);
+                    }
+                }
+
+                // Line the lake so the snow around it can't sink in, and
+                // seal any cave the basin cut into.
+                for (int y = waterline; y <= waterline + depth + 1; y++)
+                {
+                    for (int x = left - 1; x <= right + 1; x++)
+                    {
+                        if (!is(x, y, Material::Water))
+                            continue;
+
+                        static constexpr int Around[4][2] = { { 0, 1 }, { -1, 0 }, { 1, 0 }, { 0, -1 } };
+
+                        for (const auto& offset : Around)
+                        {
+                            const int nx = x + offset[0];
+                            const int ny = y + offset[1];
+
+                            if (!inside(nx, ny))
+                                continue;
+
+                            const Material near = static_cast<Material>(at(nx, ny));
+                            const MaterialBehavior behavior = GetMaterialInfo(near).Behavior;
+
+                            if (near == Material::Air || behavior == MaterialBehavior::Powder)
+                                at(nx, ny) = static_cast<std::uint8_t>(Material::Ice);
+                        }
+                    }
+                }
+            }
         }
 
         // Everything that can move starts awake.
@@ -1152,12 +1379,23 @@ namespace Atlas
                 const int nx = x + offset[0];
                 const int ny = y + offset[1];
 
-                if (GetMaterial(nx, ny) == Material::Water)
+                const Material neighbor = GetMaterial(nx, ny);
+
+                if (neighbor == Material::Water)
                 {
                     SetMaterial(nx, ny, Material::Air);
                     SetMaterial(x, y, Material::Obsidian);
                     m_Reactions.push_back({
                         static_cast<float>(nx), static_cast<float>(ny), Material::Water });
+                    return;
+                }
+
+                // Snow and ice melt; the meltwater then quenches the lava.
+                if (neighbor == Material::Ice || neighbor == Material::Snow)
+                {
+                    SetMaterial(nx, ny, Material::Water);
+                    Wake(nx, ny);
+                    Wake(x, y);
                     return;
                 }
             }
@@ -1505,6 +1743,69 @@ namespace Atlas
             factor = (x + y) % 9 == 0 ? 1.25f : 1.0f;
             break;
 
+        case Material::Snow:
+            // Soft drifts with the odd glittering crystal.
+            factor = 0.93f + static_cast<float>(hash % 1000u) * 0.00008f;
+            factor *= 0.6f + 0.4f * static_cast<float>(m_DepthShade[cell]) / 255.0f;
+
+            if (hash % 29u == 0u)
+                factor *= 1.12f;
+            break;
+
+        case Material::Ice:
+        {
+            // Long diagonal fractures and pale streaks.
+            const std::uint32_t streak = HashPixel(
+                static_cast<std::uint32_t>((x + y * 2) / 5),
+                static_cast<std::uint32_t>(y / 9));
+
+            factor = (0.9f + static_cast<float>(streak % 100u) * 0.0018f) *
+                static_cast<float>(m_DepthShade[cell]) / 255.0f;
+
+            if ((x + y * 2) % 23 == 0)
+                factor *= 1.18f;
+            else if (hash % 31u == 0u)
+                factor *= 0.84f;
+            break;
+        }
+
+        case Material::Sandstone:
+        {
+            // Wavy horizontal strata in bands of tone.
+            const float bend = std::sin(static_cast<float>(x) * 0.021f) * 3.0f +
+                std::sin(static_cast<float>(x) * 0.093f) * 0.8f;
+            const float strata = std::sin((static_cast<float>(y) + bend) * 0.42f);
+
+            factor *= 0.9f + strata * 0.08f;
+
+            if (hash % 17u == 0u)
+                factor *= 0.88f;
+            break;
+        }
+
+        case Material::Basalt:
+        {
+            // Columnar joints: vertical seams, staggered per course.
+            const int course = y / 11;
+            const int column = (x + course * 4) % 7;
+
+            if (column == 0 || y % 11 == 0)
+                factor *= 0.72f;
+            else
+                factor *= 0.95f + static_cast<float>(HashPixel(
+                    static_cast<std::uint32_t>((x + course * 4) / 7),
+                    static_cast<std::uint32_t>(course)) % 100u) * 0.0012f;
+            break;
+        }
+
+        case Material::Ash:
+            // Fine gray cinders with a few warm embers' worth of rust.
+            if (hash % 5u == 0u)
+                factor *= 0.8f;
+            else if (hash % 11u == 0u)
+                factor *= 1.15f;
+            break;
+
         default:
             break;
         }
@@ -1517,7 +1818,7 @@ namespace Atlas
         };
 
         if (y > 0 && open(x, y - 1))
-            factor *= material == Material::Grass ? 1.45f : 1.32f;
+            factor *= material == Material::Grass ? 1.45f : material == Material::Snow ? 1.04f : 1.32f;
         else if (y > 1 && open(x, y - 2))
             factor *= 1.14f;
         else if (y > 2 && open(x, y - 3))
@@ -1541,6 +1842,10 @@ namespace Atlas
         case Material::Grass: chroma = 0.12f; break;
         case Material::Gold: chroma = 0.05f; break;
         case Material::Sand: chroma = 0.08f; break;
+        case Material::Snow: chroma = 0.02f; break;
+        case Material::Ice: chroma = 0.03f; break;
+        case Material::Sandstone: chroma = 0.1f; break;
+        case Material::Ash: chroma = 0.06f; break;
         default: break;
         }
 

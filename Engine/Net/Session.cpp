@@ -325,6 +325,7 @@ namespace Atlas
                 info.Mode = static_cast<std::uint8_t>(Config.Mode);
                 info.Difficulty = static_cast<std::uint8_t>(Config.Difficulty);
                 info.LandingZone = static_cast<std::uint8_t>(Config.LandingZone);
+                info.Biome = static_cast<std::uint8_t>(Config.Biome);
                 info.WeaponsIni = WeaponsIni;
                 info.HistoryFrames = static_cast<std::uint32_t>(OutgoingFirst);
 
@@ -495,6 +496,9 @@ namespace Atlas
                     : GameMode::BrainAssault;
                 Config.Difficulty = info.Difficulty;
                 Config.LandingZone = info.LandingZone;
+                Config.Biome = info.Biome < static_cast<std::uint8_t>(Biome::Count)
+                    ? static_cast<Biome>(info.Biome)
+                    : Biome::Temperate;
                 WeaponsIni = info.WeaponsIni;
                 LocalSlot = info.Slot;
                 HistoryTotal = info.HistoryFrames;

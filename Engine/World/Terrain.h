@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Biome.h"
 #include "Material.h"
 
 #include <SDL3/SDL.h>
@@ -30,7 +31,8 @@ namespace Atlas
         bool Create(
             int width,
             int height,
-            unsigned int seed = 1337u);
+            unsigned int seed = 1337u,
+            Biome biome = Biome::Temperate);
 
         // Creates the GPU texture the color layer streams into. Only a
         // client that draws the terrain needs to call this.
@@ -40,6 +42,7 @@ namespace Atlas
 
         int GetWidth() const;
         int GetHeight() const;
+        Biome GetBiome() const { return m_Biome; }
 
         Material GetMaterial(int x, int y) const;
 
@@ -157,6 +160,7 @@ namespace Atlas
 
         int m_Width;
         int m_Height;
+        Biome m_Biome = Biome::Temperate;
 
         std::vector<std::uint8_t> m_Materials;
         std::vector<std::uint8_t> m_Pixels;

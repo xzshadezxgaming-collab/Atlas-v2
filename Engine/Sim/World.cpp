@@ -143,7 +143,7 @@ namespace Atlas
 
     bool World::Create(const WorldConfig& config)
     {
-        if (!m_Terrain.Create(config.Width, config.Height, config.Seed))
+        if (!m_Terrain.Create(config.Width, config.Height, config.Seed, config.Biome))
             return false;
 
         m_Rng.seed(config.Seed);
@@ -210,6 +210,7 @@ namespace Atlas
         };
 
         const int floorY = m_Terrain.GetSurfaceY(cx) + 4;
+        const BiomeGround ground = GetBiomeGround(m_Terrain.GetBiome());
 
         // Level the ground around the bunker, blending back into the
         // natural surface on both sides. Loose sand and caves under the
@@ -248,8 +249,11 @@ namespace Atlas
                 if (here == Material::Bedrock)
                     break;
 
+                if (ground.Loose != Material::Air && here == ground.Loose)
+                    continue;
+
                 if (GetMaterialInfo(here).Behavior != MaterialBehavior::Static)
-                    m_Terrain.SetMaterial(x, y, y == target ? Material::Grass : Material::Dirt);
+                    m_Terrain.SetMaterial(x, y, y == target ? ground.Top : ground.Fill);
             }
         }
 
