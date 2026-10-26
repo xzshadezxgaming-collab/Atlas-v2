@@ -332,7 +332,7 @@ namespace Atlas
     {
         std::cout << "=================================\n";
         std::cout << "        ATLAS ENGINE\n";
-        std::cout << "           v0.10.0\n";
+        std::cout << "           v0.11.0\n";
         std::cout << "=================================\n\n";
 
         if (!m_Window.Create("Atlas", ViewWidth, ViewHeight))
@@ -363,6 +363,14 @@ namespace Atlas
             std::cout << "Loaded " << sprites << " sprites\n";
         }
 
+        {
+            const std::string regular = ResolveAssetPath("Assets/Fonts/ChakraPetch-SemiBold.ttf");
+            const std::string bold = ResolveAssetPath("Assets/Fonts/ChakraPetch-Bold.ttf");
+
+            if (!PixelFont::LoadFaces(m_Window.GetRenderer(), regular, bold))
+                std::cout << "(fonts missing - using the pixel font)\n";
+        }
+
         // The game draws its own crosshair glued to the mouse position;
         // the OS cursor on top of it would just be a second pointer.
         SDL_HideCursor();
@@ -385,6 +393,10 @@ namespace Atlas
 
             const MatchExit exit = RunMatch(request);
 
+            // Clear any blast flash the match left behind.
+            m_Window.SetScreenTint(0, 0, 0, 0);
+            ApplySettings();
+
             if (exit == MatchExit::Quit)
                 break;
 
@@ -405,6 +417,8 @@ namespace Atlas
         Audio::SetMusicVolume(m_Settings.MusicVolume);
         m_Window.SetFullscreen(m_Settings.Fullscreen);
         m_Window.SetLightingEnabled(m_Settings.Lighting);
+        m_Window.SetBloom(m_Settings.Bloom ? 1.0f : 0.0f);
+        m_Window.SetZoom(m_Settings.GetZoom());
     }
 
     bool Application::DrawSettings(Ui& ui, float x, float y)
@@ -438,6 +452,22 @@ namespace Atlas
         if (ui.Choice(x, y, w, h, "LIGHTING", { "OFF", "ON" }, lighting))
         {
             m_Settings.Lighting = lighting == 1;
+            changed = true;
+        }
+        y += gap;
+
+        int bloom = m_Settings.Bloom ? 1 : 0;
+        if (ui.Choice(x, y, w, h, "BLOOM", { "OFF", "ON" }, bloom))
+        {
+            m_Settings.Bloom = bloom == 1;
+            changed = true;
+        }
+        y += gap;
+
+        int zoom = m_Settings.Zoom;
+        if (ui.Choice(x, y, w, h, "WORLD ZOOM", { "1X", "1.25X", "1.5X", "2X" }, zoom))
+        {
+            m_Settings.Zoom = zoom;
             changed = true;
         }
         y += gap;
@@ -524,7 +554,7 @@ namespace Atlas
                 CamY = static_cast<float>(Sim->GetTerrain().GetSurfaceY(config.Width / 2)) - ViewHeight * 0.55f;
             }
 
-            void Update(SDL_Renderer* renderer, float dt)
+            void Update(SDL_Renderer* renderer, float dt, float viewW, float viewH)
             {
                 Age += dt;
 
@@ -571,24 +601,27 @@ namespace Atlas
 
                 if (count > 0)
                 {
-                    const float targetX = sumX / static_cast<float>(count) - ViewWidth * 0.62f;
-                    const float targetY = sumY / static_cast<float>(count) - ViewHeight * 0.5f;
+                    const float targetX = sumX / static_cast<float>(count) - viewW * 0.62f;
+                    const float targetY = sumY / static_cast<float>(count) - viewH * 0.5f;
                     const float blend = 1.0f - std::exp(-dt * 0.35f);
 
                     CamX += (targetX - CamX) * blend;
                     CamY += (targetY - CamY) * blend;
                 }
 
-                const float maxX = static_cast<float>(Sim->GetTerrain().GetWidth() - ViewWidth);
-                const float maxY = static_cast<float>(Sim->GetTerrain().GetHeight() - ViewHeight);
+                const float maxX = static_cast<float>(Sim->GetTerrain().GetWidth()) - viewW;
+                const float maxY = static_cast<float>(Sim->GetTerrain().GetHeight()) - viewH;
                 CamX = std::clamp(CamX, 0.0f, maxX);
                 CamY = std::clamp(CamY, 0.0f, maxY);
             }
 
             void Draw(Window& window, Camera& camera, float time)
             {
-                camera.SetPosition(std::round(CamX), std::round(CamY));
-                Sky.Draw(window, CamX, CamY, ViewWidth, ViewHeight, time);
+                camera.SetPosition(CamX, CamY);
+                window.BeginWorld();
+                Sky.Draw(window, CamX, CamY,
+                    static_cast<int>(window.GetViewWidth()) + 2,
+                    static_cast<int>(window.GetViewHeight()) + 2, time);
                 Sim->GetTerrain().Draw(window);
 
                 auto drawBody = [&](Actor& body)
@@ -610,6 +643,7 @@ namespace Atlas
                 Sim->GetParticles().Draw(window);
 
                 LightScene(window, Sim->GetTerrain(), camera.GetX(), camera.GetY(), nullptr);
+                window.EndWorld();
             }
         };
     }
@@ -677,7 +711,7 @@ namespace Atlas
             last = now;
             time += dt;
 
-            backdrop.Update(m_Window.GetRenderer(), dt);
+            backdrop.Update(m_Window.GetRenderer(), dt, m_Window.GetViewWidth(), m_Window.GetViewHeight());
 
             if (Input::WasKeyPressed(SDL_SCANCODE_ESCAPE) && screen != Screen::Main)
             {
@@ -981,7 +1015,7 @@ namespace Atlas
                 ui.Text(left, static_cast<float>(ViewHeight) - 60.0f, 2.0f, error, 255, 120, 100);
 
             ui.Text(static_cast<float>(ViewWidth) - 16.0f, static_cast<float>(ViewHeight) - 20.0f, 1.5f,
-                "V0.10.0", 120, 124, 140, 2);
+                "V0.11.0", 120, 124, 140, 2);
 
             ui.End();
 
@@ -1327,8 +1361,8 @@ namespace Atlas
         // Camera: exponentially-smoothed position with aim lookahead and
         // trauma-based shake (trauma in [0,1]; amplitude scales with its
         // square so small hits barely tremble and big ones really rock).
-        float camSmoothX = player.GetCenterX() - ViewWidth * 0.5f;
-        float camSmoothY = player.GetCenterY() - ViewHeight * 0.5f;
+        float camSmoothX = player.GetCenterX() - m_Window.GetViewWidth() * 0.5f;
+        float camSmoothY = player.GetCenterY() - m_Window.GetViewHeight() * 0.5f;
         float trauma = 0.0f;
         float camLeadX = 0.0f;
         float camLeadY = 0.0f;
@@ -1375,6 +1409,10 @@ namespace Atlas
 
         float timeSeconds = 0.0f;
         float hurtVignette = 0.0f;
+
+        // A nearby blast washes the screen with warm light and swells the
+        // bloom for a moment.
+        float blastFlash = 0.0f;
         int lastPlayerHealth = player.GetHealth();
 
         // The Tab-held buy menu.
@@ -1409,8 +1447,8 @@ namespace Atlas
 
         auto handleEvents = [&]()
         {
-            const float listenX = camera.GetX() + static_cast<float>(ViewWidth) * 0.5f;
-            const float listenY = camera.GetY() + static_cast<float>(ViewHeight) * 0.5f;
+            const float listenX = camera.GetX() + m_Window.GetViewWidth() * 0.5f;
+            const float listenY = camera.GetY() + m_Window.GetViewHeight() * 0.5f;
 
             for (const SimEvent& event : world.GetEvents())
             {
@@ -1468,6 +1506,7 @@ namespace Atlas
                     const float dy = event.Y - listenY;
                     const float near = std::clamp(1.0f - std::sqrt(dx * dx + dy * dy) / 1200.0f, 0.0f, 1.0f);
                     trauma = std::min(trauma + 0.5f * near, 1.0f);
+                    blastFlash = std::max(blastFlash, near * near * 0.8f);
                     break;
                 }
 
@@ -1697,8 +1736,8 @@ namespace Atlas
             if (Input::WasKeyPressed(SDL_SCANCODE_C))
                 allyOrderQueued = static_cast<int>(AllyOrder::Attack);
 
-            const float mouseWorldX = Input::GetMouseX() + camera.GetX();
-            const float mouseWorldY = Input::GetMouseY() + camera.GetY();
+            const float mouseWorldX = m_Window.ScreenToWorldX(Input::GetMouseX());
+            const float mouseWorldY = m_Window.ScreenToWorldY(Input::GetMouseY());
 
             throwQueued = throwQueued ||
                 Input::WasMouseButtonPressed(SDL_BUTTON_RIGHT);
@@ -1739,16 +1778,17 @@ namespace Atlas
             const float menuAnchorX = player.GetCenterX();
             const float menuAnchorY = player.GetY() - 70.0f;
 
+            const float zoom = m_Window.GetZoom();
             const float wheelScreenX =
-                menuAnchorX - WheelTotalW * 0.5f - uiCameraX;
+                (menuAnchorX - uiCameraX) * zoom - WheelTotalW * 0.5f;
             const float wheelScreenY =
-                menuAnchorY - WheelButtonH * 0.5f - uiCameraY;
+                (menuAnchorY - uiCameraY) * zoom - WheelButtonH * 0.5f;
 
             const float panelScreenX = std::clamp(
-                menuAnchorX - BuyPanelW * 0.5f - uiCameraX,
+                (menuAnchorX - uiCameraX) * zoom - BuyPanelW * 0.5f,
                 8.0f, static_cast<float>(ViewWidth) - BuyPanelW - 8.0f);
             const float panelScreenY = std::clamp(
-                menuAnchorY - BuyPanelH * 0.5f - uiCameraY,
+                (menuAnchorY - uiCameraY) * zoom - BuyPanelH * 0.5f,
                 66.0f, static_cast<float>(ViewHeight) - BuyPanelH - 8.0f); // below the top HUD
 
             const float closeScreenX =
@@ -2124,14 +2164,17 @@ namespace Atlas
                 camLeadX += (lookX - camLeadX) * leadBlend;
                 camLeadY += (lookY - camLeadY) * leadBlend;
 
+                const float viewW = m_Window.GetViewWidth();
+                const float viewH = m_Window.GetViewHeight();
+                const float maxCamX = std::max(0.0f, static_cast<float>(worldWidth) - viewW);
+                const float maxCamY = std::max(0.0f, static_cast<float>(worldHeight) - viewH);
+
                 const float targetX = std::clamp(
-                    player.GetCenterX() + camLeadX - ViewWidth * 0.5f,
-                    0.0f,
-                    static_cast<float>(worldWidth - ViewWidth));
+                    player.GetCenterX() + camLeadX - viewW * 0.5f,
+                    0.0f, maxCamX);
                 const float targetY = std::clamp(
-                    player.GetCenterY() + camLeadY - ViewHeight * 0.5f,
-                    0.0f,
-                    static_cast<float>(worldHeight - ViewHeight));
+                    player.GetCenterY() + camLeadY - viewH * 0.5f,
+                    0.0f, maxCamY);
 
                 // A respawn far away snaps instead of panning across the
                 // whole map.
@@ -2162,27 +2205,20 @@ namespace Atlas
                     (0.6f * std::sin(timeSeconds * 27.3f + 2.1f) +
                      0.4f * std::sin(timeSeconds * 14.1f));
 
-                // Whole pixels only: a camera at a fractional position
-                // makes the terrain and every sprite round differently
-                // each frame, which shimmers like a vibration.
+                // Sub-pixel camera: the world is drawn on a whole-pixel
+                // grid (so nothing shimmers) and the finished image is
+                // slid by the remainder when it is scaled to the screen.
+                // Shake is sized in screen pixels, whatever the zoom.
+                const float zoom = m_Window.GetZoom();
+
                 camera.SetPosition(
-                    std::round(std::clamp(
-                        camSmoothX + shakeX,
-                        0.0f,
-                        static_cast<float>(worldWidth - ViewWidth))),
-                    std::round(std::clamp(
-                        camSmoothY + shakeY,
-                        0.0f,
-                        static_cast<float>(worldHeight - ViewHeight))));
+                    std::clamp(camSmoothX + shakeX / zoom, 0.0f, maxCamX),
+                    std::clamp(camSmoothY + shakeY / zoom, 0.0f, maxCamY));
 
                 // UI anchoring tracks the smoothed position only - no
                 // shake - so menus hold still while the world rocks.
-                uiCamX = std::round(std::clamp(
-                    camSmoothX, 0.0f,
-                    static_cast<float>(worldWidth - ViewWidth)));
-                uiCamY = std::round(std::clamp(
-                    camSmoothY, 0.0f,
-                    static_cast<float>(worldHeight - ViewHeight)));
+                uiCamX = std::clamp(camSmoothX, 0.0f, maxCamX);
+                uiCamY = std::clamp(camSmoothY, 0.0f, maxCamY);
             }
 
             // Damage feedback: vignette pulse plus a camera thump.
@@ -2197,6 +2233,10 @@ namespace Atlas
 
             lastPlayerHealth = player.GetHealth();
             hurtVignette = std::max(0.0f, hurtVignette - frameTime);
+
+            blastFlash = std::max(0.0f, blastFlash - frameTime * 2.5f);
+            m_Window.SetScreenTint(255, 170, 90, static_cast<Uint8>(blastFlash * blastFlash * 70.0f));
+            m_Window.SetBloom(m_Settings.Bloom ? 1.0f + blastFlash : 0.0f);
 
             // Visual-decay state for the HUD and crosshair.
             crosshairBloom = std::max(0.0f, crosshairBloom - frameTime * 6.0f);
@@ -2236,13 +2276,14 @@ namespace Atlas
             }
 
             m_Window.BeginFrame();
+            m_Window.BeginWorld();
 
             background.Draw(
                 m_Window,
                 camera.GetX(),
                 camera.GetY(),
-                ViewWidth,
-                ViewHeight,
+                static_cast<int>(m_Window.GetViewWidth()) + 2,
+                static_cast<int>(m_Window.GetViewHeight()) + 2,
                 timeSeconds);
 
             terrain.Draw(m_Window);
@@ -2289,22 +2330,6 @@ namespace Atlas
                     m_Window.DrawFilledRect(
                         pickup.X - 5.0f, pickup.Y - 5.0f, 10.0f, 1.5f,
                         92, 104, 70, 255);
-                }
-
-                if (pickup.Weapon)
-                {
-                    std::string name = pickup.Weapon->Name;
-
-                    for (char& c : name)
-                        c = static_cast<char>(std::toupper(
-                            static_cast<unsigned char>(c)));
-
-                    PixelFont::Draw(
-                        m_Window,
-                        pickup.X - camera.GetX() -
-                            PixelFont::Measure(name, 1.5f) * 0.5f,
-                        pickup.Y - camera.GetY() - 18.0f,
-                        1.5f, name, 210, 225, 235);
                 }
             }
 
@@ -2492,6 +2517,28 @@ namespace Atlas
 
             LightScene(m_Window, terrain, camera.GetX(), camera.GetY(), &player);
 
+            m_Window.EndWorld();
+
+            // Weapon pickups' names float over their cases.
+            for (const WeaponPickup& pickup : weaponPickups)
+            {
+                if (!pickup.Weapon)
+                    continue;
+
+                std::string name = pickup.Weapon->Name;
+
+                for (char& c : name)
+                    c = static_cast<char>(std::toupper(
+                        static_cast<unsigned char>(c)));
+
+                PixelFont::Draw(
+                    m_Window,
+                    m_Window.WorldToScreenX(pickup.X) -
+                        PixelFont::Measure(name, 1.5f) * 0.5f,
+                    m_Window.WorldToScreenY(pickup.Y - 12.0f) - 14.0f,
+                    1.5f, name, 210, 225, 235);
+            }
+
             // Name tags over the other players.
             for (int slot = 0; slot < world.GetPlayerCount(); slot++)
             {
@@ -2504,9 +2551,9 @@ namespace Atlas
 
                 PixelFont::Draw(
                     m_Window,
-                    body.GetCenterX() - camera.GetX() -
+                    m_Window.WorldToScreenX(body.GetCenterX()) -
                         PixelFont::Measure(tag, 1.5f) * 0.5f,
-                    body.GetY() - camera.GetY() - 16.0f,
+                    m_Window.WorldToScreenY(body.GetY()) - 20.0f,
                     1.5f, tag, 235, 235, 240, 220);
             }
 
@@ -2515,8 +2562,8 @@ namespace Atlas
             if (player.IsAlive() && !allies.empty())
             {
                 const float bob = std::sin(timeSeconds * 5.0f) * 2.0f;
-                const float cx = player.GetCenterX() - camera.GetX();
-                const float top = player.GetY() - camera.GetY() - 18.0f + bob;
+                const float cx = m_Window.WorldToScreenX(player.GetCenterX());
+                const float top = m_Window.WorldToScreenY(player.GetY()) - 22.0f + bob;
 
                 for (int row = 0; row < 4; row++)
                 {
@@ -2538,11 +2585,11 @@ namespace Atlas
 
                 const float x = floater.ScreenSpace
                     ? floater.X
-                    : floater.X - camera.GetX() -
+                    : m_Window.WorldToScreenX(floater.X) -
                         PixelFont::Measure(floater.Text, floater.Scale) * 0.5f;
                 const float y = floater.ScreenSpace
                     ? floater.Y
-                    : floater.Y - camera.GetY();
+                    : m_Window.WorldToScreenY(floater.Y);
 
                 PixelFont::Draw(
                     m_Window,
@@ -2961,12 +3008,10 @@ namespace Atlas
                 m_Window.DrawScreenRect(x + w - 1.0f, y + 1.0f, 1.0f, h - 2.0f, r, g, b, a);
             };
 
+            // HUD panels share the menus' chamfered glass look.
             auto panel = [&](float x, float y, float w, float h)
             {
-                roundRect(x - 1.0f, y - 1.0f, w + 2.0f, h + 2.0f, 150, 160, 200, 34);
-                m_Window.DrawGradientScreen(x, y, w, h,
-                    { 22, 24, 36, 205 }, { 10, 11, 18, 225 });
-                m_Window.DrawScreenRect(x + 1.0f, y, w - 2.0f, 1.0f, 200, 210, 240, 40);
+                ui.Panel(x, y, w, h);
             };
 
             // A bar with a gradient fill, a lingering damage ghost and
@@ -3315,8 +3360,8 @@ namespace Atlas
                     if (!base.BrainAlive)
                         continue;
 
-                    const float sx = base.GetBrainCenterX() - camera.GetX();
-                    const float sy = base.GetBrainCenterY() - camera.GetY();
+                    const float sx = m_Window.WorldToScreenX(base.GetBrainCenterX());
+                    const float sy = m_Window.WorldToScreenY(base.GetBrainCenterY());
 
                     if (sx >= 0.0f && sx < static_cast<float>(ViewWidth) &&
                         sy >= 0.0f && sy < static_cast<float>(ViewHeight))
@@ -3387,8 +3432,8 @@ namespace Atlas
                     float vx = 0.0f;
                     float vy = 0.0f;
                     toMap(camera.GetX(), camera.GetY(), vx, vy);
-                    const float vw = static_cast<float>(ViewWidth) / worldW * mapW;
-                    const float vh = static_cast<float>(ViewHeight) / worldH * mapH;
+                    const float vw = m_Window.GetViewWidth() / worldW * mapW;
+                    const float vh = m_Window.GetViewHeight() / worldH * mapH;
 
                     m_Window.DrawScreenRect(vx, vy, vw, 1.0f, 230, 230, 240, 160);
                     m_Window.DrawScreenRect(vx, vy + vh - 1.0f, vw, 1.0f, 230, 230, 240, 160);
@@ -3475,9 +3520,9 @@ namespace Atlas
 
                 if (pauseSettings)
                 {
-                    ui.Panel(panelX, 150.0f, panelW, 372.0f);
+                    ui.Panel(panelX, 110.0f, panelW, 480.0f);
 
-                    if (DrawSettings(ui, panelX + 40.0f, 180.0f))
+                    if (DrawSettings(ui, panelX + 40.0f, 140.0f))
                         pauseSettings = false;
                 }
                 else if (paused)

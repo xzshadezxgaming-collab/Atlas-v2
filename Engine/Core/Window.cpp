@@ -1,6 +1,7 @@
 #include "Window.h"
 
 #include "../Graphics/Camera.h"
+#include "../Graphics/PixelFont.h"
 #include "../Graphics/SpriteBank.h"
 #include "../Input/Input.h"
 
@@ -152,11 +153,21 @@ namespace Atlas
             // No render targets on this driver: play unlit.
             m_LightingEnabled = false;
         }
+
+        // Bloom keeps only what is brighter than a threshold by
+        // subtracting it (dst - src, clamped at zero); the software
+        // renderer can't, so it plays without bloom.
+        m_SubtractBlend = SDL_ComposeCustomBlendMode(
+            SDL_BLENDFACTOR_ONE, SDL_BLENDFACTOR_ONE, SDL_BLENDOPERATION_REV_SUBTRACT,
+            SDL_BLENDFACTOR_ZERO, SDL_BLENDFACTOR_ONE, SDL_BLENDOPERATION_ADD);
+        m_BloomSupported = m_LightMap && SDL_SetRenderDrawBlendMode(m_Renderer, m_SubtractBlend);
+        SDL_SetRenderDrawBlendMode(m_Renderer, SDL_BLENDMODE_BLEND);
     }
 
     void Window::Destroy()
     {
-        for (SDL_Texture** texture : { &m_GlowTexture, &m_VignetteTexture, &m_LightMap })
+        for (SDL_Texture** texture : { &m_GlowTexture, &m_VignetteTexture, &m_LightMap,
+            &m_WorldTarget, &m_Bloom[0], &m_Bloom[1], &m_Bloom[2], &m_Bloom[3] })
         {
             if (*texture)
             {
@@ -167,6 +178,8 @@ namespace Atlas
 
         if (m_Renderer)
         {
+            // Text atlas pages belong to this renderer.
+            PixelFont::Shutdown();
             SDL_DestroyRenderer(m_Renderer);
             m_Renderer = nullptr;
         }
@@ -205,6 +218,16 @@ namespace Atlas
         SDL_RenderClear(m_Renderer);
 
         m_Lights.clear();
+        m_InWorld = false;
+
+        int outW = 0, outH = 0;
+
+        if (SDL_GetRenderOutputSize(m_Renderer, &outW, &outH) && m_Width > 0 && m_Height > 0)
+        {
+            m_PixelScale = std::max(0.25f, std::min(
+                static_cast<float>(outW) / static_cast<float>(m_Width),
+                static_cast<float>(outH) / static_cast<float>(m_Height)));
+        }
     }
 
     void Window::EndFrame()
@@ -254,11 +277,8 @@ namespace Atlas
         Uint8 b,
         Uint8 a)
     {
-        if (m_Camera)
-        {
-            x -= m_Camera->GetX();
-            y -= m_Camera->GetY();
-        }
+        x -= OriginX();
+        y -= OriginY();
 
         SDL_FRect rect;
         rect.x = x;
@@ -323,11 +343,8 @@ namespace Atlas
         AddLight(x, y, radius * 2.4f, r, g, b,
             std::min(1.0f, static_cast<float>(a) / 90.0f));
 
-        if (m_Camera)
-        {
-            x -= m_Camera->GetX();
-            y -= m_Camera->GetY();
-        }
+        x -= OriginX();
+        y -= OriginY();
 
         DrawGlowTexture(x, y, radius, r, g, b, a);
     }
@@ -356,11 +373,8 @@ namespace Atlas
         if (!texture)
             return;
 
-        if (m_Camera)
-        {
-            x -= m_Camera->GetX();
-            y -= m_Camera->GetY();
-        }
+        x -= OriginX();
+        y -= OriginY();
 
         SDL_FRect destination;
         destination.x = x;
@@ -389,11 +403,8 @@ namespace Atlas
         if (!texture)
             return;
 
-        if (m_Camera)
-        {
-            x -= m_Camera->GetX();
-            y -= m_Camera->GetY();
-        }
+        x -= OriginX();
+        y -= OriginY();
 
         SDL_FRect destination;
         destination.x = x;
@@ -424,11 +435,8 @@ namespace Atlas
         if (!sprite.Texture)
             return;
 
-        if (m_Camera)
-        {
-            x -= m_Camera->GetX();
-            y -= m_Camera->GetY();
-        }
+        x -= OriginX();
+        y -= OriginY();
 
         // The pivot is a pixel; aim for its centre. Flipping mirrors the
         // image inside the destination rect, so the pivot moves with it.
@@ -546,11 +554,8 @@ namespace Atlas
         if (!m_GlowTexture || radius <= 0.0f || a == 0)
             return;
 
-        if (m_Camera)
-        {
-            x -= m_Camera->GetX();
-            y -= m_Camera->GetY();
-        }
+        x -= OriginX();
+        y -= OriginY();
 
         const SDL_FRect destination = { x - radius, y - radius, radius * 2.0f, radius * 2.0f };
 
@@ -591,11 +596,8 @@ namespace Atlas
         if (radius <= 0.0f || a == 0)
             return;
 
-        if (m_Camera)
-        {
-            x -= m_Camera->GetX();
-            y -= m_Camera->GetY();
-        }
+        x -= OriginX();
+        y -= OriginY();
 
         constexpr int Segments = 40;
         const SDL_FColor clear = ToFColor(r, g, b, 0);
@@ -637,13 +639,10 @@ namespace Atlas
         float x0, float y0, float x1, float y1, float width,
         Uint8 r, Uint8 g, Uint8 b, Uint8 a)
     {
-        if (m_Camera)
-        {
-            x0 -= m_Camera->GetX();
-            y0 -= m_Camera->GetY();
-            x1 -= m_Camera->GetX();
-            y1 -= m_Camera->GetY();
-        }
+        x0 -= OriginX();
+        y0 -= OriginY();
+        x1 -= OriginX();
+        y1 -= OriginY();
 
         const float dx = x1 - x0;
         const float dy = y1 - y0;
@@ -714,9 +713,33 @@ namespace Atlas
             return;
         }
 
-        const float camX = m_Camera ? m_Camera->GetX() : 0.0f;
-        const float camY = m_Camera ? m_Camera->GetY() : 0.0f;
+        const float camX = OriginX();
+        const float camY = OriginY();
         constexpr float Scale = 0.5f;
+
+        // Half the size of whatever is being lit (the world target, or
+        // the screen outside a world pass).
+        {
+            const int wantW = std::max(1, static_cast<int>(std::ceil(SurfaceWidth() * Scale)));
+            const int wantH = std::max(1, static_cast<int>(std::ceil(SurfaceHeight() * Scale)));
+
+            if (m_LightMap->w != wantW || m_LightMap->h != wantH)
+            {
+                SDL_Texture* resized = SDL_CreateTexture(m_Renderer, SDL_PIXELFORMAT_ARGB8888,
+                    SDL_TEXTUREACCESS_TARGET, wantW, wantH);
+
+                if (resized)
+                {
+                    SDL_DestroyTexture(m_LightMap);
+                    m_LightMap = resized;
+                    SDL_SetTextureScaleMode(m_LightMap, SDL_SCALEMODE_LINEAR);
+                    SDL_SetTextureBlendMode(m_LightMap, SDL_BLENDMODE_MOD);
+                }
+            }
+        }
+
+        const float surfaceW = SurfaceWidth();
+        const float surfaceH = SurfaceHeight();
 
         SDL_Texture* previous = SDL_GetRenderTarget(m_Renderer);
         SDL_SetRenderTarget(m_Renderer, m_LightMap);
@@ -730,7 +753,7 @@ namespace Atlas
         {
             const SDL_FColor sky = ToFColor(ambient.SkyAmbient);
             const SDL_FColor cave = ToFColor(ambient.CaveAmbient);
-            const float bottom = static_cast<float>(m_Height) * Scale + 4.0f;
+            const float bottom = surfaceH * Scale + 4.0f;
 
             std::vector<SDL_Vertex> vertices;
             vertices.reserve(static_cast<std::size_t>(ambient.Columns) * 12);
@@ -769,7 +792,7 @@ namespace Atlas
                 const float cy = (light.Y - camY) * Scale;
 
                 if (cx + half < 0.0f || cy + half < 0.0f ||
-                    cx - half > m_Width * Scale || cy - half > m_Height * Scale)
+                    cx - half > surfaceW * Scale || cy - half > surfaceH * Scale)
                     continue;
 
                 const SDL_FRect destination = { cx - half, cy - half, half * 2.0f, half * 2.0f };
@@ -784,8 +807,13 @@ namespace Atlas
         SDL_SetRenderTarget(m_Renderer, previous);
         SDL_SetRenderDrawBlendMode(m_Renderer, SDL_BLENDMODE_BLEND);
 
-        // Multiply the light map over the scene.
-        SDL_RenderTexture(m_Renderer, m_LightMap, nullptr, nullptr);
+        // Multiply the light map over the scene. (The map's last texel
+        // may overhang an odd-sized surface by half a pixel.)
+        const SDL_FRect lit = {
+            0.0f, 0.0f,
+            static_cast<float>(m_LightMap->w) / Scale,
+            static_cast<float>(m_LightMap->h) / Scale };
+        SDL_RenderTexture(m_Renderer, m_LightMap, nullptr, &lit);
 
         m_Lights.clear();
     }
@@ -793,6 +821,11 @@ namespace Atlas
     SDL_Renderer* Window::GetRenderer() const
     {
         return m_Renderer;
+    }
+
+    float Window::GetPixelScale() const
+    {
+        return m_PixelScale;
     }
 
     int Window::GetWidth() const
@@ -803,5 +836,250 @@ namespace Atlas
     int Window::GetHeight() const
     {
         return m_Height;
+    }
+
+    // --- World pass ---
+
+    float Window::OriginX() const
+    {
+        if (!m_Camera)
+            return 0.0f;
+
+        return m_InWorld ? m_Camera->GetX() - m_SubX : m_Camera->GetX();
+    }
+
+    float Window::OriginY() const
+    {
+        if (!m_Camera)
+            return 0.0f;
+
+        return m_InWorld ? m_Camera->GetY() - m_SubY : m_Camera->GetY();
+    }
+
+    float Window::SurfaceWidth() const
+    {
+        return m_InWorld ? static_cast<float>(m_TargetWidth) : static_cast<float>(m_Width);
+    }
+
+    float Window::SurfaceHeight() const
+    {
+        return m_InWorld ? static_cast<float>(m_TargetHeight) : static_cast<float>(m_Height);
+    }
+
+    void Window::SetZoom(float zoom)
+    {
+        m_Zoom = std::clamp(zoom, 1.0f, 4.0f);
+    }
+
+    float Window::GetZoom() const
+    {
+        return m_Zoom;
+    }
+
+    float Window::GetViewWidth() const
+    {
+        return static_cast<float>(m_Width) / m_Zoom;
+    }
+
+    float Window::GetViewHeight() const
+    {
+        return static_cast<float>(m_Height) / m_Zoom;
+    }
+
+    float Window::WorldToScreenX(float x) const
+    {
+        return (x - (m_Camera ? m_Camera->GetX() : 0.0f)) * m_Zoom;
+    }
+
+    float Window::WorldToScreenY(float y) const
+    {
+        return (y - (m_Camera ? m_Camera->GetY() : 0.0f)) * m_Zoom;
+    }
+
+    float Window::ScreenToWorldX(float x) const
+    {
+        return x / m_Zoom + (m_Camera ? m_Camera->GetX() : 0.0f);
+    }
+
+    float Window::ScreenToWorldY(float y) const
+    {
+        return y / m_Zoom + (m_Camera ? m_Camera->GetY() : 0.0f);
+    }
+
+    void Window::SetBloom(float strength)
+    {
+        m_BloomStrength = std::max(0.0f, strength);
+    }
+
+    bool Window::IsBloomSupported() const
+    {
+        return m_BloomSupported;
+    }
+
+    void Window::SetScreenTint(Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+    {
+        m_Tint = { r, g, b, a };
+    }
+
+    void Window::EnsureWorldTargets()
+    {
+        // One spare texel each way: the sub-pixel shift slides the image
+        // up to a pixel left/up, and the edge must still be covered.
+        const int width = static_cast<int>(std::ceil(GetViewWidth())) + 2;
+        const int height = static_cast<int>(std::ceil(GetViewHeight())) + 2;
+
+        if (m_WorldTarget && m_TargetWidth == width && m_TargetHeight == height)
+            return;
+
+        for (SDL_Texture** texture : { &m_WorldTarget, &m_Bloom[0], &m_Bloom[1], &m_Bloom[2], &m_Bloom[3] })
+        {
+            if (*texture)
+            {
+                SDL_DestroyTexture(*texture);
+                *texture = nullptr;
+            }
+        }
+
+        m_WorldTarget = SDL_CreateTexture(m_Renderer, SDL_PIXELFORMAT_ARGB8888,
+            SDL_TEXTUREACCESS_TARGET, width, height);
+        m_TargetWidth = width;
+        m_TargetHeight = height;
+
+        if (!m_WorldTarget)
+            return;
+
+        SDL_SetTextureBlendMode(m_WorldTarget, SDL_BLENDMODE_NONE);
+
+        // Each bloom level is half the one before: blurring is done by
+        // the bilinear filter while stepping down and back up.
+        int w = width;
+        int h = height;
+
+        for (SDL_Texture*& level : m_Bloom)
+        {
+            w = std::max(1, w / 2);
+            h = std::max(1, h / 2);
+            level = SDL_CreateTexture(m_Renderer, SDL_PIXELFORMAT_ARGB8888,
+                SDL_TEXTUREACCESS_TARGET, w, h);
+
+            if (level)
+                SDL_SetTextureScaleMode(level, SDL_SCALEMODE_LINEAR);
+        }
+    }
+
+    void Window::BeginWorld()
+    {
+        EnsureWorldTargets();
+
+        if (!m_WorldTarget)
+        {
+            // No render targets: draw straight to the screen, unzoomed.
+            m_Zoom = 1.0f;
+            return;
+        }
+
+        const float camX = m_Camera ? m_Camera->GetX() : 0.0f;
+        const float camY = m_Camera ? m_Camera->GetY() : 0.0f;
+        m_SubX = camX - std::floor(camX);
+        m_SubY = camY - std::floor(camY);
+        m_InWorld = true;
+
+        SDL_SetRenderTarget(m_Renderer, m_WorldTarget);
+        SDL_SetRenderDrawColor(m_Renderer, 0, 0, 0, 255);
+        SDL_RenderClear(m_Renderer);
+    }
+
+    void Window::ApplyBloom()
+    {
+        for (SDL_Texture* level : m_Bloom)
+        {
+            if (!level)
+                return;
+        }
+
+        // Bright pass at half size: copy the scene down, then subtract
+        // the threshold so only highlights (flashes, fire, lava, lamps,
+        // sky glow) survive.
+        constexpr Uint8 Threshold = 145;
+
+        SDL_SetTextureScaleMode(m_WorldTarget, SDL_SCALEMODE_LINEAR);
+        SDL_SetRenderTarget(m_Renderer, m_Bloom[0]);
+        SDL_RenderTexture(m_Renderer, m_WorldTarget, nullptr, nullptr);
+
+        SDL_SetRenderDrawBlendMode(m_Renderer, m_SubtractBlend);
+        SDL_SetRenderDrawColor(m_Renderer, Threshold, Threshold, Threshold, 255);
+        SDL_RenderFillRect(m_Renderer, nullptr);
+        SDL_SetRenderDrawBlendMode(m_Renderer, SDL_BLENDMODE_BLEND);
+
+        // Down the chain (each step a 2x2 box filter)...
+        for (int i = 1; i < BloomLevels; i++)
+        {
+            SDL_SetRenderTarget(m_Renderer, m_Bloom[i]);
+            SDL_SetTextureBlendMode(m_Bloom[i - 1], SDL_BLENDMODE_NONE);
+            SDL_RenderTexture(m_Renderer, m_Bloom[i - 1], nullptr, nullptr);
+        }
+
+        // ...and back up, adding each wider level into the sharper one,
+        // so the glow has a tight core and a long soft tail.
+        for (int i = BloomLevels - 1; i > 0; i--)
+        {
+            SDL_SetRenderTarget(m_Renderer, m_Bloom[i - 1]);
+            SDL_SetTextureBlendMode(m_Bloom[i], SDL_BLENDMODE_ADD);
+            SDL_RenderTexture(m_Renderer, m_Bloom[i], nullptr, nullptr);
+        }
+    }
+
+    void Window::EndWorld()
+    {
+        if (!m_InWorld)
+            return;
+
+        m_InWorld = false;
+
+        const bool bloom = m_BloomSupported && m_BloomStrength > 0.0f;
+
+        if (bloom)
+            ApplyBloom();
+
+        SDL_SetRenderTarget(m_Renderer, nullptr);
+
+        const float zoom = m_Zoom;
+        const SDL_FRect destination = {
+            -m_SubX * zoom, -m_SubY * zoom,
+            static_cast<float>(m_TargetWidth) * zoom,
+            static_cast<float>(m_TargetHeight) * zoom };
+
+        SDL_SetTextureScaleMode(m_WorldTarget, SDL_SCALEMODE_PIXELART);
+        SDL_SetTextureBlendMode(m_WorldTarget, SDL_BLENDMODE_NONE);
+        SDL_RenderTexture(m_Renderer, m_WorldTarget, nullptr, &destination);
+
+        if (bloom)
+        {
+            // The bloom texture spans the same area as the world target
+            // (each level covers it whole), so it lines up when stretched.
+            SDL_Texture* glow = m_Bloom[0];
+            SDL_SetTextureBlendMode(glow, SDL_BLENDMODE_ADD);
+
+            float strength = m_BloomStrength;
+
+            while (strength > 0.0f)
+            {
+                const float pass = std::min(strength, 1.0f);
+                const Uint8 mod = static_cast<Uint8>(pass * 255.0f);
+                SDL_SetTextureColorMod(glow, mod, mod, mod);
+                SDL_RenderTexture(m_Renderer, glow, nullptr, &destination);
+                strength -= 1.0f;
+            }
+
+            SDL_SetTextureColorMod(glow, 255, 255, 255);
+        }
+
+        if (m_Tint.a > 0)
+        {
+            SDL_SetRenderDrawBlendMode(m_Renderer, SDL_BLENDMODE_ADD);
+            SDL_SetRenderDrawColor(m_Renderer, m_Tint.r, m_Tint.g, m_Tint.b, m_Tint.a);
+            SDL_RenderFillRect(m_Renderer, nullptr);
+            SDL_SetRenderDrawBlendMode(m_Renderer, SDL_BLENDMODE_BLEND);
+        }
     }
 }
