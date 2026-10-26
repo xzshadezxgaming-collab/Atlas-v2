@@ -129,9 +129,28 @@ namespace Atlas
                     190.0f, 255, 236, 205, 0.55f);
             }
 
+            // Each biome's sky casts its own color over everything.
+            static constexpr SDL_Color SkyAmbient[static_cast<int>(Biome::Count)] =
+            {
+                { 196, 198, 226, 255 }, // temperate: cool moonlight
+                { 220, 196, 190, 255 }, // desert: warm afterglow
+                { 204, 210, 226, 255 }, // arctic: cold and clear
+                { 218, 166, 154, 255 }, // volcanic: fire-lit smoke
+            };
+
+            static constexpr SDL_Color CaveAmbient[static_cast<int>(Biome::Count)] =
+            {
+                { 74, 76, 100, 255 },
+                { 86, 72, 72, 255 },
+                { 78, 82, 102, 255 },
+                { 90, 60, 56, 255 },
+            };
+
+            const int biome = std::clamp(static_cast<int>(terrain.GetBiome()), 0, static_cast<int>(Biome::Count) - 1);
+
             AmbientLight ambient;
-            ambient.SkyAmbient = { 196, 198, 226, 255 };
-            ambient.CaveAmbient = { 74, 76, 100, 255 };
+            ambient.SkyAmbient = SkyAmbient[biome];
+            ambient.CaveAmbient = CaveAmbient[biome];
             ambient.SurfaceY = surface;
             ambient.Columns = Columns;
             ambient.ColumnWidth = ColumnWidth;
@@ -289,7 +308,7 @@ namespace Atlas
     {
         std::cout << "=================================\n";
         std::cout << "        ATLAS ENGINE\n";
-        std::cout << "           v0.11.0\n";
+        std::cout << "           v0.12.0\n";
         std::cout << "=================================\n\n";
 
         if (!m_Window.Create("Atlas", ViewWidth, ViewHeight))
@@ -493,10 +512,11 @@ namespace Atlas
                 config.Height = 1024;
                 config.Seed = seed;
                 config.Difficulty = 1;
+                config.Biome = ResolveBiome(0, seed);
                 Sim->Create(config);
 
                 Sim->GetTerrain().CreateTexture(renderer);
-                Sky.Create(seed);
+                Sky.Create(seed, config.Biome);
 
                 const TeamBase& home = Sim->GetBase(0);
 
@@ -628,6 +648,7 @@ namespace Atlas
         static const std::vector<std::string> Modes = { "BRAIN ASSAULT", "SURVIVAL" };
         static const std::vector<std::string> Sizes = { "SMALL", "MEDIUM", "LARGE" };
         static const std::vector<std::string> Difficulties = { "EASY", "NORMAL", "HARD" };
+        static const std::vector<std::string> Biomes = { "RANDOM", "TEMPERATE", "DESERT", "ARCTIC", "VOLCANIC" };
 
         int modeIndex = request.Survival ? 1 : 0;
         std::string error;
@@ -639,6 +660,7 @@ namespace Atlas
         unsigned int randomSeed = static_cast<unsigned int>(SDL_GetPerformanceCounter() % 999983u) + 1u;
         unsigned int previewSeed = 0;
         int previewSize = -1;
+        Biome previewBiome = Biome::Count;
         std::string lastSeedText = seedText;
         float seedTextStill = 1.0f;
 
@@ -771,6 +793,8 @@ namespace Atlas
                 y += 42.0f;
                 ui.Choice(left, y, w, h, "MAP", Sizes, request.MapSize);
                 y += 42.0f;
+                ui.Choice(left, y, w, h, "TERRAIN", Biomes, request.Biome);
+                y += 42.0f;
                 ui.Choice(left, y, w, h, "DIFFICULTY", Difficulties, request.Difficulty);
                 y += 42.0f;
                 ui.TextField(left, y, w, h, "SEED (BLANK = RANDOM)", seedText, 10);
@@ -785,6 +809,9 @@ namespace Atlas
                 ui.Text(left, y + 4.0f, 1.5f, modeIndex == 0
                     ? "DESTROY THE ENEMY BRAIN. KEEP YOURS ALIVE."
                     : "HOLD OUT AGAINST ENDLESS WAVES.", 170, 176, 190);
+                y += 18.0f;
+                ui.Text(left, y + 4.0f, 1.5f,
+                    GetBiomeBlurb(ResolveBiome(request.Biome, effectiveSeed())), 140, 150, 168);
                 y += 30.0f;
 
                 // --- Map preview and landing zone ---
@@ -802,12 +829,16 @@ namespace Atlas
                     const int size = std::clamp(request.MapSize, 0, 2);
 
                     // Rebuild once typing has paused.
-                    if ((effectiveSeed() != previewSeed || size != previewSize) && seedTextStill > 0.35f)
+                    const Biome biome = ResolveBiome(request.Biome, effectiveSeed());
+
+                    if ((effectiveSeed() != previewSeed || size != previewSize || biome != previewBiome) &&
+                        seedTextStill > 0.35f)
                     {
                         previewSeed = effectiveSeed();
                         previewSize = size;
+                        previewBiome = biome;
                         previewTerrain = std::make_unique<Terrain>();
-                        previewTerrain->Create(PreviewWidths[size], PreviewHeights[size], previewSeed);
+                        previewTerrain->Create(PreviewWidths[size], PreviewHeights[size], previewSeed, biome);
 
                         const int thumbHeight = 520 * PreviewHeights[size] / PreviewWidths[size];
                         preview.Update(m_Window.GetRenderer(), *previewTerrain, 520, thumbHeight);
@@ -821,9 +852,10 @@ namespace Atlas
                     // Backing panel so the title and hints read over the menu backdrop.
                     m_Window.DrawScreenRect(px - 14.0f, y0 - 32.0f, pw + 28.0f, ph + 102.0f, 10, 12, 20, 205);
 
-                    ui.Text(px, y0 - 20.0f, 2.0f, seedText.empty()
+                    ui.Text(px, y0 - 20.0f, 2.0f, (seedText.empty()
                         ? "RANDOM MAP (SEED " + std::to_string(randomSeed) + ")"
-                        : "MAP PREVIEW", 220, 224, 235);
+                        : std::string("MAP PREVIEW")) + "  " + GetBiomeName(previewBiome < Biome::Count ? previewBiome : biome),
+                        220, 224, 235);
 
                     m_Window.DrawScreenRect(px - 3.0f, py - 3.0f, pw + 6.0f, ph + 6.0f, 60, 64, 80, 255);
                     preview.Draw(m_Window.GetRenderer(), px, py);
@@ -972,7 +1004,7 @@ namespace Atlas
                 ui.Text(left, static_cast<float>(ViewHeight) - 60.0f, 2.0f, error, 255, 120, 100);
 
             ui.Text(static_cast<float>(ViewWidth) - 16.0f, static_cast<float>(ViewHeight) - 20.0f, 1.5f,
-                "V0.11.0", 120, 124, 140, 2);
+                "V0.12.0", 120, 124, 140, 2);
 
             ui.End();
 
@@ -1019,6 +1051,7 @@ namespace Atlas
             seed = static_cast<unsigned int>(SDL_GetPerformanceCounter());
 
         worldConfig.Seed = seed;
+        worldConfig.Biome = ResolveBiome(request.Biome, seed);
 
         // Weapons: data-driven with built-in fallbacks. The text itself
         // is what a host shares, so every peer simulates the same guns.
@@ -1122,7 +1155,7 @@ namespace Atlas
             return MatchExit::ToMenu;
 
         Background background;
-        background.Create(seed);
+        background.Create(seed, terrain.GetBiome());
 
         constexpr float RespawnTime = 3.0f;
 

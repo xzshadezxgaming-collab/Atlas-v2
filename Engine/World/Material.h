@@ -21,6 +21,11 @@ namespace Atlas
         Concrete,
         Brain,
         Glass,
+        Snow,      // arctic surface powder
+        Ice,       // arctic sheets and lake crusts; melts near lava
+        Sandstone, // desert bedrock layer
+        Basalt,    // volcanic rock
+        Ash,       // volcanic surface powder
 
         Count
     };
@@ -85,6 +90,11 @@ namespace Atlas
         { "Concrete",  132, 128, 118, true,  MaterialBehavior::Static,   0,  30.0f,    0, true,  false, 255 },
         { "Brain",     226, 136, 156, true,  MaterialBehavior::Static,   0,   1.2f,    0, false, false, 255 },
         { "Glass",     176, 222, 238, true,  MaterialBehavior::Static,   0,   0.5f,    0, false, false, 110 },
+        { "Snow",      182, 186, 196, true,  MaterialBehavior::Powder,   6,   0.5f,    0, false, false, 255 },
+        { "Ice",       150, 198, 228, true,  MaterialBehavior::Static,   0,   2.0f,    0, false, false, 225 },
+        { "Sandstone", 192, 132,  86, true,  MaterialBehavior::Static,   0,   4.0f,    0, true,  false, 255 },
+        { "Basalt",     66,  60,  68, true,  MaterialBehavior::Static,   0,   9.0f,    0, true,  false, 255 },
+        { "Ash",       104,  98, 100, true,  MaterialBehavior::Powder,   7,   0.6f,    0, false, false, 255 },
     };
 
     static_assert(

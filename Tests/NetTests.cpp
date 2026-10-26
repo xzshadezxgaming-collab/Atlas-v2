@@ -102,6 +102,7 @@ int main()
     config.Width = 2048;
     config.Height = 1024;
     config.Seed = 4242u;
+    config.Biome = Biome::Arctic; // must reach the clients, or they build another world
 
     Session host;
     Check(host.StartHost(config, std::string(), port), "host started: " + host.GetStatusText());
@@ -188,6 +189,8 @@ int main()
     Check(early.GetWorld().ComputeStateHash() == hostHash, "client 1 state matches host");
     Check(late.GetWorld().ComputeStateHash() == hostHash, "client 2 state matches host");
     Check(!early.HasDesynced() && !late.HasDesynced(), "no desync reported");
+    Check(early.GetWorld().GetTerrain().GetBiome() == Biome::Arctic &&
+        late.GetWorld().GetTerrain().GetBiome() == Biome::Arctic, "clients got the host's biome");
 
     // The clients' inputs really drove their bodies on the host.
     for (int slot = 1; slot <= 2; slot++)
